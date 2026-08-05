@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml-experiment-triage"
+version = "1.0.0"
+description = "Ranked, significance tested comparison of machine learning training runs."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Olajide Badejo" }]
+requires-python = ">=3.12"
+keywords = [
+    "machine-learning",
+    "mlops",
+    "experiment-tracking",
+    "statistics",
+    "hypothesis-testing",
+    "tensorboard",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "plotly>=5.18",
+    "jinja2>=3.1",
+    "tensorboard>=2.15",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.5"]
+
+[project.scripts]
+triage = "triage.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/OlajideBadejo/ML-Experiment-Triage-Assistant"
+
+[tool.setuptools.packages.find]
+include = ["triage*"]
+
+[tool.setuptools.package-data]
+"triage.report" = ["templates/*.html"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: calibration tests that run thousands of permutations",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,0 +1,11 @@
+# Pinned to the versions this project was built and measured against.
+# See PROGRESS.md for the toolchain record.
+numpy==2.5.1
+pandas==3.0.5
+scipy==1.18.0
+plotly==6.9.0
+jinja2==3.1.6
+tensorboard==2.21.0
+tqdm==4.70.0
+pytest==9.1.1
+ruff==0.16.1

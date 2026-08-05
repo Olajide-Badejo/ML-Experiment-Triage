@@ -1,0 +1,35 @@
+# Environment
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Generated demo run directories and their database.
+# The demo sweep is deterministic, so the raw logs are rebuilt rather than stored.
+experiments/results/
+triage.db
+triage.db-journal
+
+# Generated report assets and LaTeX build directories.
+report/figures/
+report/tables/
+report/build/
+report_debug/build/
+report_for_me/build/
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# The build specification this repository was written from is an input to the
+# work, not part of the shipped project.
+05_ML_Experiment_Triage_README.md

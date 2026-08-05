@@ -63,7 +63,10 @@ significant on up to 87 percent of cases, where the seed replicated mode holds a
 5. That number, rather than any feature, is the argument for the design.
 \end{abstract}
 
-\tableofcontents
+% The document wide paragraph skip is added between every contents line, which
+% pushed the single appendix entry onto a second page on its own. Zeroing it
+% inside this group keeps the contents on one page and leaves body text alone.
+{\setlength{\parskip}{0pt}\tableofcontents}
 
 % ---------------------------------------------------------------------------
 \chapter{Introduction}

@@ -29,39 +29,42 @@ class Gate:
     gate: str
 
 
+# Names are kept short because this table is typeset into a fixed width page as
+# well as rendered as Markdown. The detail that would have gone into a longer
+# name lives in `sample` instead.
 GATES: tuple[Gate, ...] = (
     Gate(
-        "Type I error, seed replicated mode",
+        "Type I error, seed replicated",
         "4.53 percent (+/- 0.74)",
         "3000 null cases",
-        "inside [2, 8] at a nominal 5",
+        "[2, 8] percent",
     ),
     Gate(
-        "Type I error, holding across seed variance 0.005 to 0.05",
+        "Type I error across seed variance",
         "4.40, 4.70, 5.00 percent",
-        "1000 cases each",
-        "inside [2, 8]",
+        "sigma 0.005 to 0.05",
+        "[2, 8] percent",
     ),
     Gate(
-        "Power, seed replicated mode, large effect",
+        "Power, seed replicated",
         "96.25 percent",
         "800 cases",
         "above 90 percent",
     ),
     Gate(
-        "Type I error, single run window block mode",
+        "Type I error, window block",
         "5.81 percent (+/- 1.04)",
         "1928 cases, 72 refused",
-        "inside [2, 8]",
+        "[2, 8] percent",
     ),
     Gate(
-        "Power, single run mode, large effect",
+        "Power, window block",
         "100 percent",
         "291 cases",
         "above 90 percent",
     ),
     Gate(
-        "Null p values uniform at 0.05, 0.10, 0.25, 0.50",
+        "Null p value uniformity",
         "0.058, 0.099, 0.241, 0.485",
         "1500 cases",
         "within 3 standard errors",

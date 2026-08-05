@@ -78,7 +78,40 @@ confused with a broken dependency.
 
 ## Phase 1: model, store and parsers
 
-Status: pending.
+Status: complete, 2026-08-05.
+
+Built: `Experiment` and `MetricSeries`, the SQLite `Store`, the three parsers
+behind a common `Parser` contract, run discovery, and the resumable `ingest`
+pass. Fixtures under `tests/fixtures` are committed and regenerated only on
+purpose, by `scripts/make_fixtures.py`.
+
+Two decisions worth recording.
+
+**Series are float32 in memory, not only on disk.** The store writes float32
+blobs, so holding float64 in memory would have made a round trip lossy in a way
+that no test could have called exact. Fixing the model at the storage precision
+turns "round trip preserves the series" into a bit for bit assertion, which is
+what `test_round_trip_is_bit_for_bit` now checks.
+
+**All four fixtures encode one identical series.** A TensorBoard event file, a
+wide CSV, a long CSV and a JSONL log all carry the same 60 point float32 series.
+That makes `test_all_formats_agree_exactly` possible, which is a far stronger
+statement than four separate smoke tests: it proves the parsers are
+interchangeable, which is the premise the whole comparison layer rests on.
+
+Checks run at the close of this phase:
+
+```text
+$ ruff format --check . && ruff check .
+19 files already formatted
+All checks passed!
+
+$ pytest tests/unit -q
+40 passed in 0.67s
+
+$ python scripts/check_no_dashes.py .
+OK: no em dashes or en dashes in 33 text files and 0 PDFs.
+```
 
 ## Phase 2: statistics and the calibration suite
 

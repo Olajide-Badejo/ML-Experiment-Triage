@@ -193,7 +193,71 @@ All checks passed!
 
 ## Phase 3: regression, sensitivity, HTML report
 
-Status: pending.
+Status: complete, 2026-08-05.
+
+Built: the two gate regression rule with Benjamini Hochberg correction and
+severity ranking; Spearman sensitivity with per parameter n; the self contained
+HTML report; the `ingest`, `compare` and `report` CLI verbs; the synthetic demo
+sweep and the end to end demo workflow; 17 integration tests.
+
+The demo sweep is deliberately built to exercise every path: three log formats
+in one sweep, a known best condition, a clear regression, a difference that is
+real but below the practical threshold, and one condition with a single seed so
+the weaker mode appears in the report beside the strong one.
+
+### Three things the integration tests found
+
+**1. The HTML report was not reproducible.** Left to itself Plotly mints a fresh
+UUID for each plot div, so two runs over identical data produced different
+files. That quietly broke the promise that a report is a pure function of the
+database and the seed. Fixed by passing an explicit `div_id` derived from the
+metric name. `test_report_is_byte_identical_when_rerun` now holds the line.
+
+**2. My first self containment test was wrong, not the report.** Searching the
+whole file for a URL fails on a correct report, because the inlined Plotly
+bundle carries map tile attributions and a default topojson host as string
+literals in code paths this report never touches. The test now strips the
+inlined scripts and checks the markup that remains, which is what actually
+causes a fetch.
+
+**3. Spearman cannot see the learning rate, and that is correct.** I expected
+learning rate to be the strongest correlate of the loss and asserted it. It is
+not, and the assertion was wrong. The sweep gives learning rate an optimum in
+the middle of its range: 0.0003 is worse than 0.001, 0.003 is best, 0.01 is far
+the worst. That is a U shape, and the rank correlation of a U shape is near zero
+however large the effect. Batch size, swept monotonically, shows the stronger
+correlation while driving the smaller effect.
+
+This is a real limitation of the method rather than a defect in the code, so it
+is now stated in the module docstring, printed under the sensitivity table in
+the report, and pinned by a test named for it, so that nobody later "fixes" the
+weak learning rate number. A near zero rank correlation means "not monotone",
+never "no effect".
+
+### Demo output, reproduced from fixed seeds
+
+31 runs across 7 conditions, 372,000 points, 2.0 MB of database at 2.5x
+compression on the series. Twelve comparisons against the baseline: three
+regressions, three improvements. The known best condition, `lr0.0030_bs32`, is
+the top ranked improvement and is what the tool reports as the best candidate,
+which is the ground truth it was given.
+
+One detail in that table is worth reading twice. The single seed condition
+`lr0.0030_bs128` reports an adjusted p of 0.0006, far smaller than the seed
+replicated conditions with comparable effects, which sit between 0.016 and
+0.032. That is the anticonservatism of the weaker mode showing up in the demo
+itself, not just in the calibration suite, and it is why the row is labelled.
+
+Checks run at the close of this phase:
+
+```text
+$ pytest tests/unit tests/integration -q
+113 passed in 18.93s
+
+$ python -m examples.demo_workflow
+demo workflow completed in 15.9 s
+best condition found: lr0.0030_bs32 (ground truth: lr0.0030_bs32)
+```
 
 ## Phase 4: documentation from measured numbers
 

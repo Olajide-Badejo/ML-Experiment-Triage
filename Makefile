@@ -19,7 +19,7 @@ endif
 
 DEMO_RUNS := experiments/results/demo_sweep
 DEMO_DB := experiments/demo/triage.db
-BASELINE := baseline_lr0.001_seed0
+BASELINE := lr0.0010_bs32
 
 help:
 	@echo "Targets:"
@@ -77,10 +77,10 @@ test-integration:
 	$(PY) -m pytest tests/integration -v
 
 demo:
-	$(PY) examples/demo_workflow.py
+	$(PY) -m examples.demo_workflow
 
 verify-demo:
-	$(PY) examples/demo_workflow.py --verify-committed
+	$(PY) -m examples.demo_workflow --verify-committed
 
 assets:
 	$(PY) scripts/gen_report_assets.py --database $(DEMO_DB)

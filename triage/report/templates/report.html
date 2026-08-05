@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ context.title }}: {{ context.baseline }}</title>
+<script>{{ plotly_js | safe }}</script>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb;
+  --plane: #f9f9f7;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --rule: #c3c2b7;
+  --good: #0ca30c;
+  --critical: #d03b3b;
+  --warning: #fab219;
+  --border: rgba(11, 11, 11, 0.10);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
+header { border-bottom: 2px solid var(--rule); padding-bottom: 20px; margin-bottom: 28px; }
+h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 19px; margin: 40px 0 12px; letter-spacing: -0.01em; }
+h3 { font-size: 15px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 600; }
+.sub { color: var(--ink-2); font-size: 13.5px; margin: 0; }
+.sub code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
+.lede { color: var(--ink-2); max-width: 76ch; margin: 0 0 4px; }
+
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0 8px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 18px; min-width: 148px;
+}
+.tile .value { font-size: 28px; font-weight: 650; line-height: 1.1; }
+.tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+.tile.bad .value { color: var(--critical); }
+.tile.good .value { color: var(--good); }
+
+.scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.wrap-cell { white-space: normal; min-width: 260px; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); }
+.badge.regression { background: #fbeaea; color: #8f2020; }
+.badge.improvement { background: #e6f6e6; color: #0a6b0a; }
+.badge.neutral { background: var(--plane); color: var(--ink-2); }
+.badge.weak { background: #fff4de; color: #7a5200; }
+.badge.strong { background: #eaf1fc; color: #1a4f8f; }
+
+.figure { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 8px 0; margin-bottom: 10px; overflow-x: auto; }
+.caption { color: var(--muted); font-size: 12.5px; margin: 0 0 26px; max-width: 88ch; }
+
+.note {
+  background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warning);
+  border-radius: 6px; padding: 12px 16px; margin: 14px 0; font-size: 13.5px; color: var(--ink-2);
+}
+.note strong { color: var(--ink); }
+ul.tight { margin: 6px 0; padding-left: 20px; }
+ul.tight li { margin: 3px 0; }
+footer { margin-top: 48px; border-top: 2px solid var(--rule); padding-top: 20px; color: var(--ink-2); font-size: 13px; }
+footer dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; margin: 10px 0 0; }
+footer dt { color: var(--muted); font-weight: 600; }
+footer dd { margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>{{ context.title }}</h1>
+  <p class="sub">
+    Baseline <code>{{ context.baseline }}</code> &middot;
+    {{ n_runs }} runs &middot;
+    generated {{ context.generated_at }} from <code>{{ context.database }}</code>
+  </p>
+</header>
+
+<p class="lede">
+  Every p value below is labelled with the test and the mode that produced it. Results from the
+  single run mode are marked as a weaker claim, because that mode cannot see seed to seed
+  variance. A finding is only called a regression when it clears both gates:
+  {{ context.regression_config.describe() }}.
+</p>
+
+{% set regressions = context.triage.regressions %}
+{% set improvements = context.triage.improvements %}
+<div class="tiles">
+  <div class="tile {% if regressions %}bad{% endif %}">
+    <div class="value">{{ regressions | length }}</div>
+    <div class="label">regressions</div>
+  </div>
+  <div class="tile {% if improvements %}good{% endif %}">
+    <div class="value">{{ improvements | length }}</div>
+    <div class="label">improvements</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ context.triage.findings | length }}</div>
+    <div class="label">comparisons</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ n_runs }}</div>
+    <div class="label">runs ingested</div>
+  </div>
+</div>
+
+<h2>Verdicts, ranked by severity</h2>
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Candidate</th>
+      <th>Metric</th>
+      <th>Verdict</th>
+      <th>Mode</th>
+      <th class="num">Baseline</th>
+      <th class="num">Candidate</th>
+      <th class="num">Change</th>
+      <th class="num">95% interval</th>
+      <th class="num">p (raw)</th>
+      <th class="num">p (BH adjusted)</th>
+      <th class="num">n</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for finding in context.triage.findings %}
+    {% set r = finding.result %}
+    <tr>
+      <td>{{ r.candidate }}</td>
+      <td>{{ r.tag }}</td>
+      <td>
+        <span class="badge {% if finding.is_regression %}regression{% elif finding.is_improvement %}improvement{% else %}neutral{% endif %}">
+          {{ finding.verdict }}
+        </span>
+      </td>
+      <td>
+        <span class="badge {% if r.is_weak_mode %}weak{% else %}strong{% endif %}">
+          {% if r.is_weak_mode %}single run, weaker{% else %}seed replicated{% endif %}
+        </span>
+      </td>
+      <td class="num">{{ "%.4f" | format(r.baseline_statistic) }}</td>
+      <td class="num">{{ "%.4f" | format(r.candidate_statistic) }}</td>
+      <td class="num">{{ r.relative_effect_pct | signed_pct }}%</td>
+      <td class="num">[{{ r.ci_low | signed }}, {{ r.ci_high | signed }}]</td>
+      <td class="num">{{ r.p_value | p }}</td>
+      <td class="num">{{ finding.adjusted_p | p }}</td>
+      <td class="num">{{ r.n_baseline }} vs {{ r.n_candidate }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  Change is relative to the baseline on the final window statistic. The interval is on the absolute
+  difference, not the percentage. Column <em>n</em> is seeds per side in the seed replicated mode and
+  blocks per side in the single run mode. Sorted with regressions first by severity, then improvements
+  by size.
+</p>
+
+{% set warned = context.triage.findings | selectattr("result.warnings") | list %}
+{% if warned %}
+<div class="note">
+  <strong>Caveats attached to specific results.</strong>
+  <ul class="tight">
+  {% for finding in warned %}
+    {% for warning in finding.result.warnings %}
+    <li><code>{{ finding.result.candidate }}</code> on <code>{{ finding.result.tag }}</code>: {{ warning }}</li>
+    {% endfor %}
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<h2>Curves</h2>
+{% for tag, figure in figures.items() %}
+<h3>{{ tag }}</h3>
+<div class="figure">{{ figure | safe }}</div>
+<p class="caption">
+  Each line is the mean across seeds of a {{ context.comparison_config.smoothing_window }} point
+  moving average; the band is the full range across seeds of that condition. The shaded region on the
+  right is the final window the statistic is taken over. Where two bands overlap, the conditions are
+  not separated by more than their own run to run noise, whatever the lines appear to do.
+</p>
+{% endfor %}
+
+<h2>Run inventory</h2>
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Condition</th>
+      <th class="num">Seeds</th>
+      <th>Source format</th>
+      {% for tag in figures.keys() %}<th class="num">{{ tag }} (mean, sd)</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in runs %}
+    <tr>
+      <td>{{ row.variant }}{% if row.variant == context.baseline %} (baseline){% endif %}</td>
+      <td class="num">{{ row.n_seeds }}</td>
+      <td>{{ row.formats | join(", ") }}</td>
+      {% for tag in figures.keys() %}
+        <td class="num">
+          {% if tag in row.statistics %}
+            {{ "%.4f" | format(row.statistics[tag].mean) }}
+            <span style="color: var(--muted)">&plusmn; {{ "%.4f" | format(row.statistics[tag].std) }}</span>
+          {% else %}&mdash;{% endif %}
+        </td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  The standard deviation is across seeds within a condition. Compare it against the change column
+  above: an effect smaller than this spread is not a finding, whatever its p value.
+</p>
+
+<h2>Hyperparameter sensitivity</h2>
+{% if context.sensitivity %}
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Parameter</th>
+      <th>Metric</th>
+      <th class="num">Spearman rho</th>
+      <th>Strength</th>
+      <th class="num">p</th>
+      <th class="num">n runs</th>
+      <th class="num">distinct values</th>
+      <th class="wrap-cell">Reading</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for item in context.sensitivity %}
+    <tr>
+      <td>{{ item.parameter }}</td>
+      <td>{{ item.tag }}</td>
+      <td class="num">{{ item.correlation | signed }}</td>
+      <td>{{ item.strength }}</td>
+      <td class="num">{{ item.p_value | p }}</td>
+      <td class="num">{{ item.n_runs }}</td>
+      <td class="num">{{ item.n_distinct_values }}</td>
+      <td class="wrap-cell">{{ item.direction }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  Spearman rank correlation, two sided. The <em>n runs</em> column is not decoration: a correlation
+  of 0.9 over four runs is not evidence of anything. These are associations across the sweep as it
+  was actually run, not controlled effects, so a parameter that only ever changed alongside another
+  cannot be separated from it here.
+</p>
+{% else %}
+<p class="caption">No hyperparameter varied over enough runs to rank correlate against.</p>
+{% endif %}
+
+<footer>
+  <h3 style="margin-top:0">Methodology and reproducibility</h3>
+  <dl>
+    <dt>Statistic</dt>
+    <dd>{{ context.comparison_config.describe() }}</dd>
+    <dt>Strong mode</dt>
+    <dd>Seed replicated permutation test. Null hypothesis: the condition label is exchangeable
+        across runs. Seed to seed variance is inside the null distribution.</dd>
+    <dt>Weak mode</dt>
+    <dd>Single run window block permutation test, block length three times the estimated
+        autocorrelation time. Null hypothesis: the two final windows are blockwise exchangeable.
+        This mode cannot see seed to seed variance and is labelled weaker wherever it appears.</dd>
+    <dt>Multiplicity</dt>
+    <dd>{{ context.regression_config.describe() }}, corrected across the metrics compared against
+        this one baseline.</dd>
+    <dt>Permutation seed</dt>
+    <dd>{{ context.comparison_config.seed }} (fixed; rerunning reproduces every number above)</dd>
+    {% for label, value in context.calibration.items() %}
+    <dt>{{ label }}</dt>
+    <dd>{{ value }}</dd>
+    {% endfor %}
+    <dt>Generated</dt>
+    <dd>{{ context.generated_at }} by ML Experiment Triage, from {{ context.database }}</dd>
+  </dl>
+</footer>
+
+</div>
+</body>
+</html>

@@ -16,10 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tqdm import tqdm
-
 from triage.core.store import Store
 from triage.parsers import DEFAULT_PARSERS, ParseError, Parser, discover_runs
+from triage.progress import track
 
 
 @dataclass
@@ -69,16 +68,14 @@ def ingest(
     runs = discover_runs(Path(root), parsers)
     result = IngestResult()
 
-    bar = tqdm(
+    tracked = track(
         runs,
-        desc="ingest",
-        unit="run",
-        disable=not show_progress or not runs,
-        leave=False,
+        "ingest",
+        enabled=show_progress and bool(runs),
+        label=lambda pair: pair[0].run_id(pair[1]),
     )
-    for parser, path in bar:
+    for parser, path in tracked:
         run_id = parser.run_id(path)
-        bar.set_postfix_str(run_id[:38], refresh=False)
         try:
             fingerprint = parser.fingerprint(path)
             known = store.source_hash(run_id)
@@ -95,5 +92,4 @@ def ingest(
                 result.updated.append(run_id)
         except (ParseError, OSError, ValueError) as error:
             result.failed.append((run_id, str(error)))
-    bar.close()
     return result

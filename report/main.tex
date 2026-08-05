@@ -1,0 +1,487 @@
+% ML Experiment Triage: main report.
+% Build with `make report`. Every number and figure is generated from the
+% database by scripts/gen_report_assets.py; nothing here is typed by hand.
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{pgfplots}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{fillbetween}
+
+% The validated reference categorical palette, in its documented slot order.
+\definecolor{seriesA}{HTML}{2A78D6}
+\definecolor{seriesB}{HTML}{EB6834}
+\definecolor{seriesC}{HTML}{1BAF7A}
+\definecolor{seriesD}{HTML}{EDA100}
+\definecolor{seriesE}{HTML}{E87BA4}
+\definecolor{seriesF}{HTML}{008300}
+\definecolor{baselinegrey}{HTML}{52514E}
+\definecolor{gridgrey}{HTML}{E1E0D9}
+\definecolor{axisgrey}{HTML}{C3C2B7}
+
+\captionsetup{font=small, labelfont=bf}
+\setlength{\parskip}{0.4em}
+
+\input{tables/facts.tex}
+
+\title{\textbf{ML Experiment Triage}\\[0.4em]
+\large Ranked, significance tested comparison of machine learning training runs}
+\author{Olajide Badejo}
+\date{5 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Comparing training runs by looking at curves fails in four compounding ways: the
+final point is mostly noise, curve values are autocorrelated enough to break the
+usual tests, run to run variance is routinely larger than the effects being
+claimed, and several metrics are compared at once. This report describes a tool
+that replaces that practice with a stated hypothesis, a permutation test whose
+assumptions the data actually satisfies, a two gate regression rule with false
+discovery control, and, most importantly, a calibration suite that measures the
+tool's own error rates rather than assuming them.
+
+The measured type I error is 4.53 percent against a nominal 5, with power of
+96.25 percent on a large effect. The report also publishes what the weaker single
+run mode costs: on synthetic runs with realistic seed variance and a true effect
+of exactly zero, comparing one run against one run calls the difference
+significant on up to 87 percent of cases, where the seed replicated mode holds at
+5. That number, rather than any feature, is the argument for the design.
+\end{abstract}
+
+\tableofcontents
+
+% ---------------------------------------------------------------------------
+\chapter{Introduction}
+
+The routine this project replaces is familiar. Two runs, a TensorBoard tab, one
+loss curve slightly below the other at the right hand edge, and a decision made
+on it. It is quick, it feels evidential, and it is close to worthless.
+
+The aim was to build something that answers a sharper question: which runs beat
+the baseline, by how much, with what statistical confidence, and, crucially,
+with the tool's own calibration proven by tests rather than asserted in a README.
+The last clause is the one that shaped everything else. A tool that produces p
+values is only useful if its p values mean what they say, and the only way to
+know that is to run it thousands of times against data whose truth you set
+yourself and count how often it is wrong.
+
+\section{Objectives}
+
+\begin{enumerate}
+  \item Parse TensorBoard event files, CSV and JSONL logs into one experiment
+    model, stored in SQLite so nothing is ever reparsed.
+  \item Compare any run against a baseline with a permutation test on a final
+    window statistic, reporting effect size, confidence interval and p value, in
+    two clearly labelled modes.
+  \item Flag regressions on two gates, statistical and practical, with
+    Benjamini Hochberg correction across metrics and ranking by severity.
+  \item Rank hyperparameter sensitivity, always reporting the sample size behind
+    each correlation.
+  \item Treat statistical calibration as a first class test.
+  \item Produce a self contained HTML report and reproducible PDFs.
+\end{enumerate}
+
+\section{What this report contains}
+
+Chapter~\ref{ch:background} sets out why curve comparison needs care.
+Chapter~\ref{ch:methodology} defines the statistic and both modes precisely, and
+states what each can and cannot claim. Chapter~\ref{ch:implementation} covers the
+engineering. Chapter~\ref{ch:results} gives the measured calibration, the demo
+verdict table and the sensitivity analysis. Chapter~\ref{ch:discussion} discusses
+the limitations honestly, and Chapter~\ref{ch:conclusion} concludes.
+
+% ---------------------------------------------------------------------------
+\chapter{Background}
+\label{ch:background}
+
+\section{Autocorrelation}
+
+Consecutive evaluations of a training run are correlated: the model at step 5000
+is nearly the model at step 4999. A test that treats a window of curve points as
+independent observations computes a standard error far too small and reports
+significance that is not there. This is not a small inefficiency. It is the
+difference between a test that controls its error rate and one that does not.
+
+This is why the permutation test here uses the \emph{run} as its unit of
+analysis, and why the single run mode has to permute blocks rather than points.
+
+\section{Multiple comparisons}
+
+Testing eight metrics at $\alpha = 0.05$ gives roughly a one in three chance of at
+least one false positive when nothing has changed. Any tool that compares several
+metrics at once and does not correct for it is manufacturing findings.
+
+Benjamini and Hochberg's step up procedure controls the false discovery rate and
+is the right instrument here, because training metrics are strongly correlated
+and Bonferroni assumes worst case dependence. On the fifteen p values in the
+original 1995 paper, Bonferroni rejects three where the step up procedure rejects
+four; that difference in power is real, and this project's implementation is
+tested against exactly that example.
+
+\section{Seed variance}
+
+Two identical configurations trained with different seeds land in different
+places, and in deep learning that spread is routinely larger than the effect
+sizes claimed from single runs. Bouthillier and colleagues set this out in detail
+in their MLSys 2021 accounting of variance in benchmarks, and it is the finding
+this tool is built around.
+
+The consequence is sharper than "be careful". A comparison with one run per side
+contains \emph{no information} about run to run variance. It cannot separate the
+effect of a change from the effect of a seed, not imprecisely but in principle.
+Section~\ref{sec:weakcost} measures what that costs.
+
+% ---------------------------------------------------------------------------
+\chapter{Methodology}
+\label{ch:methodology}
+
+\section{The statistic}
+
+For a tagged series of $n$ values, smooth with a centred moving average of width
+nine, then take the mean of the final window: the last
+$k = \max(20, \lceil 0.1n \rceil)$ points. The full specification as used is:
+
+\begin{quote}\small\factstatistic\end{quote}
+
+The window mean has roughly $\sqrt{k/\tau}$ times less noise than a single final
+point, where $\tau$ is the integrated autocorrelation time. Using the whole curve
+instead would mix how fast a run got going with how good it got, answering
+neither question.
+
+\section{Mode one: seed replicated}
+
+\textbf{Null hypothesis.} The condition label is exchangeable across runs; the
+final window statistics of the two conditions are draws from one distribution.
+
+\textbf{Test.} Pool the $m+n$ run level statistics, and over every split into
+groups of size $m$ and $n$ compute the difference of group means. The p value is
+the fraction at least as extreme in absolute value as the observed difference.
+With five seeds a side there are $\binom{10}{5} = 252$ arrangements, enumerated
+exhaustively, so the p value is exact rather than estimated.
+
+\textbf{Why this is the strong claim.} Seed variance sits inside the null
+distribution rather than being assumed away. If two conditions differ by less
+than the runs of one condition differ among themselves, the permutation
+distribution is wide and the p value is large, which is correct.
+
+\textbf{The design limit, reported not hidden.} With three seeds a side there are
+twenty distinct assignments, so the smallest attainable two sided p value is 0.1
+and no result can clear $\alpha = 0.05$. The tool computes this bound, warns when
+it exceeds alpha, and classifies such findings as inconclusive rather than as no
+change. A verdict of no significant difference from a design that could not have
+found one is not a finding.
+
+\section{Mode two: single run window block}
+
+\textbf{Null hypothesis.} The two final windows are blockwise exchangeable: both
+are segments of the same stationary process.
+
+\textbf{Test.} Split each final window into contiguous blocks of three times the
+estimated integrated autocorrelation time, estimated on each window separately,
+and permute the block labels between the runs.
+
+\textbf{Precondition, enforced.} The window must hold at least eight such blocks.
+Where it does not, the tool raises an error naming the remedy rather than
+shortening the block to fit. Section~\ref{sec:calibration} explains why that
+distinction is not fastidiousness.
+
+\textbf{What it cannot claim.} Its null is that these two windows come from the
+same process, which is not the question anyone is really asking. Every output
+from this mode is labelled a weaker claim.
+
+\section{Two gates}
+
+A finding is a regression only when both hold:
+
+\begin{quote}\small\factgates\end{quote}
+
+Direction is inferred from the tag name and can be overridden. Findings are
+ranked by severity, which scales the size of the harm by confidence and halves
+the result for the weaker mode, so a weaker claim never outranks a stronger claim
+of the same size.
+
+\section{Sensitivity}
+
+Spearman rank correlation between each numeric hyperparameter and the final
+window statistic, with the run count printed beside every correlation. Rank
+correlation rather than ANOVA, because sweeps are unbalanced and hyperparameter
+effects are usually monotone but strongly nonlinear.
+
+% ---------------------------------------------------------------------------
+\chapter{Implementation}
+\label{ch:implementation}
+
+\section{Model and storage}
+
+Every parser produces one \texttt{Experiment}: an identifier, a configuration,
+and a set of tagged step series. Everything downstream reads that model and
+nothing else, which is what lets a TensorBoard run and a JSONL log be compared
+without the analysis knowing where the numbers came from. The unit suite asserts
+this directly: four committed fixtures encoding one identical series in four
+containers parse to numerically identical experiments.
+
+Series are held and stored as float32. Holding float64 in memory while writing
+float32 would make a store round trip lossy in a way no test could honestly call
+exact; fixing the model at the storage precision makes the round trip a bit for
+bit assertion.
+
+Ingest fingerprints each source on path, size and modification time. An unchanged
+source is skipped, a changed one replaces its rows in a single transaction, and
+an interrupted ingest loses only the run in flight. Content hashing was rejected
+because hashing a directory of event files costs about as much as parsing it.
+
+\section{Demo sweep}
+
+The demo generates \factruns{} runs across \factconditions{} conditions, in three
+log formats at once, from fixed seeds. Table~\ref{tab:runs} lists them.
+
+\begin{table}[htbp]
+\centering
+\small
+\input{tables/runs.tex}
+\caption{The synthetic demo sweep. Spread is the standard deviation across seeds
+within a condition, and it is the quantity every claim in the next chapter has to
+overcome.}
+\label{tab:runs}
+\end{table}
+
+The database holds \factpoints{} points across \factseries{} series in
+\factdatabasekb{}~KB, a compression ratio of \factcompressionratio{} on the
+series blobs.
+
+% ---------------------------------------------------------------------------
+\chapter{Results}
+\label{ch:results}
+
+\section{Measured calibration}
+\label{sec:calibration}
+
+This is the section the rest of the report depends on.
+
+\begin{table}[htbp]
+\centering
+\small
+\input{tables/calibration.tex}
+\caption{Measured error rates against the phase gates. Every case is driven from
+a fixed seed, so these numbers are deterministic and reproduced by
+\texttt{make test-stats} in about a minute.}
+\label{tab:calibration}
+\end{table}
+
+Checking the error rate at a single threshold can be passed by a test that is
+wrong in two compensating directions, so the suite also checks that the null
+distribution of p values is uniform.
+
+\begin{table}[htbp]
+\centering
+\small
+\input{tables/uniformity.tex}
+\caption{Rejection rates under the null at four thresholds. A calibrated test is
+right everywhere, not only at 0.05.}
+\label{tab:uniformity}
+\end{table}
+
+\subsection{What calibration testing changed}
+
+The first full run of the suite measured the window block mode at a type I error
+of \textbf{12 percent} against a nominal 5. Two causes, both found by measurement
+rather than by reading the code.
+
+First, the autocorrelation time was estimated on the two windows concatenated.
+Joining two independent runs end to end puts a step change at the join, which the
+estimator reads as long range dependence, inflating the estimate by roughly a
+factor of two.
+
+Second, and more consequentially, the block length was one autocorrelation time.
+At one $\tau$ the block means are still visibly correlated with their neighbours.
+The observed split is contiguous, one run's blocks against the other's, but a
+permuted split scatters neighbouring blocks across both groups, breaking that
+correlation and producing a null distribution narrower than the truth. A null
+that is too narrow is exactly how a test becomes anticonservative.
+
+The fix was to estimate $\tau$ per window and set the block at three times it,
+chosen by measuring type I error across window lengths from 1200 to 8000 steps
+and autocorrelation coefficients from 0 to 0.9. That created a third decision:
+once the block is three $\tau$, a short run may not contain eight of them, and
+shortening the block to fit is precisely the failure above. So the mode refuses.
+A quietly miscalibrated p value is worse than no p value, because it spends
+credibility that nothing later can recover.
+
+\section{The cost of the weaker mode}
+\label{sec:weakcost}
+
+Table~\ref{tab:weakmode} is the most useful number this project produced. Both
+modes are run on synthetic runs carrying realistic seed variance, with a true
+effect of \emph{exactly zero}. Every rejection is a false positive.
+
+\begin{table}[htbp]
+\centering
+\small
+\input{tables/weak_mode.tex}
+\caption{False positive rates when the true effect is zero and seed variance is
+present. Comparing one run against one run, on data where nothing is different,
+calls it a significant difference most of the time.}
+\label{tab:weakmode}
+\end{table}
+
+This is not a defect in the implementation. It is what the question ``are these
+two curves different'' can answer when it has no information about how much a
+curve moves between seeds. The tool still offers the mode, because sometimes one
+run is all there is, and labels every result from it accordingly.
+
+\section{Demo verdicts}
+
+\begin{table}[htbp]
+\centering
+\scriptsize
+\input{tables/verdicts.tex}
+\caption{All \factcomparisons{} comparisons against \factbaseline{}, ranked by
+severity: \factregressions{} regressions and \factimprovements{} improvements.
+Rows marked $\dagger$ come from the weaker single run mode. Permutation seed
+\factpermutationseed{}.}
+\label{tab:verdicts}
+\end{table}
+
+The tool identifies \factbestcandidate{} as the best condition, which is the
+ground truth the sweep was built with, and does not flag the condition whose true
+effect is real but below the practical threshold.
+
+One row deserves a second look. The single seed condition reports an adjusted p
+of 0.0006, far smaller than the five seed conditions with comparable effects,
+which sit between 0.016 and 0.032. That is the anticonservatism of
+Table~\ref{tab:weakmode} appearing in the demo itself rather than only in the
+calibration suite.
+
+\begin{figure}[htbp]
+\centering
+\input{figures/val-loss-curves.tex}
+\caption{Validation loss. Each line is the mean across seeds of a smoothed curve;
+the band is the full range across seeds of that condition. Where two bands
+overlap, the conditions are not separated by more than their own run to run
+noise, whatever the lines appear to do.}
+\label{fig:loss}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\input{figures/val-accuracy-curves.tex}
+\caption{Validation accuracy for the same runs.}
+\label{fig:accuracy}
+\end{figure}
+
+\section{Sensitivity}
+
+\begin{table}[htbp]
+\centering
+\small
+\input{tables/sensitivity.tex}
+\caption{Spearman rank correlation of each swept hyperparameter against each
+metric, over all \factruns{} runs.}
+\label{tab:sensitivity}
+\end{table}
+
+Table~\ref{tab:sensitivity} demonstrates a real limitation rather than hiding it.
+Learning rate drives by far the largest effects in this sweep, and shows the
+\emph{weaker} correlation. The reason is that the sweep gives learning rate an
+optimum in the middle of its range: 0.0003 is worse than 0.001, 0.003 is the best
+of the four and 0.01 is by a distance the worst. That is a U shape, and the rank
+correlation of a U shape is near zero however large the effect. Batch size, swept
+monotonically over the same runs, correlates more strongly while driving a
+smaller effect.
+
+A near zero rank correlation here means \emph{not monotone}, never \emph{no
+effect}. The tool states this wherever the table appears.
+
+% ---------------------------------------------------------------------------
+\chapter{Discussion}
+\label{ch:discussion}
+
+\section{What this tool is honest about}
+
+Three limitations are documented, tested and printed rather than smoothed over:
+the single run mode cannot see seed variance and says so; rank correlation is
+blind to non monotone effects and the demo demonstrates it; and sensitivity is
+association across a sweep, not a controlled effect.
+
+Documenting a limitation is cheap. Building the demonstration of it into the
+demo, and pinning it with a test named for it so nobody later ``fixes'' the
+inconvenient number, is the part that took effort and is the part worth having.
+
+\section{What I would do differently}
+
+The Welch interval reported alongside the seed replicated p value leans on a
+normal approximation the p value itself does not need. It is named in the output
+for that reason. A percentile bootstrap over five seeds is known to be poor, so
+the alternative was not obviously better, but a properly studentised bootstrap
+would be more consistent.
+
+The severity ranking is a defensible heuristic rather than a derived quantity.
+Halving the weaker mode encodes a judgement about how much less a weak claim is
+worth, and that number is not measured.
+
+\section{Future work}
+
+A nonlinear dependence measure alongside Spearman, such as distance correlation,
+would see the U shape that rank correlation misses. A sequential mode that
+decides how many further seeds are needed to resolve an inconclusive comparison
+would be more useful than any of the above, since the most common honest verdict
+this tool gives is that there is not enough data yet.
+
+% ---------------------------------------------------------------------------
+\chapter{Conclusion}
+\label{ch:conclusion}
+
+The tool does what it set out to do: it takes a directory of runs in three log
+formats, and returns a ranked table saying which beat the baseline, by how much,
+with what confidence, and under which of two clearly separated claims.
+
+What makes it worth trusting is not any of that. It is that its error rates were
+measured rather than assumed, that the measurement found a real defect running at
+better than twice the nominal error rate, and that the fix was to make the tool
+refuse rather than to widen the gate. The calibration suite is the product; the
+comparison is what it certifies.
+
+\appendix
+\chapter{Reproducing this report}
+
+\begin{verbatim}
+make env      # Python 3.13 venv, pinned dependencies
+make test     # full suite including the calibration gates
+make demo     # regenerate the sweep, database and HTML report
+make all      # everything, including this PDF
+\end{verbatim}
+
+Every table and figure above was generated by
+\texttt{scripts/gen\_report\_assets.py} from the database, at permutation seed
+\factpermutationseed{}. No number in this document was typed by hand.
+
+\begin{thebibliography}{9}
+\bibitem{bh1995} Y. Benjamini and Y. Hochberg. Controlling the false discovery
+  rate: a practical and powerful approach to multiple testing. \emph{Journal of
+  the Royal Statistical Society, Series B}, 57(1):289\,to\,300, 1995.
+\bibitem{bouthillier2021} X. Bouthillier et al. Accounting for variance in
+  machine learning benchmarks. \emph{Proceedings of Machine Learning and Systems
+  (MLSys)}, 2021.
+\bibitem{good2005} P. Good. \emph{Permutation, Parametric, and Bootstrap Tests of
+  Hypotheses}, 3rd edition. Springer, 2005.
+\bibitem{phipson2010} B. Phipson and G. K. Smyth. Permutation p values should
+  never be zero. \emph{Statistical Applications in Genetics and Molecular
+  Biology}, 9(1), 2010.
+\end{thebibliography}
+
+\end{document}

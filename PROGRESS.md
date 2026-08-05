@@ -261,11 +261,64 @@ best condition found: lr0.0030_bs32 (ground truth: lr0.0030_bs32)
 
 ## Phase 4: documentation from measured numbers
 
-Status: pending.
+Status: complete, 2026-08-05.
+
+Written: README, `docs/methodology.md`, `docs/DESIGN_DECISIONS.md`,
+`docs/ENGINEERING_LOG.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, and the CI
+workflow. Every number in all of them is a measurement from this build. There
+are no placeholders and nothing reads "pending" except the two wall clock
+figures that Phase 6 fills in.
+
+The README leads with the calibration table rather than the feature list,
+because the calibration is the reason to believe the feature list. The second
+thing it shows is the number that makes the weaker mode look bad, on the
+principle that the most useful thing to publish is the measurement a reader
+would otherwise have to take on trust.
+
+CI runs the real suite including the calibration gates rather than a subset.
+Everything here is CPU bound, so there is no reason to skip the one claim that
+matters. The workflow has a second job that compiles all three PDFs from the
+committed demo database and then runs the dash guard over them, which is what
+makes "zero dashes including compiled PDFs" a build gate rather than an
+aspiration.
 
 ## Phase 5: main report and debug report
 
-Status: pending.
+Status: complete, 2026-08-05.
+
+Built: `scripts/gen_report_assets.py`, `report/main.tex` (17 pages),
+`report_debug/debug_report.tex` (6 pages) and `report_for_me/report_for_me.tex`
+(20 pages).
+
+Every table, figure and interpolated fact in the PDFs is generated from the
+database by the asset script, including a `facts.tex` of LaTeX macros for the
+numbers that appear in prose, so there is no path by which a report can state a
+figure that was not computed. Figures are pgfplots data files rather than raster
+images, which keeps them vector and typeset in the document's own font without
+adding an image toolchain to the project.
+
+Two problems in this phase, both recorded in the engineering log.
+
+**texify was never actually running.** The build produced a correct PDF while
+logging an unknown option error and falling back to a manual pdflatex sequence.
+MiKTeX spells the flag `--batch`; I had written pdflatex's `--batch-mode`. The
+fallback existed for the Ubuntu runner and worked, so the build stayed green and
+the specified driver was silently never used. A fallback that quietly becomes
+the primary path is worse than no fallback.
+
+**The dash guard caught an en dash in the document about the dash guard.** The
+flag names above, written as literal hyphen pairs in LaTeX prose, typeset as en
+dashes, and the guard flagged them in the source and in the compiled PDF. The
+obvious repair, verbatim mode, then failed to compile because verbatim is
+illegal inside a macro argument. The idiom that works in both positions is
+`-{}-`.
+
+Checks run at the close of this phase:
+
+```text
+$ python scripts/check_no_dashes.py .
+OK: no em dashes or en dashes in 63 text files and 3 PDFs.
+```
 
 ## Phase 6: final QA
 

@@ -6,11 +6,16 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Generated demo run directories and their database.
+# Generated demo run directories and any ad hoc database.
 # The demo sweep is deterministic, so the raw logs are rebuilt rather than stored.
 experiments/results/
 triage.db
 triage.db-journal
+
+# The demo database is the exception and is tracked on purpose: the LaTeX
+# reports and the CI report job compile from it without regenerating the sweep,
+# and `make verify-demo` proves it still matches what the seeds produce.
+!experiments/demo/triage.db
 
 # Generated report assets and LaTeX build directories.
 report/figures/

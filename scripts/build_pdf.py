@@ -63,7 +63,10 @@ def show_log_tail(log: Path, lines: int = 40) -> None:
 def build_with_texify(texify: str, source: Path) -> bool:
     # texify decides the pass count and runs bibtex itself when it sees
     # citations, so the bibtex flag is not passed through to it.
-    command = [texify, "--pdf", "--batch-mode", "--quiet", source.name]
+    # The flag is `--batch`, not `--batch-mode`: the latter is pdflatex's
+    # spelling and texify rejects it, which sent every build down the fallback
+    # path until it was noticed.
+    command = [texify, "--pdf", "--batch", "--quiet", source.name]
     result = run(command, source.parent)
     if result.returncode != 0:
         print(result.stdout[-2000:])

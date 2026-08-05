@@ -1,0 +1,116 @@
+name: CI
+
+# Everything in this project runs on CPU, so CI runs the real suite rather than
+# a subset. The calibration tests are the point of having tests here at all, and
+# skipping them in CI would leave the one claim that matters unverified.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      - name: Check formatting and lint
+        run: |
+          python -m ruff format --check .
+          python -m ruff check .
+
+      - name: Dash guard over sources
+        run: python scripts/check_no_dashes.py .
+
+      - name: Unit tests
+        run: python -m pytest tests/unit -q
+
+      - name: Statistical calibration gates
+        run: python -m pytest tests/statistics -q -s
+
+      - name: Integration tests
+        run: python -m pytest tests/integration -q
+
+      - name: Demo workflow
+        run: python -m examples.demo_workflow --quiet
+
+      - name: Verify the demo reproduces its committed verdicts
+        run: python -m examples.demo_workflow --verify-committed --quiet
+
+      - name: Upload the generated HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-report-html
+          path: experiments/results/triage_report.html
+          if-no-files-found: error
+
+  reports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      - name: Install TeX Live
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
+            texlive-pictures texlive-science poppler-utils
+
+      # The report compiles from the committed demo database, so this job proves
+      # the PDFs build from a checkout without first regenerating the sweep.
+      - name: Generate report assets from the committed database
+        run: python scripts/gen_report_assets.py --database experiments/demo/triage.db
+
+      - name: Compile the PDFs
+        run: |
+          python scripts/build_pdf.py report/main.tex --bibtex
+          python scripts/build_pdf.py report_debug/debug_report.tex
+          python scripts/build_pdf.py report_for_me/report_for_me.tex
+
+      - name: Dash guard over sources and compiled PDFs
+        run: python scripts/check_no_dashes.py .
+
+      - name: Upload the PDFs
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-pdf
+          path: |
+            report/main.pdf
+            report_debug/debug_report.pdf
+            report_for_me/report_for_me.pdf
+          if-no-files-found: error

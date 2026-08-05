@@ -2,11 +2,11 @@
 #
 # Everything in this project runs on CPU. `make all` from a clean tree builds
 # the environment, lints, runs the full test suite including the statistical
-# calibration gates, regenerates the demo sweep and database, and compiles all
-# three PDFs. No step needs manual intervention.
+# calibration gates, regenerates the demo sweep and database, and compiles both
+# PDFs. No step needs manual intervention.
 
 .PHONY: all help env lint fmt check-style test test-unit test-stats \
-        test-integration demo assets html report report-debug report-for-me \
+        test-integration demo assets html report report-debug images \
         pdfs verify-demo clean distclean
 
 ifeq ($(OS),Windows_NT)
@@ -29,7 +29,8 @@ help:
 	@echo "  test            full suite including calibration (slowest step)"
 	@echo "  demo            regenerate the synthetic sweep, database and HTML report"
 	@echo "  assets          regenerate report figures and tables from the database"
-	@echo "  pdfs            compile main, debug and personal reports"
+	@echo "  pdfs            compile the main and debug reports"
+	@echo "  images          regenerate the landing page charts (needs kaleido)"
 	@echo "  all             everything above, in order"
 	@echo "  clean           remove generated artifacts"
 
@@ -95,13 +96,17 @@ report:
 report-debug:
 	$(PY) scripts/build_pdf.py report_debug/debug_report.tex
 
-report-for-me:
-	$(PY) scripts/build_pdf.py report_for_me/report_for_me.tex
-
 pdfs:
 	$(MAKE) report
 	$(MAKE) report-debug
-	$(MAKE) report-for-me
+
+# Regenerating the landing page charts needs kaleido for static image export.
+# That is a development extra rather than a runtime dependency, so it is
+# installed here on demand and `images` is not part of `make all`. The images
+# themselves are committed.
+images:
+	$(PY) -m pip install --quiet kaleido
+	$(PY) scripts/make_result_images.py
 
 clean:
 	$(PY) scripts/clean.py

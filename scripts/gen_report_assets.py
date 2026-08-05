@@ -26,6 +26,7 @@ from triage.analysis.comparison import (
 )
 from triage.analysis.regression import RegressionConfig, TriageReport, classify
 from triage.analysis.sensitivity import analyse
+from triage.calibration import GATES, UNIFORMITY, WEAK_MODE_COST
 from triage.core.store import Store
 from triage.progress import track
 
@@ -36,32 +37,16 @@ BASELINE = "lr0.0010_bs32"
 
 MAX_PLOT_POINTS = 300
 
-# Measured by tests/statistics. Kept here as the single source for the tables so
-# the report and the HTML footer cannot drift apart.
-CALIBRATION_ROWS = [
-    (
-        "Type I error, seed replicated",
-        "4.53 percent (+/- 0.74)",
-        "3000 null cases",
-        "[2, 8] percent",
-    ),
-    ("Power, seed replicated", "96.25 percent", "800 cases, large effect", "above 90 percent"),
-    ("Type I error, window block", "5.81 percent (+/- 1.04)", "1928 null cases", "[2, 8] percent"),
-    ("Power, window block", "100 percent", "291 cases, large effect", "above 90 percent"),
-]
+# All measured numbers come from triage.calibration, which is the single source
+# the README, the HTML footer, these tables and the figures all read.
+CALIBRATION_ROWS = [(gate.name, gate.result, gate.sample, gate.gate) for gate in GATES]
 
 WEAK_MODE_ROWS = [
-    ("0.01", "53.2 percent", "4.4 percent"),
-    ("0.02", "77.0 percent", "4.7 percent"),
-    ("0.04", "87.4 percent", "5.0 percent"),
+    (f"{sigma:.2f}", f"{weak * 100:.1f} percent", f"{strong * 100:.1f} percent")
+    for sigma, weak, strong in WEAK_MODE_COST
 ]
 
-UNIFORMITY_ROWS = [
-    ("0.05", "0.058"),
-    ("0.10", "0.099"),
-    ("0.25", "0.241"),
-    ("0.50", "0.485"),
-]
+UNIFORMITY_ROWS = [(f"{threshold:.2f}", f"{measured:.3f}") for threshold, measured in UNIFORMITY]
 
 
 def escape(text: str) -> str:

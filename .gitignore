@@ -22,7 +22,6 @@ report/figures/
 report/tables/
 report/build/
 report_debug/build/
-report_for_me/build/
 *.aux
 *.log
 *.out
@@ -35,6 +34,9 @@ report_for_me/build/
 *.fdb_latexmk
 *.synctex.gz
 
+# Personal working material, kept locally and deliberately not published.
 # The build specification this repository was written from is an input to the
-# work, not part of the shipped project.
+# work rather than part of the shipped project, and report_for_me is a private
+# archival document.
 05_ML_Experiment_Triage_README.md
+report_for_me/

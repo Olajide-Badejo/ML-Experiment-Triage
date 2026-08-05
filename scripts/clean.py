@@ -19,7 +19,6 @@ DIRECTORIES = [
     "report/tables",
     "report/build",
     "report_debug/build",
-    "report_for_me/build",
     ".pytest_cache",
     ".ruff_cache",
 ]
@@ -38,10 +37,6 @@ GLOBS = [
     "report_debug/*.log",
     "report_debug/*.out",
     "report_debug/*.toc",
-    "report_for_me/*.aux",
-    "report_for_me/*.log",
-    "report_for_me/*.out",
-    "report_for_me/*.toc",
 ]
 
 

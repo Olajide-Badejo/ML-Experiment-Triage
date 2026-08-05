@@ -286,9 +286,8 @@ aspiration.
 
 Status: complete, 2026-08-05.
 
-Built: `scripts/gen_report_assets.py`, `report/main.tex` (17 pages),
-`report_debug/debug_report.tex` (6 pages) and `report_for_me/report_for_me.tex`
-(20 pages).
+Built: `scripts/gen_report_assets.py`, `report/main.tex` (17 pages) and
+`report_debug/debug_report.tex` (6 pages).
 
 Every table, figure and interpolated fact in the PDFs is generated from the
 database by the asset script, including a `facts.tex` of LaTeX macros for the

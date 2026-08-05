@@ -18,6 +18,7 @@ from pathlib import Path
 from triage.analysis.comparison import ComparisonConfig, ComparisonError, compare_all
 from triage.analysis.regression import RegressionConfig, TriageReport, classify
 from triage.analysis.sensitivity import analyse
+from triage.calibration import SUMMARY
 from triage.core.store import Store
 from triage.ingest import ingest
 
@@ -25,16 +26,9 @@ DEFAULT_DATABASE = "triage.db"
 
 # Measured by the calibration suite in tests/statistics and reproduced by
 # `make test`. Carried into every report footer so a reader never has to take
-# the error rates on trust.
-CALIBRATION_NOTE = {
-    "Measured type I error, strong mode": "4.53 percent at a nominal 5, over 3000 null cases",
-    "Measured power, strong mode": "96.25 percent on a large effect, over 800 cases",
-    "Measured type I error, weak mode": "5.81 percent at a nominal 5, over 1928 null cases",
-    "Cost of the weak mode": (
-        "on runs with realistic seed variance and a true effect of zero, the single run mode "
-        "fires on 53 to 87 percent of comparisons; the seed replicated mode stays at 4.4 to 5.0"
-    ),
-}
+# the error rates on trust. The numbers live in triage/calibration.py, which is
+# the single source the README, the PDFs, the figures and this all read.
+CALIBRATION_NOTE = SUMMARY
 
 
 def add_common(parser: argparse.ArgumentParser) -> None:

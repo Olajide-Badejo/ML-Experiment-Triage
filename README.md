@@ -193,10 +193,15 @@ the GPU in this machine is not used at any point):
 
 | Step | Time |
 |---|---|
-| `make test-stats`, the calibration suite | 59 s |
-| `make test`, the full suite | pending |
-| `make demo`, synthesise, ingest, compare, report | 16 s |
-| `make all` from a clean tree | pending |
+| `make test-stats`, the calibration suite, about 13,000 synthetic comparisons | 60 s |
+| `make test`, the full suite, 122 tests | 77 s |
+| `make demo`, synthesise 31 runs, ingest, compare, report | 17 s |
+| `make all` from a clean tree | 137 s |
+| `make all` from a fresh clone, including creating the environment | 205 s |
+
+These are measured, not estimated. The fresh clone figure is the one that
+matters: `git clone` followed by `make all` produces every artifact in this
+repository, including all three PDFs, with no manual step.
 
 ## Requirements
 

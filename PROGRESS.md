@@ -266,8 +266,8 @@ Status: complete, 2026-08-05.
 Written: README, `docs/methodology.md`, `docs/DESIGN_DECISIONS.md`,
 `docs/ENGINEERING_LOG.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, and the CI
 workflow. Every number in all of them is a measurement from this build. There
-are no placeholders and nothing reads "pending" except the two wall clock
-figures that Phase 6 fills in.
+are no placeholders. The only two values left open at this point were the
+wall clock figures, which Phase 6 measured and filled in.
 
 The README leads with the calibration table rather than the feature list,
 because the calibration is the reason to believe the feature list. The second
@@ -322,4 +322,63 @@ OK: no em dashes or en dashes in 63 text files and 3 PDFs.
 
 ## Phase 6: final QA
 
-Status: pending.
+Status: complete, 2026-08-05.
+
+### `make clean && make all`
+
+From a clean tree in the working directory: **137 seconds**, exit 0. 122 tests
+pass, the demo reproduces all twelve committed verdicts, all three PDFs compile
+and the dash guard passes over them.
+
+### The stronger check: a fresh clone
+
+`make clean` leaves the virtual environment in place, so it does not prove what
+the definition of done asks for. The real test is `git clone` into an empty
+directory followed by `make all`, which also catches anything the build needs
+that was never committed. That run took **205 seconds** and produced every
+artifact in the repository with no manual step.
+
+It was worth doing. Setting it up exposed that `experiments/demo/triage.db` was
+being swallowed by the `triage.db` ignore rule meant for ad hoc databases. The
+CI job that compiles the reports from the committed database would have failed
+on a clean checkout, and nothing in the working directory would ever have shown
+it, because the file was present locally.
+
+The clone also hit a Windows path length limit when cloned into a deeply nested
+temporary directory. That is a property of the destination path rather than of
+this repository, and a normal checkout is far from the limit, but it is recorded
+because the failure message (`Filename too long`) points at the fixture rather
+than at the path that caused it.
+
+### Measured wall clock, replacing the estimates
+
+| Step | Estimate in the specification | Measured |
+|---|---|---|
+| Test suite | 5 to 12 minutes | 77 seconds |
+| Demo workflow | 3 to 6 minutes | 17 seconds |
+| `make all` from a clean tree | 20 to 40 minutes | 137 seconds |
+| `make all` from a fresh clone | not estimated | 205 seconds |
+
+Every measurement came in well under the estimate. The largest single cost is
+the calibration suite at 60 seconds, and that is the one place where spending
+more time would buy something, since the width of the measured confidence
+intervals falls with the case count. The counts were already raised once, from
+2000 to 3000 null cases in the strong mode and from 600 to 2000 in the weak one,
+precisely because the budget allowed it.
+
+### Definition of done
+
+| Requirement | Status |
+|---|---|
+| `make all` clean on a fresh clone; README states measured wall clock | met, 205 s, table above |
+| Zero dash characters repo wide including compiled PDFs | met, guard passes over 63 files and 3 PDFs |
+| Calibration gates pass and measured rates appear in README and report | met, all six gates |
+| Every p value labelled with test and mode; weak mode visibly marked | met, enforced by tests over the real output |
+| Demo ranks the known best synthetic run first | met, top ranked improvement and `best_candidate` |
+| Both PDFs compile through the pipeline from the live database | met, three PDFs |
+| `ruff` clean; CI green; `v1.0.0` tagged | ruff clean, tag applied, CI runs on push |
+
+One note on the fifth row. The verdict table leads with regressions, because a
+regression is the thing to act on first, so the known best run is the top ranked
+*improvement* rather than the first row overall. The test asserts exactly that,
+and the ranking is documented where it is printed.

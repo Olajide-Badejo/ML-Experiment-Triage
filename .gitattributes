@@ -1,0 +1,19 @@
+# This repository is developed on Windows and tested on Ubuntu in CI.
+# Text is normalised to LF in the object store so a CRLF Makefile or shell
+# script never reaches the Linux runner.
+* text=auto eol=lf
+
+Makefile text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.tex text eol=lf
+*.bib text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+# Binary fixtures and artifacts must never be line ending converted.
+*.pdf binary
+*.png binary
+*.db binary
+*.tfevents.* binary
+tests/fixtures/tensorboard/** binary

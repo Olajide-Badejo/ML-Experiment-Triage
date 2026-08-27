@@ -303,6 +303,48 @@ Documented, tested, and printed next to the results rather than buried.
 
 ---
 
+## Used by
+
+- **[autofill-audit](https://github.com/Olajide-Badejo/Autofill_audit)** uses this package to
+  decide whether the difference between three form-field classifiers is real: it hands
+  `permutation_p_value` a paired sign-flip null clustered at the template level, corrects the
+  whole family of comparisons with `benjamini_hochberg`, and runs `classify` alongside its own
+  practical-effect gate as a visible cross check.
+
+That project is this package's second consumer, and it is the first one that did not write it.
+The distinction matters more than the link does. Infrastructure with exactly one consumer has
+not been shown to be infrastructure; it has been shown to be part of that one program. Until a
+second, independently designed project depends on it across a package boundary and finds the
+API sufficient, the generality is an assertion.
+
+**The friction that crossing exposed is the useful part, and it is recorded rather than
+smoothed away.** Five issues came out of the integration, each with a concrete API proposal:
+[#1](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/1) ingestion of a
+cross-sectional run log that has no step field because it has no time axis;
+[#2](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/2) a paired, clustered
+permutation entry point, since no public one accepts a cluster assignment;
+[#3](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/3) an absolute
+practical-effect threshold beside the relative one;
+[#4](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/4) a stable join key on
+`classify()` output, which reorders and whose `Finding.tag` is not unique when one metric is
+compared across several slices; and
+[#5](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/5) packaging: ship
+`py.typed`, split the ingestion and report dependencies into extras, and publish to an index.
+
+The split ran cleanly through the middle of this package and where it ran is the finding. The
+statistical primitives fit that project exactly and were used unchanged. The data model, the
+ingestion layer and the comparison entry points did not fit at all, because they model a
+training run observed over time and that project measures a set of items observed once. The
+parts built around the statistics generalised; the parts built around the shape of a training
+run did not, and they did not because that shape was never a statistical assumption in the
+first place.
+
+The consumer's side of the ledger, with the workarounds standing in the meantime and what each
+one costs, is in
+[docs/cross-repo-tasks.md](https://github.com/Olajide-Badejo/Autofill_audit/blob/main/docs/cross-repo-tasks.md).
+
+---
+
 ## Engineering notes
 
 A few things worth pulling out of the [debug report](report_debug/debug_report.pdf).

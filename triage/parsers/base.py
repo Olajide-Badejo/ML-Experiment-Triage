@@ -29,9 +29,21 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from triage.core.experiment import Experiment
+from triage.core.experiment import Experiment, MetricSeries
 
 CONFIG_FILENAME = "config.json"
+
+
+def non_finite_metadata(metrics: dict[str, MetricSeries]) -> dict[str, Any]:
+    """Metadata entries reporting what the non finite filter discarded.
+
+    Every parser merges this into its experiment metadata, so the loss is
+    visible in the same place whatever format the run was written in, and the
+    ingest summary can report it without knowing which parser ran.
+    """
+    dropped = {tag: series.dropped_non_finite for tag, series in metrics.items()}
+    dropped = {tag: count for tag, count in sorted(dropped.items()) if count}
+    return {"dropped_non_finite": dropped, "n_dropped_non_finite": sum(dropped.values())}
 
 
 class ParseError(RuntimeError):

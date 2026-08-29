@@ -26,12 +26,22 @@ import numpy as np
 import pandas as pd
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import ParseError, Parser
+from triage.parsers.base import ParseError, Parser, non_finite_metadata
 
 STEP_COLUMNS = ("step", "global_step", "iteration", "iter", "epoch")
 TAG_COLUMNS = ("tag", "metric", "name", "key")
 VALUE_COLUMNS = ("value", "val")
 WALL_COLUMNS = ("wall_time", "wall", "timestamp", "time")
+
+# Spellings that mean "this point was measured and the measurement is not a
+# finite number", as opposed to an empty cell, which means the point is absent.
+# The distinction matters: the first is counted as a dropped non finite point
+# and reported, the second is simply not part of the series. pandas collapses
+# both to NaN by default, so the file is read with NA detection off and these
+# are recognised here instead.
+NON_FINITE_SPELLINGS = frozenset(
+    {"nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"}
+)
 
 
 def _first_match(columns: list[str], candidates: tuple[str, ...]) -> str | None:
@@ -40,6 +50,19 @@ def _first_match(columns: list[str], candidates: tuple[str, ...]) -> str | None:
         if candidate in lowered:
             return lowered[candidate]
     return None
+
+
+def _numeric(column: pd.Series) -> tuple[pd.Series, np.ndarray]:
+    """Convert a raw column to floats, and say which cells held a measurement.
+
+    Returns the numeric column and a boolean mask that is True for a cell that
+    parsed to a number, finite or not. A cell that is blank, or holds text that
+    is not a number, is False: that point was never measured.
+    """
+    numeric = pd.to_numeric(column, errors="coerce")
+    text = column.astype(str).str.strip().str.lower()
+    measured = numeric.notna().to_numpy() | text.isin(NON_FINITE_SPELLINGS).to_numpy()
+    return numeric, measured
 
 
 class CsvParser(Parser):
@@ -62,7 +85,7 @@ class CsvParser(Parser):
         shapes: dict[str, str] = {}
         for csv_path in files:
             try:
-                frame = pd.read_csv(csv_path)
+                frame = pd.read_csv(csv_path, keep_default_na=False, na_values=[])
             except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as error:
                 raise ParseError(f"{csv_path} is not readable CSV: {error}") from error
             parsed, shape = self._parse_frame(frame, csv_path)
@@ -79,6 +102,7 @@ class CsvParser(Parser):
                 "csv_files": [p.name for p in files],
                 "csv_shapes": shapes,
                 "scalar_tags": sorted(metrics),
+                **non_finite_metadata(metrics),
             },
         )
 
@@ -110,11 +134,16 @@ class CsvParser(Parser):
         tag_column: str,
         value_column: str,
     ) -> dict[str, MetricSeries]:
-        values = pd.to_numeric(frame[value_column], errors="coerce")
+        # A cell that is not a number at all (blank, or text such as "n/a") is
+        # an absent point and never reaches the series. A cell that spells a
+        # non finite number is a poisoned point: it is passed through so that
+        # `MetricSeries` drops it and counts it, which is what makes the three
+        # formats agree on the same poisoned run.
+        values, measured = _numeric(frame[value_column])
         metrics: dict[str, MetricSeries] = {}
         for tag, index in frame.groupby(frame[tag_column].astype(str)).groups.items():
             rows = frame.index.isin(index)
-            keep = rows & steps.notna().to_numpy() & values.notna().to_numpy()
+            keep = rows & steps.notna().to_numpy() & measured
             if not keep.any():
                 continue
             metrics[str(tag)] = MetricSeries(
@@ -136,8 +165,8 @@ class CsvParser(Parser):
         for name in frame.columns:
             if str(name) in skip:
                 continue
-            values = pd.to_numeric(frame[name], errors="coerce")
-            keep = (steps.notna() & values.notna()).to_numpy()
+            values, measured = _numeric(frame[name])
+            keep = steps.notna().to_numpy() & measured
             if not keep.any():
                 continue  # a text column such as a note or a checkpoint path
             metrics[str(name)] = MetricSeries(

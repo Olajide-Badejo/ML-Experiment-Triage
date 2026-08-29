@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import ParseError, Parser
+from triage.parsers.base import ParseError, Parser, non_finite_metadata
 
 EVENT_FILE_GLOB = "*tfevents*"
 
@@ -71,5 +71,6 @@ class TensorBoardParser(Parser):
                 "event_files": event_files,
                 "n_event_files": len(event_files),
                 "scalar_tags": sorted(metrics),
+                **non_finite_metadata(metrics),
             },
         )

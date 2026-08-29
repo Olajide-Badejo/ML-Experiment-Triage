@@ -33,20 +33,34 @@ class SeriesError(ValueError):
 class MetricSeries:
     """One tagged scalar series from one run, sorted by step and deduplicated.
 
+    Every value in a constructed series is finite. Non finite points are
+    dropped on construction and counted, which is the single chokepoint the
+    whole tool relies on: no statistic downstream has to defend itself against
+    a NaN, because one cannot get this far.
+
     Attributes:
         tag: metric name as it appeared in the source, for example `val/loss`.
         steps: strictly increasing int64 training steps.
-        values: float32 metric values, one per step.
+        values: finite float32 metric values, one per step.
         wall_times: optional float64 seconds since the epoch, one per step.
+        dropped_non_finite: how many points were discarded as NaN or infinite.
+            Callers pass a starting count when points were already dropped
+            upstream, for example a parser that discarded a `null`.
     """
 
     tag: str
     steps: np.ndarray
     values: np.ndarray
     wall_times: np.ndarray | None = None
+    dropped_non_finite: int = 0
 
     def __post_init__(self) -> None:
-        steps = np.asarray(self.steps, dtype=np.int64).reshape(-1)
+        raw_steps = np.asarray(self.steps).reshape(-1)
+        if raw_steps.size and not np.issubdtype(raw_steps.dtype, np.integer):
+            as_float = np.asarray(raw_steps, dtype=np.float64)
+            if not bool(np.isfinite(as_float).all()):
+                raise SeriesError(f"tag {self.tag!r} has non finite steps")
+        steps = np.asarray(raw_steps, dtype=np.int64).reshape(-1)
         values = np.asarray(self.values, dtype=np.float32).reshape(-1)
         if steps.size != values.size:
             raise SeriesError(f"tag {self.tag!r} has {steps.size} steps but {values.size} values")
@@ -57,6 +71,21 @@ class MetricSeries:
                 raise SeriesError(
                     f"tag {self.tag!r} has {wall_times.size} wall times for {steps.size} steps"
                 )
+
+        # The non finite chokepoint. NaN and +/- infinity reach a series from
+        # divergence, from a JSON `NaN` literal, and from a CSV cell reading
+        # `inf`, and every one of them fabricates a result downstream: a NaN in
+        # a final window makes the permutation comparison return an exact p of
+        # 0.0, and an infinite effect ranks a diverged run first. There is no
+        # honest arithmetic to do with such a point, so it is dropped here,
+        # once, where every parser and every store load passes through, and the
+        # count is kept so the loss is reported rather than hidden.
+        finite = np.isfinite(values)
+        dropped = int(finite.size - int(finite.sum()))
+        if dropped:
+            steps, values = steps[finite], values[finite]
+            if wall_times is not None:
+                wall_times = wall_times[finite]
 
         # Sort by step, then keep the last record for any repeated step. A step
         # is written more than once when a job is resumed from a checkpoint, and
@@ -71,6 +100,7 @@ class MetricSeries:
         object.__setattr__(self, "steps", steps[keep])
         object.__setattr__(self, "values", values[keep])
         object.__setattr__(self, "wall_times", None if wall_times is None else wall_times[keep])
+        object.__setattr__(self, "dropped_non_finite", int(self.dropped_non_finite) + dropped)
 
     def __len__(self) -> int:
         return int(self.steps.size)

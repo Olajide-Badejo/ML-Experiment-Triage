@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import ParseError, Parser
+from triage.parsers.base import ParseError, Parser, non_finite_metadata
 from triage.parsers.csv_parser import STEP_COLUMNS, TAG_COLUMNS, VALUE_COLUMNS, WALL_COLUMNS
 
 RECORD_KEYS = ("metrics", "history", "records", "logs")
@@ -84,6 +84,7 @@ class JsonlParser(Parser):
                 "records": len(records),
                 "malformed_lines": malformed,
                 "scalar_tags": sorted(metrics),
+                **non_finite_metadata(metrics),
             },
         )
 

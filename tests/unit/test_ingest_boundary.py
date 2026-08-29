@@ -177,9 +177,7 @@ def test_a_run_directly_under_the_root_keeps_its_plain_name(
         assert store.run_ids() == ["run_a"]
 
 
-def test_run_ids_use_forward_slashes_on_every_platform(
-    tmp_path: Path, temp_database: Path
-) -> None:
+def test_run_ids_use_forward_slashes_on_every_platform(tmp_path: Path, temp_database: Path) -> None:
     root = tmp_path / "sweep"
     write_run(root / "group" / "run_a")
     with Store(temp_database) as store:

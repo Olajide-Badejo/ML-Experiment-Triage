@@ -151,9 +151,7 @@ def make_tpt_jsonl(series: dict[str, np.ndarray]) -> None:
     for index in range(8):
         if index == 4:
             lines.append(json.dumps(header))
-        lines.append(
-            json.dumps({"step": index, "loss": float(series["train/loss"][index])})
-        )
+        lines.append(json.dumps({"step": index, "loss": float(series["train/loss"][index])}))
     (directory / "metrics.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

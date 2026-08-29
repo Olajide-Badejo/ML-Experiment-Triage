@@ -381,9 +381,7 @@ def test_extra_numeric_columns_in_a_long_csv_are_counted_and_warned(tmp_path: Pa
     with pytest.warns(UserWarning, match="grad_norm"):
         experiment = CsvParser().parse(run)
     assert experiment.tags == ["loss"]
-    assert experiment.metadata["ignored_long_form_columns"] == {
-        "metrics.csv": ["grad_norm", "lr"]
-    }
+    assert experiment.metadata["ignored_long_form_columns"] == {"metrics.csv": ["grad_norm", "lr"]}
 
 
 # -------------------------------------------------------------------- D21i

@@ -164,6 +164,57 @@ def test_compare_prints_a_ranked_table(database: Path, capsys: pytest.CaptureFix
     assert "[weak]" in printed, "the weaker mode must be marked in the terminal output too"
 
 
+def _verdict_for(printed: str, candidate: str, tag: str) -> str:
+    """The verdict cell of the one table row for this candidate and metric."""
+    rows = [
+        line for line in printed.splitlines() if line.startswith(candidate) and f" {tag} " in line
+    ]
+    assert len(rows) == 1, f"expected one row for {candidate} on {tag}, got {rows}"
+    return rows[0]
+
+
+def test_a_direction_flag_flips_the_verdict_on_that_metric(
+    database: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D17: the documented direction override is reachable from the command line.
+
+    The worst condition raises val/loss, which is a regression by default. Told
+    that a larger val/loss is better, the same numbers must read as the
+    improvement they then are, and only on the tag that was named.
+    """
+    argv = ["compare", "--database", str(database), "--baseline", BASELINE, "--quiet"]
+    assert main(argv) == 0
+    default_row = _verdict_for(capsys.readouterr().out, WORST_CONDITION, "val/loss")
+    assert "regression" in default_row
+
+    assert main([*argv, "--higher-is-better", "val/loss"]) == 0
+    flipped = capsys.readouterr().out
+    assert "improvement" in _verdict_for(flipped, WORST_CONDITION, "val/loss")
+    # val/accuracy was not named, so its own inference still stands.
+    assert "improvement" not in _verdict_for(flipped, WORST_CONDITION, "val/accuracy")
+
+
+def test_a_tag_named_in_both_direction_flags_is_a_usage_error(
+    database: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        [
+            "compare",
+            "--database",
+            str(database),
+            "--baseline",
+            BASELINE,
+            "--quiet",
+            "--higher-is-better",
+            "val/loss",
+            "--lower-is-better",
+            "val/loss",
+        ]
+    )
+    assert code == 2
+    assert "both higher and lower is better" in capsys.readouterr().err
+
+
 def test_report_writes_a_self_contained_html_file(database: Path, tmp_path: Path) -> None:
     output = tmp_path / "report.html"
     assert (

@@ -122,6 +122,40 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
         default=ComparisonConfig.seed,
         help="permutation seed, printed in every report",
     )
+    parser.add_argument(
+        "--higher-is-better",
+        action="append",
+        metavar="TAG",
+        help=(
+            "treat TAG as a metric where a larger value is an improvement, "
+            "overriding the guess made from its name (repeatable)"
+        ),
+    )
+    parser.add_argument(
+        "--lower-is-better",
+        action="append",
+        metavar="TAG",
+        help="the same override in the other direction (repeatable)",
+    )
+
+
+def directions_from(args: argparse.Namespace) -> dict[str, bool]:
+    """The per tag direction overrides named on the command line.
+
+    Direction is inferred from the tag name, which is a convenience that is
+    occasionally wrong: a name this tool has never seen defaults to lower is
+    better, and a metric can be spelled in a way no table will catch. These two
+    flags are how that is corrected from outside the code.
+    """
+    higher = list(getattr(args, "higher_is_better", None) or [])
+    lower = list(getattr(args, "lower_is_better", None) or [])
+    both = sorted(set(higher) & set(lower))
+    if both:
+        raise ComparisonError(
+            f"{', '.join(both)} given as both higher and lower is better; a metric "
+            f"improves in one direction, so name it in one flag"
+        )
+    return dict.fromkeys(higher, True) | dict.fromkeys(lower, False)
 
 
 def configs_from(args: argparse.Namespace) -> tuple[ComparisonConfig, RegressionConfig]:
@@ -132,6 +166,7 @@ def configs_from(args: argparse.Namespace) -> tuple[ComparisonConfig, Regression
             n_permutations=args.permutations,
             alpha=args.alpha,
             seed=args.seed,
+            directions=directions_from(args),
         ),
         RegressionConfig(
             alpha=args.alpha,

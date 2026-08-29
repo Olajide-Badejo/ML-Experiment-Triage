@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import stats as scipy_stats
 
-from triage.analysis.comparison import ComparisonConfig, infer_direction, window_statistic
+from triage.analysis.comparison import ComparisonConfig, direction_for, window_statistic
 from triage.core.experiment import Experiment
 
 # Below this many distinct parameter values a rank correlation says nothing, so
@@ -141,7 +141,7 @@ def analyse(
                     n_runs=int(present.sum()),
                     n_distinct_values=distinct,
                     value_range=(float(values.min()), float(values.max())),
-                    higher_is_better=infer_direction(tag),
+                    higher_is_better=direction_for(tag, config),
                 )
             )
 

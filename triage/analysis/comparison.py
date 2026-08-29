@@ -40,7 +40,9 @@ Tests of Hypotheses*, 3rd ed., Springer 2005).
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from math import comb
 from typing import Any
@@ -52,9 +54,10 @@ from triage.core.experiment import Experiment, MetricSeries, SeriesError
 
 DEFAULT_SEED = 20260805
 
-# Tag name fragments that settle which direction is an improvement. Checked as
-# substrings of the lowercased tag, longest first, so `val/loss` and
-# `top1_accuracy` both resolve without configuration.
+# Tag name words that settle which direction is an improvement. Matched against
+# the WORDS of the tag, longest first, so `val/loss` and `top1_accuracy` both
+# resolve without configuration while `val/mape` is not read as a mean average
+# precision because the three letters of `map` happen to start it.
 LOWER_IS_BETTER = (
     "perplexity",
     "loss",
@@ -64,6 +67,8 @@ LOWER_IS_BETTER = (
     "mse",
     "rmse",
     "mae",
+    "mape",
+    "smape",
     "wer",
     "cer",
     "fid",
@@ -124,14 +129,24 @@ class ComparisonConfig:
     alpha: float = 0.05
     min_replicates_for_seed_mode: int = 3
     seed: int = DEFAULT_SEED
+    #: Per tag direction overrides, `{tag: higher_is_better}`. A tag listed here
+    #: is never guessed at from its name, at any entry point.
+    directions: Mapping[str, bool] = field(default_factory=dict)
 
     def describe(self) -> str:
+        overrides = ""
+        if self.directions:
+            named = ", ".join(
+                f"{tag} ({'higher' if better else 'lower'} is better)"
+                for tag, better in sorted(self.directions.items())
+            )
+            overrides = f"; direction set by the caller for {named}"
         return (
             f"final window mean over the last max({self.window_minimum}, "
             f"{self.window_fraction:.0%} of steps) points of a "
             f"{self.smoothing_window} point moving average; "
             f"two sided permutation test at alpha {self.alpha:g}; "
-            f"seed {self.seed}"
+            f"seed {self.seed}{overrides}"
         )
 
 
@@ -208,18 +223,57 @@ class ComparisonResult:
 # --------------------------------------------------------------------- helpers
 
 
+#: Word boundaries in a metric tag: any run of characters that is neither a
+#: letter nor a digit. A camel case hump is a boundary too, so `valMAP` and
+#: `val/map` produce the same words.
+_NOT_A_WORD = re.compile(r"[^a-z0-9]+")
+_CAMEL_HUMP = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def tag_words(tag: str) -> frozenset[str]:
+    """The words of a metric tag, for direction matching.
+
+    Splitting matters more than it looks. Matching the table as substrings read
+    `val/mape` and `val/smape` as mean average precision, because the three
+    letters of `map` start both of them, and reported a rising error as an
+    improvement. Words cannot do that: `mape` is a word, `map` is not in it.
+
+    Camel case is read both ways, and deliberately. Splitting the humps is what
+    finds the `loss` in `valLoss`; not splitting them is what finds the `map` in
+    `mAP@50`, which is how that metric is conventionally spelled. Both spellings
+    contribute words, because a word that matches under either reading is
+    evidence, and neither reading can invent a word the tag does not contain.
+    """
+    plain = _NOT_A_WORD.split(tag.lower())
+    humped = _NOT_A_WORD.split(_CAMEL_HUMP.sub(" ", tag).lower())
+    return frozenset(word for word in plain + humped if word)
+
+
 def infer_direction(tag: str) -> bool:
     """True when a larger value of this metric is better.
 
     Resolved from the tag name so that the common case needs no configuration.
-    The longest matching fragment wins, so `val/top1_accuracy` is not decided by
-    the `acc` in `accuracy` before `accuracy` itself has been considered, and a
-    tag matching nothing defaults to lower is better, which is what a loss is.
+    The longest matching word wins, so `val/top1_accuracy` is not decided by the
+    `acc` entry before `accuracy` itself has been considered, and a tag matching
+    nothing defaults to lower is better, which is what a loss is.
     """
-    lowered = tag.lower()
-    best_higher = max((len(f) for f in HIGHER_IS_BETTER if f in lowered), default=0)
-    best_lower = max((len(f) for f in LOWER_IS_BETTER if f in lowered), default=0)
+    words = tag_words(tag)
+    best_higher = max((len(f) for f in HIGHER_IS_BETTER if f in words), default=0)
+    best_lower = max((len(f) for f in LOWER_IS_BETTER if f in words), default=0)
     return best_higher > best_lower
+
+
+def direction_for(tag: str, config: ComparisonConfig | None = None) -> bool:
+    """The direction in force for a tag: the caller's override, else the guess.
+
+    Inference from the name is a convenience and it is sometimes wrong, which is
+    survivable only if the answer can be corrected without editing this table.
+    `ComparisonConfig.directions` is that correction, and it is threaded through
+    every entry point rather than existing only on the innermost function.
+    """
+    if config is not None and tag in config.directions:
+        return bool(config.directions[tag])
+    return infer_direction(tag)
 
 
 def _finite_window(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
@@ -411,7 +465,7 @@ def compare_seed_replicated(
         candidate_runs[0].variant_key if candidate_runs else "candidate"
     )
     if higher_is_better is None:
-        higher_is_better = infer_direction(tag)
+        higher_is_better = direction_for(tag, config)
 
     baseline_stats = _statistics_for(baseline_runs, tag, config)
     candidate_stats = _statistics_for(candidate_runs, tag, config)
@@ -518,7 +572,7 @@ def compare_window_block(
     """
     config = config or ComparisonConfig()
     if higher_is_better is None:
-        higher_is_better = infer_direction(tag)
+        higher_is_better = direction_for(tag, config)
 
     baseline_window = window_values(baseline_run.series(tag), config)
     candidate_window = window_values(candidate_run.series(tag), config)
@@ -686,6 +740,7 @@ def compare_all(
                         runs,
                         tag,
                         config,
+                        higher_is_better=direction_for(tag, config),
                         baseline_name=baseline_key,
                         candidate_name=variant_key,
                     )

@@ -20,6 +20,7 @@ from triage.analysis.comparison import (
     compare_all,
     compare_seed_replicated,
     compare_window_block,
+    direction_for,
     group_by_variant,
     infer_direction,
     integrated_autocorrelation_time,
@@ -61,10 +62,40 @@ def flat_run(run_id: str, level: float, n: int = 400, tag: str = "val/loss") -> 
         ("val/word_error_rate", False),
         ("val/auroc", True),
         ("something_unlabelled", False),
+        # D17: `map` is a metric, `mape` and `smape` are errors, and substring
+        # matching read the three character fragment inside both of them.
+        ("val/mape", False),
+        ("val/smape", False),
+        ("val/map", True),
+        ("val/mAP@50", True),
+        ("val/mean_absolute_percentage_error", False),
+        # Token boundaries, not substrings: `accuracy_loss` is not a thing, but
+        # a tag can still carry a fragment inside a longer word.
+        ("train/mapper_loss", False),
+        ("val/reward", True),
     ],
 )
 def test_direction_is_inferred_from_the_tag(tag: str, expected: bool) -> None:
     assert infer_direction(tag) is expected
+
+
+def test_a_direction_in_the_config_beats_the_inference() -> None:
+    """D17: the documented override has to be reachable without editing code."""
+    config = ComparisonConfig(n_permutations=1000, directions={"val/loss": True})
+    assert direction_for("val/loss", config) is True
+    assert direction_for("val/loss", ComparisonConfig()) is False
+
+
+def test_compare_all_threads_the_configured_direction(  # D17
+) -> None:
+    rng = np.random.default_rng(101)
+    runs = generate_condition("base", CurveSpec(), 3, rng) + generate_condition(
+        "alt", CurveSpec(), 3, rng
+    )
+    config = ComparisonConfig(n_permutations=1000, directions={"val/loss": True})
+    results = compare_all(runs, baseline="base", config=config)
+    assert results
+    assert all(result.higher_is_better for result in results)
 
 
 def test_direction_can_be_overridden() -> None:

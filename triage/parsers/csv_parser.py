@@ -23,6 +23,10 @@ accepted step column name because most logs write whole epochs, but a column
 of fractional epochs (0.00, 0.25, 0.50, ...) stops the parse with a message
 naming the file and the column rather than truncating twelve points into three
 duplicates. Log an integer step beside the fractional value, or scale it.
+
+File matching is on `suffix.lower()`, so `METRICS.CSV` is read on Linux as
+well as on Windows. Every CSV in a run directory contributes to the same
+series per tag, in sorted file order.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from triage.parsers.base import (
     MAX_STEP,
     ParseError,
     Parser,
+    files_with_suffix,
     non_finite_metadata,
     read_text,
     validate_step,
@@ -143,12 +148,12 @@ class CsvParser(Parser):
 
     def can_parse(self, path: Path) -> bool:
         if path.is_dir():
-            return any(path.glob("*.csv"))
+            return bool(files_with_suffix(path, ".csv"))
         return path.suffix.lower() == ".csv"
 
     def parse(self, path: Path) -> Experiment:
         directory = path if path.is_dir() else path.parent
-        files = sorted(path.glob("*.csv")) if path.is_dir() else [path]
+        files = files_with_suffix(path, ".csv") if path.is_dir() else [path]
         if not files:
             raise ParseError(f"no CSV files under {path}")
 

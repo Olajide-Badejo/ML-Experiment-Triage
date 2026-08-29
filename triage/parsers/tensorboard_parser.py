@@ -33,7 +33,6 @@ from triage.parsers.base import ParseError, Parser, non_finite_metadata
 #: parser is first in DEFAULT_PARSERS, a real `metrics.csv` sitting beside that
 #: note was never read.
 EVENT_FILE_PREFIX = "events.out.tfevents."
-EVENT_FILE_GLOB = f"{EVENT_FILE_PREFIX}*"
 
 #: A TFRecord frames each record as an 8 byte little endian payload length, a
 #: 4 byte masked CRC of those 8 bytes, the payload, and a 4 byte payload CRC.
@@ -47,6 +46,19 @@ RECORD_FOOTER_BYTES = 4
 # 0 means keep every scalar rather than the accumulator's sampling default,
 # which silently downsamples long runs and would corrupt a window statistic.
 SIZE_GUIDANCE = {"scalars": 0, "histograms": 0, "images": 0, "audio": 0, "tensors": 0}
+
+
+def _event_files(directory: Path) -> list[Path]:
+    """Every readable event file in `directory`, matched without regard to case.
+
+    Name matching is case insensitive so that a run reads the same way on
+    Windows, where the filesystem ignores case, and on Linux, where it does
+    not; a sweep that ingests on one and not the other is the worse of the two
+    outcomes whichever way it falls.
+    """
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.iterdir() if _is_event_file(path))
 
 
 def _is_event_file(path: Path) -> bool:
@@ -77,14 +89,15 @@ class TensorBoardParser(Parser):
     format_name = "tensorboard"
 
     def can_parse(self, path: Path) -> bool:
-        candidates = sorted(path.glob(EVENT_FILE_GLOB)) if path.is_dir() else [path]
-        return any(_is_event_file(candidate) for candidate in candidates)
+        if path.is_dir():
+            return bool(_event_files(path))
+        return _is_event_file(path)
 
     def parse(self, path: Path) -> Experiment:
         from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
         directory = path if path.is_dir() else path.parent
-        event_files = sorted(p.name for p in directory.glob(EVENT_FILE_GLOB) if _is_event_file(p))
+        event_files = [p.name for p in _event_files(directory)]
         if not event_files:
             raise ParseError(
                 f"no readable TensorBoard event file in {directory}; a file named "

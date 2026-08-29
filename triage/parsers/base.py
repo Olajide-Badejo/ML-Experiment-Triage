@@ -78,6 +78,28 @@ def validate_step(raw: Any, source: str, column: str) -> int:
     return step
 
 
+def files_with_suffix(directory: Path, *suffixes: str) -> list[Path]:
+    """Files in `directory` whose extension matches, ignoring case.
+
+    `Path.glob` is case sensitive on Linux and case insensitive on Windows, so
+    a run holding `METRICS.CSV` parsed here and was invisible in CI. Matching
+    on `suffix.lower()` makes the two platforms agree, which is the only
+    behaviour worth having: the same sweep must ingest the same way wherever
+    it is read. Results are sorted for a deterministic parse order.
+    """
+    if not directory.is_dir():
+        return []
+    wanted = {suffix.lower() for suffix in suffixes}
+    return sorted(
+        path for path in directory.iterdir() if path.is_file() and path.suffix.lower() in wanted
+    )
+
+
+def is_config_file(path: Path) -> bool:
+    """True when `path` is the run's `config.json`, whatever its casing."""
+    return path.name.lower() == CONFIG_FILENAME
+
+
 def read_text(path: Path) -> str:
     """Read a UTF-8 file, translating a decode failure into `ParseError`.
 
@@ -137,9 +159,10 @@ class Parser(ABC):
     def config_for(self, path: Path) -> dict[str, Any]:
         """Load the `config.json` sitting beside the run, or an empty config."""
         directory = path if path.is_dir() else path.parent
-        config_path = directory / CONFIG_FILENAME
-        if not config_path.exists():
+        found = [p for p in files_with_suffix(directory, ".json") if is_config_file(p)]
+        if not found:
             return {}
+        config_path = found[0]
         try:
             loaded = json.loads(read_text(config_path))
         except json.JSONDecodeError as error:

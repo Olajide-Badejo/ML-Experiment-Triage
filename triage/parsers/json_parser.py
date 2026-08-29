@@ -18,6 +18,9 @@ step axis indexes the series. A record whose step is fractional, non finite or
 out of int64 range stops the parse with a message naming the file and the key.
 A `null` step, and any record that carries no step key at all, is skipped and
 counted instead, because a header line is a legitimate part of these files.
+
+File matching is on `suffix.lower()`, and `config.json` is recognised by a
+case insensitive name, so a run reads the same way on Linux and on Windows.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ from triage.core.experiment import Experiment, MetricSeries
 from triage.parsers.base import (
     ParseError,
     Parser,
+    files_with_suffix,
+    is_config_file,
     non_finite_metadata,
     read_text,
     validate_step,
@@ -83,21 +88,21 @@ class JsonlParser(Parser):
 
     def can_parse(self, path: Path) -> bool:
         if path.is_dir():
-            return any(path.glob("*.jsonl")) or any(
-                p.name != "config.json" for p in path.glob("*.json")
-            )
+            return bool(self._log_files(path))
         if path.suffix.lower() == ".jsonl":
             return True
-        return path.suffix.lower() == ".json" and path.name != "config.json"
+        return path.suffix.lower() == ".json" and not is_config_file(path)
+
+    @staticmethod
+    def _log_files(directory: Path) -> list[Path]:
+        """Every log file in a run directory, JSONL first, config.json excluded."""
+        return files_with_suffix(directory, ".jsonl") + [
+            p for p in files_with_suffix(directory, ".json") if not is_config_file(p)
+        ]
 
     def parse(self, path: Path) -> Experiment:
         directory = path if path.is_dir() else path.parent
-        if path.is_dir():
-            files = sorted(path.glob("*.jsonl")) + sorted(
-                p for p in path.glob("*.json") if p.name != "config.json"
-            )
-        else:
-            files = [path]
+        files = self._log_files(path) if path.is_dir() else [path]
         if not files:
             raise ParseError(f"no JSON or JSONL files under {path}")
 

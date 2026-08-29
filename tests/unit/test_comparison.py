@@ -82,6 +82,19 @@ def test_direction_is_inferred_from_the_tag(tag: str, expected: bool) -> None:
     assert infer_direction(tag) is expected
 
 
+def test_the_config_is_still_hashable_once_it_carries_directions() -> None:
+    """A frozen config is a value, and values go in sets and cache keys.
+
+    The generated hash covers every field, and a mapping is not hashable, so
+    adding the direction overrides silently made `hash(ComparisonConfig())`
+    raise. That is the sort of break that surfaces a long way from here.
+    """
+    plain = ComparisonConfig()
+    overridden = ComparisonConfig(directions={"val/loss": True})
+    assert hash(plain) == hash(ComparisonConfig())
+    assert len({plain, overridden, ComparisonConfig(directions={"val/loss": True})}) == 2
+
+
 def test_a_direction_in_the_config_beats_the_inference() -> None:
     """D17: the documented override has to be reachable without editing code."""
     config = ComparisonConfig(n_permutations=1000, directions={"val/loss": True})

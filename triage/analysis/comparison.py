@@ -162,6 +162,19 @@ class ComparisonConfig:
     #: is never guessed at from its name, at any entry point.
     directions: Mapping[str, bool] = field(default_factory=dict)
 
+    def __hash__(self) -> int:
+        """Hash by value, with the mapping spelled as a sorted tuple.
+
+        A frozen dataclass hashes the tuple of its fields, and a mapping is not
+        hashable, so carrying the direction overrides would otherwise have made
+        every `ComparisonConfig` unhashable: a break that would surface a long
+        way from here, in a set or a cache key rather than in this module.
+        """
+        scalars = tuple(
+            getattr(self, name) for name in self.__dataclass_fields__ if name != "directions"
+        )
+        return hash((scalars, tuple(sorted(self.directions.items()))))
+
     def describe(self) -> str:
         overrides = ""
         if self.directions:

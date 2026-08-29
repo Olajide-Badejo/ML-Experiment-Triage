@@ -82,8 +82,13 @@ def ingest(
         show_progress: draw a tqdm bar; set False in CI and tests.
     """
     parsers = parsers or DEFAULT_PARSERS
-    runs = discover_runs(Path(root), parsers)
+    root = Path(root)
+    runs = discover_runs(root, parsers)
     result = IngestResult()
+    # Identity and the fingerprint are both taken relative to the ingest root,
+    # so a sweep that moves keeps both. A single file passed as the root has
+    # its parent as the base, since a file cannot contain the run it is.
+    identity_root = root if root.is_dir() else root.parent
 
     tracked = track(
         runs,
@@ -94,7 +99,7 @@ def ingest(
     for parser, path in tracked:
         run_id = parser.run_id(path)
         try:
-            fingerprint = parser.fingerprint(path)
+            fingerprint = parser.fingerprint(path, root=identity_root)
             known = store.source_hash(run_id)
             if not force and known == fingerprint:
                 result.skipped.append(run_id)

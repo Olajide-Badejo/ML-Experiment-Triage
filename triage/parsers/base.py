@@ -47,6 +47,48 @@ LOGGER = logging.getLogger("triage.parsers")
 #: front of the series, so it is refused instead.
 MAX_STEP = 2**62
 
+#: Files at or below this size have their contents hashed into the fingerprint.
+#: 8 MiB covers every CSV and JSONL log this tool has been pointed at and the
+#: great majority of event files, while keeping the cost of the skip check well
+#: under the cost of the parse it is there to avoid.
+CONTENT_HASH_MAX_BYTES = 8 * 1024 * 1024
+
+#: Read size for the content hash. One page sized buffer, reused.
+_CONTENT_CHUNK_BYTES = 1024 * 1024
+
+
+def _relative_key(path: Path, root: Path) -> str:
+    """`path` relative to `root`, spelled with forward slashes.
+
+    POSIX separators are used whatever the platform, so a sweep ingested on
+    Windows and the same sweep ingested on Linux produce the same identity and
+    the same fingerprint. A path that does not sit under `root` falls back to
+    its resolved form, which cannot collide with a relative one.
+    """
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def _content_hash(path: Path) -> bytes:
+    """SHA-256 of a file's bytes, read in chunks, or a marker if unreadable.
+
+    An unreadable file must not raise here: `fingerprint` runs before the parse
+    that would report the problem properly, and a permission error at this
+    point should cost the run a skip, not the sweep a crash. The error is
+    folded into the digest instead, so the run reparses and fails where it can
+    be reported.
+    """
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            while chunk := handle.read(_CONTENT_CHUNK_BYTES):
+                digest.update(chunk)
+    except OSError as error:
+        return hashlib.sha256(f"unreadable:{error}".encode()).digest()
+    return digest.digest()
+
 
 def validate_step(raw: Any, source: str, column: str) -> int:
     """Check one step value and return it as an int, or raise `ParseError`.
@@ -178,21 +220,41 @@ class Parser(ABC):
             raise ParseError(f"{config_path} must hold a JSON object, got {type(loaded).__name__}")
         return loaded
 
-    def fingerprint(self, path: Path) -> str:
-        """Hash of the source path, modification times and sizes.
+    def fingerprint(self, path: Path, root: Path | None = None) -> str:
+        """Hash identifying this run's source, for the ingest skip check.
 
-        This is what `ingest` compares against the stored value to decide
-        whether a run needs reparsing. Content is deliberately not hashed: for
-        a directory of event files that would cost as much as parsing, which
-        would defeat the purpose of the check.
+        Two things go in, and the choice of each was a defect before it was a
+        decision.
+
+        **The run relative path, never the absolute one.** Hashing the resolved
+        absolute path meant moving a sweep, or checking it out on another
+        machine, changed every fingerprint and forced a full reparse of data
+        that had not changed by a byte; it also made the database non portable,
+        which is the opposite of what a cache is for. The path still has to
+        take part, because `sweep_a/seed0` and `sweep_b/seed0` are two runs
+        that may hold identical bytes, so what is hashed is the path relative
+        to the ingest root. `root` defaults to the run's parent, which is the
+        conservative choice for a caller that fingerprints a run on its own.
+
+        **Content, for a file small enough to afford it.** Stat alone was
+        defeated by anything that restores modification times, which is to say
+        by rsync, by git checkout, and by every archive tool with a flag for
+        it: the content changed, the stat did not, and the run was skipped as
+        unchanged. Files at or under `CONTENT_HASH_MAX_BYTES` are therefore
+        read and hashed. Larger ones keep the stat only check, because hashing
+        a directory of event files would cost about what parsing costs and
+        leave the skip check buying nothing.
         """
+        base = Path(root) if root is not None else path.parent
         digest = hashlib.sha256()
-        digest.update(str(path.resolve()).encode("utf-8"))
+        digest.update(_relative_key(path, base).encode("utf-8"))
         targets = sorted(p for p in path.rglob("*") if p.is_file()) if path.is_dir() else [path]
         for target in targets:
             stat = target.stat()
-            digest.update(target.name.encode("utf-8"))
+            digest.update(_relative_key(target, base).encode("utf-8"))
             digest.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode())
+            if stat.st_size <= CONTENT_HASH_MAX_BYTES:
+                digest.update(_content_hash(target))
         return digest.hexdigest()
 
 

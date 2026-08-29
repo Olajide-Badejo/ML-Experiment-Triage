@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,7 @@ import pytest
 
 from triage.core.experiment import MetricSeries, SeriesError
 from triage.parsers import CsvParser, JsonlParser, ParseError, TensorBoardParser
+from triage.parsers.base import CONTENT_HASH_MAX_BYTES
 
 # --------------------------------------------------------------------- D1
 
@@ -385,6 +387,93 @@ def test_extra_numeric_columns_in_a_long_csv_are_counted_and_warned(tmp_path: Pa
 
 
 # -------------------------------------------------------------------- D21i
+
+
+# -------------------------------------------------------------------- D21d
+
+
+def _run_with(directory: Path, text: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.joinpath("metrics.csv").write_text(text, encoding="utf-8")
+    return directory
+
+
+ROWS = "step,loss\n0,1.0\n1,0.5\n"
+
+
+def test_moving_a_sweep_does_not_change_its_fingerprints(tmp_path: Path) -> None:
+    """The absolute path was hashed, so every run reparsed after a move.
+
+    A real move (`mv`, an rsync with `-a`, a git checkout) preserves the
+    modification time, so the copy here does too; what used to differ, and no
+    longer does, is only the location.
+    """
+    here = _run_with(tmp_path / "here" / "run_a", ROWS)
+    there = _run_with(tmp_path / "elsewhere" / "run_a", ROWS)
+    original = (here / "metrics.csv").stat()
+    os.utime(there / "metrics.csv", ns=(original.st_atime_ns, original.st_mtime_ns))
+
+    parser = CsvParser()
+    assert parser.fingerprint(here, root=tmp_path / "here") == parser.fingerprint(
+        there, root=tmp_path / "elsewhere"
+    )
+
+
+def test_two_runs_at_different_relative_paths_fingerprint_differently(tmp_path: Path) -> None:
+    """Identical content under `sweep_a/seed0` and `sweep_b/seed0` is two runs."""
+    root = tmp_path / "sweep"
+    first = _run_with(root / "sweep_a" / "seed0", ROWS)
+    second = _run_with(root / "sweep_b" / "seed0", ROWS)
+    parser = CsvParser()
+    assert parser.fingerprint(first, root=root) != parser.fingerprint(second, root=root)
+
+
+def test_restoring_an_mtime_does_not_defeat_the_fingerprint(tmp_path: Path) -> None:
+    """rsync and checkout restore mtimes; content is what actually decides."""
+    run = _run_with(tmp_path / "run_a", ROWS)
+    log = run / "metrics.csv"
+    original = log.stat()
+    before = CsvParser().fingerprint(run, root=tmp_path)
+
+    # Same length, different numbers, and the mtime and size put back exactly.
+    log.write_text("step,loss\n0,9.0\n1,0.5\n", encoding="utf-8")
+    os.utime(log, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert log.stat().st_size == original.st_size
+    assert log.stat().st_mtime_ns == original.st_mtime_ns
+
+    assert CsvParser().fingerprint(run, root=tmp_path) != before
+
+
+def test_the_fingerprint_is_stable_when_nothing_changed(tmp_path: Path) -> None:
+    run = _run_with(tmp_path / "run_a", ROWS)
+    parser = CsvParser()
+    assert parser.fingerprint(run, root=tmp_path) == parser.fingerprint(run, root=tmp_path)
+
+
+def test_a_file_over_the_content_limit_falls_back_to_stat(tmp_path: Path) -> None:
+    """Content hashing is for small files; a big event file must stay cheap.
+
+    Above the limit the fingerprint is the stat only check it always was, so a
+    same size, same mtime rewrite of a large file is NOT detected. That is the
+    deliberate trade: hashing a directory of event files would cost about what
+    parsing costs, and the skip check exists to avoid that cost.
+    """
+    run = tmp_path / "run_a"
+    run.mkdir()
+    big = run / "events.out.tfevents.1700000000.host"
+    big.write_bytes(b"\x00" * (CONTENT_HASH_MAX_BYTES + 1024))
+    original = big.stat()
+
+    before = CsvParser().fingerprint(run, root=tmp_path)
+    assert CsvParser().fingerprint(run, root=tmp_path) == before
+
+    big.write_bytes(b"\x01" * (CONTENT_HASH_MAX_BYTES + 1024))
+    os.utime(big, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert CsvParser().fingerprint(run, root=tmp_path) == before, "stat only above the limit"
+
+    # A size change still moves it, which is the stat half doing its work.
+    big.write_bytes(b"\x01" * (CONTENT_HASH_MAX_BYTES + 2048))
+    assert CsvParser().fingerprint(run, root=tmp_path) != before
 
 
 def test_store_writes_standards_compliant_config_json(tmp_path: Path) -> None:

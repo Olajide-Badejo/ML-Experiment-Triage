@@ -78,6 +78,27 @@ def validate_step(raw: Any, source: str, column: str) -> int:
     return step
 
 
+def read_text(path: Path) -> str:
+    """Read a UTF-8 file, translating a decode failure into `ParseError`.
+
+    The documented contract is that a parser raises `ParseError` when a source
+    it matched cannot be read. A bare `UnicodeDecodeError` breaks that: it is
+    not caught by callers that catch `ParseError`, and it names an offset into
+    an anonymous buffer rather than a file. The byte offset is the useful part
+    of the message, so it is kept and the file is named alongside it.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise ParseError(
+            f"{path} is not valid UTF-8: byte {error.start} ("
+            f"0x{path.read_bytes()[error.start]:02x}) cannot be decoded ({error.reason}). "
+            f"Re encode the file as UTF-8"
+        ) from error
+    except OSError as error:
+        raise ParseError(f"{path} could not be read: {error}") from error
+
+
 def non_finite_metadata(metrics: dict[str, MetricSeries]) -> dict[str, Any]:
     """Metadata entries reporting what the non finite filter discarded.
 
@@ -120,8 +141,8 @@ class Parser(ABC):
         if not config_path.exists():
             return {}
         try:
-            loaded = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+            loaded = json.loads(read_text(config_path))
+        except json.JSONDecodeError as error:
             raise ParseError(f"{config_path} is not readable JSON: {error}") from error
         if not isinstance(loaded, dict):
             raise ParseError(f"{config_path} must hold a JSON object, got {type(loaded).__name__}")

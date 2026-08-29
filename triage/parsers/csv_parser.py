@@ -27,13 +27,21 @@ duplicates. Log an integer step beside the fractional value, or scale it.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import MAX_STEP, ParseError, Parser, non_finite_metadata, validate_step
+from triage.parsers.base import (
+    MAX_STEP,
+    ParseError,
+    Parser,
+    non_finite_metadata,
+    read_text,
+    validate_step,
+)
 
 STEP_COLUMNS = ("step", "global_step", "iteration", "iter", "epoch")
 TAG_COLUMNS = ("tag", "metric", "name", "key")
@@ -154,9 +162,15 @@ class CsvParser(Parser):
         collected: dict[str, _Points] = {}
         shapes: dict[str, str] = {}
         for csv_path in files:
+            # Decoding is done here rather than inside pandas so that a non
+            # UTF-8 file raises ParseError naming the byte offset, which is the
+            # documented contract, instead of a bare UnicodeDecodeError that no
+            # caller catches.
             try:
-                frame = pd.read_csv(csv_path, keep_default_na=False, na_values=[])
-            except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as error:
+                frame = pd.read_csv(
+                    io.StringIO(read_text(csv_path)), keep_default_na=False, na_values=[]
+                )
+            except (pd.errors.ParserError, pd.errors.EmptyDataError) as error:
                 raise ParseError(f"{csv_path} is not readable CSV: {error}") from error
             shapes[csv_path.name] = self._collect_frame(frame, csv_path, collected)
 

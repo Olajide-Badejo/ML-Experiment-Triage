@@ -29,7 +29,13 @@ from typing import Any
 import numpy as np
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import ParseError, Parser, non_finite_metadata, validate_step
+from triage.parsers.base import (
+    ParseError,
+    Parser,
+    non_finite_metadata,
+    read_text,
+    validate_step,
+)
 from triage.parsers.csv_parser import STEP_COLUMNS, TAG_COLUMNS, VALUE_COLUMNS, WALL_COLUMNS
 
 RECORD_KEYS = ("metrics", "history", "records", "logs")
@@ -123,10 +129,7 @@ class JsonlParser(Parser):
         )
 
     def _read(self, source: Path) -> tuple[list[dict[str, Any]], int]:
-        try:
-            text = source.read_text(encoding="utf-8")
-        except OSError as error:
-            raise ParseError(f"{source} could not be read: {error}") from error
+        text = read_text(source)
 
         if source.suffix.lower() == ".json":
             try:

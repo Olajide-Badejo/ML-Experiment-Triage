@@ -176,6 +176,34 @@ def test_a_tie_at_the_observed_value_is_counted_at_any_scale() -> None:
     assert permutation_p_value(observed, null, exact=True) == pytest.approx(2 / 3)
 
 
+def test_the_attainable_floor_at_unequal_group_sizes_is_one_over_c() -> None:
+    """D11: only an equal split enumerates the sign flipped arrangement as well.
+
+    At 2 against 5 the enumeration holds C(7, 2) = 21 arrangements and the
+    complement of a 2 against 5 split is a 5 against 2 split, which is not one
+    of them. The floor is therefore 1/21 = 0.0476, not the 2/21 = 0.0952 that
+    was reported, and the difference decides whether a design that can clear
+    alpha is instead called inconclusive.
+    """
+    baseline = [flat_run(f"base_seed{i}", 1.0 + 0.001 * i) for i in range(2)]
+    candidate = [flat_run(f"alt_seed{i}", 2.0 + 0.001 * i) for i in range(5)]
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+
+    assert result.exact
+    assert result.min_attainable_p == pytest.approx(1 / comb(7, 2))
+    assert result.min_attainable_p < CONFIG.alpha
+    assert result.p_value == pytest.approx(1 / comb(7, 2))
+    assert not any("smallest attainable" in warning for warning in result.warnings)
+
+
+def test_the_attainable_floor_at_equal_group_sizes_is_two_over_c() -> None:
+    """The complement of an equal split IS enumerated, so the floor doubles."""
+    baseline = [flat_run(f"base_seed{i}", 1.0 + 0.001 * i) for i in range(3)]
+    candidate = [flat_run(f"alt_seed{i}", 2.0 + 0.001 * i) for i in range(3)]
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+    assert result.min_attainable_p == pytest.approx(2 / comb(6, 3))
+
+
 def test_an_exact_p_value_never_falls_below_its_own_floor() -> None:
     """D10: catastrophic cancellation produced an impossible exact p of 0.0.
 

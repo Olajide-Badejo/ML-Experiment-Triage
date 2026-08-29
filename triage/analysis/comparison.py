@@ -468,6 +468,31 @@ def _difference_null(values: np.ndarray, masks: np.ndarray) -> np.ndarray:
     return second_sums / n_second - first_sums / n_first
 
 
+def _min_attainable_p(
+    n_first: int, n_second: int, exact: bool, config: ComparisonConfig
+) -> float:
+    """The smallest p value this design can produce at all.
+
+    Two sided p values come out of counting arrangements at least as extreme as
+    the observed one, so the floor is set by how many of those the enumeration
+    holds. When the groups are the same size, the complement of every
+    arrangement is also enumerated and carries the same effect with the opposite
+    sign, so the extreme count can never be lower than two and the floor is
+    2/C. When they are not, the complement of an `n1` against `n2` split is an
+    `n2` against `n1` split, which is not in the enumeration at all, and the
+    floor is 1/C.
+
+    Assuming the equal size case everywhere overstated the floor by a factor of
+    two on every unbalanced design: at 2 against 5 it reported 0.0952 where
+    0.0476 is attainable, so designs that can clear alpha were declared
+    inconclusive before their p value was looked at.
+    """
+    if not exact:
+        return 1.0 / (1 + config.n_permutations)
+    arrangements = comb(n_first + n_second, n_first)
+    return (2.0 if n_first == n_second else 1.0) / arrangements
+
+
 def _observed_statistic(
     values: np.ndarray,
     n_first: int,
@@ -546,8 +571,7 @@ def compare_seed_replicated(
     # The smallest p value this design can produce at all. With three seeds per
     # condition that is 0.1, so no result can ever clear alpha 0.05, and saying
     # so is more useful than reporting a p value that was never able to fire.
-    arrangements = comb(pooled.size, n_baseline)
-    min_attainable = 2.0 / arrangements if exact else 1.0 / (1 + config.n_permutations)
+    min_attainable = _min_attainable_p(n_baseline, n_candidate, exact, config)
     if min_attainable > config.alpha:
         warnings.append(
             f"with {n_baseline} and {n_candidate} seeds the smallest attainable p value is "
@@ -663,8 +687,7 @@ def compare_window_block(
 
     observed = _observed_statistic(pooled_blocks, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
-    arrangements = comb(pooled_blocks.size, n_baseline)
-    min_attainable = 2.0 / arrangements if exact else 1.0 / (1 + config.n_permutations)
+    min_attainable = _min_attainable_p(n_baseline, n_candidate, exact, config)
     if min_attainable > config.alpha:
         warnings.append(
             f"the smallest attainable p value at this block count is {min_attainable:.3f}, "

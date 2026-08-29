@@ -182,10 +182,11 @@ def test_one_bad_run_does_not_stop_the_walk(tmp_path: Path, temp_database: Path)
 def test_ingest_reads_a_mixed_format_tree(fixture_root: Path, temp_database: Path) -> None:
     with Store(temp_database) as store:
         result = ingest(fixture_root, store, parsers=DEFAULT_PARSERS, show_progress=False)
-        assert len(result.added) == 5
+        assert len(result.added) == 6
         assert store.run_ids() == [
             "csv_long_run",
             "csv_wide_run",
+            "healthy_steps",
             "jsonl_run",
             "killed_run",
             "tb_run",

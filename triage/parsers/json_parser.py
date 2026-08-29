@@ -34,6 +34,17 @@ from triage.parsers.csv_parser import STEP_COLUMNS, TAG_COLUMNS, VALUE_COLUMNS, 
 
 RECORD_KEYS = ("metrics", "history", "records", "logs")
 
+#: JSON has no non finite literals, so producers that need them write strings.
+#: The PyTorch Performance and Health Toolkit writes exactly these three in its
+#: schema v2 logs. They are read as the numbers they name, at which point the
+#: non finite filter in `MetricSeries` drops and counts them like any other
+#: NaN: the point was measured, and the measurement is unusable.
+NON_FINITE_LITERALS = {
+    "NaN": float("nan"),
+    "Infinity": float("inf"),
+    "-Infinity": float("-inf"),
+}
+
 
 def _pick(record: dict[str, Any], candidates: tuple[str, ...]) -> str | None:
     lowered = {str(key).lower(): str(key) for key in record}
@@ -41,6 +52,22 @@ def _pick(record: dict[str, Any], candidates: tuple[str, ...]) -> str | None:
         if candidate in lowered:
             return lowered[candidate]
     return None
+
+
+def _as_float(raw: Any) -> float | None:
+    """The numeric value of a logged field, or None when there is no point.
+
+    `null` returns None, and that is the contract: a producer writing null
+    means "not measured at this step", never zero, so the point is absent from
+    the series rather than dragging a fabricated zero into a window mean.
+    Booleans are also None: `True` is a flag, not a metric. Any other string is
+    text (a checkpoint path, a note) and is not a measurement either.
+    """
+    if isinstance(raw, str):
+        return NON_FINITE_LITERALS.get(raw)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return float(raw)
 
 
 class JsonlParser(Parser):
@@ -78,7 +105,7 @@ class JsonlParser(Parser):
         if not records:
             raise ParseError(f"{path} contained no usable records")
 
-        metrics = self._to_metrics(records, ", ".join(p.name for p in files))
+        metrics, counts = self._to_metrics(records, ", ".join(p.name for p in files))
         return Experiment(
             run_id=self.run_id(path),
             source_path=str(path),
@@ -90,6 +117,7 @@ class JsonlParser(Parser):
                 "records": len(records),
                 "malformed_lines": malformed,
                 "scalar_tags": sorted(metrics),
+                **counts,
                 **non_finite_metadata(metrics),
             },
         )
@@ -133,39 +161,65 @@ class JsonlParser(Parser):
 
     def _to_metrics(
         self, records: list[dict[str, Any]], source_label: str
-    ) -> dict[str, MetricSeries]:
-        step_key = _pick(records[0], STEP_COLUMNS)
+    ) -> tuple[dict[str, MetricSeries], dict[str, int]]:
+        """Turn records into series, and count what could not become a point.
+
+        Schema inference scans for the FIRST record that carries a step key
+        rather than trusting `records[0]`. That single change is what makes a
+        second producer's logs readable: the PyTorch Performance and Health
+        Toolkit opens every file with an environment header line, and a resumed
+        sweep writes several of them, so the first record routinely carries no
+        step at all. A step free record is skipped and counted here rather than
+        aborting the parse, because those header lines are legitimate content.
+        """
+        schema_record: dict[str, Any] = {}
+        step_key: str | None = None
+        for record in records:
+            step_key = _pick(record, STEP_COLUMNS)
+            if step_key is not None:
+                schema_record = record
+                break
         if step_key is None:
             raise ParseError(
-                f"records carry no step field; expected one of {', '.join(STEP_COLUMNS)}"
+                f"{source_label}: no record carries a step field; expected one of "
+                f"{', '.join(STEP_COLUMNS)}"
             )
-        tag_key = _pick(records[0], TAG_COLUMNS)
-        value_key = _pick(records[0], VALUE_COLUMNS)
-        wall_key = _pick(records[0], WALL_COLUMNS)
+        tag_key = _pick(schema_record, TAG_COLUMNS)
+        value_key = _pick(schema_record, VALUE_COLUMNS)
+        wall_key = _pick(schema_record, WALL_COLUMNS)
         long_form = tag_key is not None and value_key is not None
 
+        counts = {"records_without_step": 0, "records_without_tag": 0}
         collected: dict[str, list[tuple[int, float, float | None]]] = {}
         for record in records:
-            raw_step = record.get(step_key)
-            if raw_step is None:
+            if _pick(record, STEP_COLUMNS) is None or record.get(step_key) is None:
+                # A header line, or a record whose step is explicitly null.
+                counts["records_without_step"] += 1
                 continue
-            step = validate_step(raw_step, source_label, step_key)
+            step = validate_step(record[step_key], source_label, step_key)
             wall = record.get(wall_key) if wall_key else None
             wall_value = float(wall) if isinstance(wall, (int, float)) else None
 
             if long_form:
-                value = record.get(value_key)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    tag = str(record.get(tag_key))
-                    collected.setdefault(tag, []).append((step, float(value), wall_value))
+                value = _as_float(record.get(value_key))
+                if value is None:
+                    continue
+                raw_tag = record.get(tag_key)
+                if raw_tag is None:
+                    # Without a tag there is nothing to call the series, and
+                    # naming it `None` (which is what used to happen) invents a
+                    # metric out of a logging bug.
+                    counts["records_without_tag"] += 1
+                    continue
+                collected.setdefault(str(raw_tag), []).append((step, value, wall_value))
                 continue
 
-            for key, value in record.items():
+            for key, raw in record.items():
                 if str(key) in {step_key, wall_key}:
                     continue
-                if isinstance(value, bool) or not isinstance(value, (int, float)):
-                    continue
-                collected.setdefault(str(key), []).append((step, float(value), wall_value))
+                value = _as_float(raw)
+                if value is not None:
+                    collected.setdefault(str(key), []).append((step, value, wall_value))
 
         metrics: dict[str, MetricSeries] = {}
         for tag, points in collected.items():
@@ -176,4 +230,4 @@ class JsonlParser(Parser):
                 np.asarray(walls, dtype=np.float64) if all(w is not None for w in walls) else None
             )
             metrics[tag] = MetricSeries(tag=tag, steps=steps, values=values, wall_times=wall_times)
-        return metrics
+        return metrics, counts

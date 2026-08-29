@@ -129,6 +129,34 @@ def make_truncated_jsonl(series: dict[str, np.ndarray]) -> None:
     (directory / "metrics.jsonl").write_text(text, encoding="utf-8")
 
 
+def make_tpt_jsonl(series: dict[str, np.ndarray]) -> None:
+    """A second producer's shape: an environment header line, then step rows.
+
+    The PyTorch Performance and Health Toolkit writes its schema v2 logs this
+    way, and a resumed sweep writes the header again partway through. Neither
+    header carries a step, so a parser that infers its schema from the first
+    record alone claims the file and then fails on it. Both headers must be
+    skipped and counted, and the eight step rows must ingest cleanly.
+    """
+    directory = FIXTURES / "tpt_jsonl" / "healthy_steps"
+    write_config(directory)
+    header = {
+        "type": "environment",
+        "run_id": "tpt-healthy-0",
+        "row_schema_version": 2,
+        "torch_version": "2.9.0",
+        "device": "cuda:0",
+    }
+    lines = [json.dumps(header)]
+    for index in range(8):
+        if index == 4:
+            lines.append(json.dumps(header))
+        lines.append(
+            json.dumps({"step": index, "loss": float(series["train/loss"][index])})
+        )
+    (directory / "metrics.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     series = reference_series()
     FIXTURES.mkdir(parents=True, exist_ok=True)
@@ -140,6 +168,7 @@ def main() -> int:
     make_csv_long(series)
     make_jsonl(series)
     make_truncated_jsonl(series)
+    make_tpt_jsonl(series)
     print(f"fixtures written under {FIXTURES.relative_to(ROOT)}")
     return 0
 

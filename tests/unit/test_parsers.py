@@ -93,6 +93,7 @@ def test_discovery_finds_every_run_once(fixture_root: Path) -> None:
     assert names == [
         "csv_long_run",
         "csv_wide_run",
+        "healthy_steps",
         "jsonl_run",
         "killed_run",
         "tb_run",

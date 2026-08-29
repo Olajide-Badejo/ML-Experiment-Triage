@@ -229,6 +229,77 @@ def test_an_exact_p_value_never_falls_below_its_own_floor() -> None:
     assert smallest >= floor - 1e-12, f"smallest exact p was {smallest}, below the floor {floor}"
 
 
+# ------------------------------------------- D12: studentizing the statistic
+
+
+def raw_difference_p_value(pooled: np.ndarray, n_first: int) -> float:
+    """The exact two sided p value of the RAW mean difference, computed here.
+
+    Deliberately independent of the module under test: it enumerates the same
+    arrangements and counts the same way, so it pins what the p value was before
+    the statistic was studentized.
+    """
+    from itertools import combinations
+
+    total = pooled.size
+    differences = []
+    for chosen in combinations(range(total), n_first):
+        mask = np.zeros(total, dtype=bool)
+        mask[list(chosen)] = True
+        differences.append(pooled[~mask].mean() - pooled[mask].mean())
+    values = np.asarray(differences)
+    observed = abs(values[0])
+    return float((np.abs(values) >= observed - 1e-9 * observed).mean())
+
+
+def test_the_seed_mode_permutes_a_studentized_statistic() -> None:
+    """D12: the raw mean difference is exact only under full exchangeability.
+
+    Permuting the Welch t instead (Janssen 1997) keeps the test near nominal
+    when the two conditions have different spreads and different seed counts,
+    which is the common 7 against 3 design.
+    """
+    rng = np.random.default_rng(310)
+    baseline, candidate = effect_pair(CurveSpec(), effect=-0.05, n_seeds=5, rng=rng)
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+    assert "studentized" in result.test_name
+    assert "Welch" in result.test_name
+
+
+def test_a_balanced_design_gives_exactly_the_p_value_it_gave_before() -> None:
+    """At equal seed counts studentizing must not move a single p value.
+
+    With n1 == n2 the Welch denominator is a decreasing function of the squared
+    mean difference, so ranking arrangements by |t| ranks them exactly as |mean
+    difference| did. The guarantee is worth pinning: the change is meant to fix
+    unbalanced designs and to leave balanced ones alone.
+    """
+    rng = np.random.default_rng(311)
+    baseline, candidate = effect_pair(CurveSpec(), effect=-0.05, n_seeds=5, rng=rng)
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+
+    pooled = np.array(
+        [window_statistic(run.series("val/loss"), CONFIG) for run in baseline + candidate]
+    )
+    assert result.exact
+    assert result.p_value == pytest.approx(raw_difference_p_value(pooled, len(baseline)))
+
+
+def test_a_small_side_beside_a_very_different_spread_is_warned_about() -> None:
+    """D12: the guarantee is weakest at few seeds and unequal variance."""
+    baseline = [flat_run(f"base_seed{i}", 1.0 + 0.5 * i) for i in range(5)]
+    candidate = [flat_run(f"alt_seed{i}", 1.0 + 0.01 * i) for i in range(3)]
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+    assert any("spread" in warning for warning in result.warnings)
+
+
+def test_an_even_design_with_similar_spreads_carries_no_such_warning() -> None:
+    rng = np.random.default_rng(312)
+    baseline, candidate = null_pair(CurveSpec(), n_seeds=5, rng=rng)
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+    assert not any("spread" in warning for warning in result.warnings)
+
+
 # ------------------------------------------------------ D1: the second barrier
 
 

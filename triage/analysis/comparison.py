@@ -15,6 +15,17 @@ A permutation test needs only exchangeability under the null, which is exactly
 what the null hypothesis asserts (Good, *Permutation, Parametric, and Bootstrap
 Tests of Hypotheses*, 3rd ed., Springer 2005).
 
+The quantity permuted is the Welch t rather than the raw difference of means.
+Full exchangeability is more than the null actually claims once the two
+conditions have different spreads, and a raw mean difference is exact only
+under the stronger assumption: measured at a nominal 5 percent, seven runs
+against three with a fivefold spread ratio rejected 17.9 percent of true nulls.
+Studentizing the permuted statistic restores the guarantee asymptotically
+(Janssen, *Statistics and Probability Letters* 36(1), 1997) and changes nothing
+at all when the two conditions hold the same number of runs. The effect and the
+interval reported beside the p value are still on the mean difference, which is
+the quantity a reader can act on.
+
 **Two modes, answering two different questions.**
 
 `seed_replicate`
@@ -450,22 +461,97 @@ def _identity_mask(n_total: int, n_first: int) -> np.ndarray:
     return mask
 
 
-def _difference_null(values: np.ndarray, masks: np.ndarray) -> np.ndarray:
-    """Difference of group means for every arrangement, second group minus first.
+def _studentized_null(values: np.ndarray, masks: np.ndarray) -> np.ndarray:
+    """Welch t for every arrangement, second group minus first.
+
+    This is the statistic the permutation is over, and permuting it rather than
+    the raw mean difference is what keeps the test near nominal when the two
+    conditions have both different spreads and different numbers of runs
+    (Janssen, *Statistics and Probability Letters* 36(1), 1997). A raw mean
+    difference is exact only under full exchangeability, which unequal variances
+    break: measured at a nominal 5 percent, 7 runs against 3 with a 5x spread
+    ratio rejected 17.9 percent of true nulls, and the more seeds sat on the
+    stable baseline the worse it got, which is the wrong way round for the most
+    common real design.
+
+    Studentizing costs nothing where it is not needed. With equal group sizes
+    the denominator is a decreasing function of the squared mean difference, so
+    the arrangements rank in exactly the order the mean difference ranked them
+    and every balanced p value is unchanged.
 
     Both group sums are formed directly rather than one being reconstructed as
-    `total - first_sums`. The subtraction looks free and is not: on values whose
-    mean is far from zero it cancels away most of the significant digits, and
-    the null it produced then disagreed with a directly computed observed
-    statistic by more than the tie tolerance, so the observed arrangement was
-    counted out of its own null distribution and the exact p value came back as
-    an impossible 0.0.
+    `total - first_sums`, and the values are centred before any of it. The
+    subtraction looks free and is not: on values whose mean is far from zero it
+    cancels away most of the significant digits, the null it produced disagreed
+    with a directly computed observed statistic by more than the tie tolerance,
+    and the observed arrangement was then counted out of its own null
+    distribution, for an exact p value of 0.0 that no design can attain.
+    Centring is the same argument applied to the sums of squares: a shift moves
+    every group mean by the same amount and cancels out of the numerator and the
+    denominator alike, so it costs nothing and it keeps the variances from being
+    differences of two large numbers.
     """
     n_first = int(masks[0].sum())
     n_second = values.size - n_first
-    first_sums = masks @ values
-    second_sums = (~masks) @ values
-    return second_sums / n_second - first_sums / n_first
+    centred = values - values.mean()
+    squares = centred**2
+    mean_first = (masks @ centred) / n_first
+    mean_second = ((~masks) @ centred) / n_second
+    # var = (sum of squares - n * mean^2) / (n - 1), clipped at zero because the
+    # subtraction can land a hair below it on constant data.
+    variance_first = np.maximum((masks @ squares) - n_first * mean_first**2, 0.0) / (n_first - 1)
+    variance_second = np.maximum((~masks) @ squares - n_second * mean_second**2, 0.0) / (
+        n_second - 1
+    )
+    difference = mean_second - mean_first
+    spread = np.sqrt(variance_first / n_first + variance_second / n_second)
+
+    # A zero denominator means both groups are constant. If they are constant at
+    # the same value the arrangement is not extreme at all; if they are constant
+    # at different values it is the most extreme there is. Neither is infinite,
+    # and an infinity here would be refused later as a non finite statistic, so
+    # the second case is given a magnitude just above every finite one, which
+    # ranks it correctly and ties it with its mirror image.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        studentized = np.where(spread > 0, difference / np.where(spread > 0, spread, 1.0), 0.0)
+    degenerate = (spread <= 0) & (difference != 0)
+    if degenerate.any():
+        finite_maximum = float(np.abs(studentized[~degenerate]).max(initial=0.0))
+        studentized = np.where(
+            degenerate, np.sign(difference) * (finite_maximum + 1.0), studentized
+        )
+    return studentized
+
+
+#: A design is warned about when the smaller condition is below this many runs
+#: AND the two conditions' spreads differ by more than this ratio. Studentizing
+#: makes the test asymptotically right under unequal variance; at few runs the
+#: variance estimates that go into it are themselves poor, and the guarantee
+#: becomes approximate rather than exact.
+HETEROSCEDASTICITY_MIN_REPLICATES = 5
+HETEROSCEDASTICITY_SD_RATIO = 2.0
+
+
+def _heteroscedasticity_warnings(first: np.ndarray, second: np.ndarray) -> list[str]:
+    """Say so when the design is in the regime the guarantee is weakest in."""
+    smaller = min(first.size, second.size)
+    if smaller < 2 or smaller >= HETEROSCEDASTICITY_MIN_REPLICATES:
+        return []
+    sd_first = float(np.std(first, ddof=1))
+    sd_second = float(np.std(second, ddof=1))
+    low, high = sorted((sd_first, sd_second))
+    if high <= 0:
+        return []
+    ratio = high / low if low > 0 else math.inf
+    if ratio <= HETEROSCEDASTICITY_SD_RATIO:
+        return []
+    spelled = "beyond measuring" if math.isinf(ratio) else f"{ratio:.1f}x"
+    return [
+        f"the smaller condition has {smaller} runs and the two conditions' spreads differ by "
+        f"{spelled} ({sd_first:.4g} against {sd_second:.4g}); the studentized permutation test "
+        f"is approximate rather than exact in this regime, so read the p value as indicative "
+        f"and add seeds to the narrower condition before concluding"
+    ]
 
 
 def _min_attainable_p(
@@ -508,7 +594,7 @@ def _observed_statistic(
     if exact:
         return float(null_distribution[0])
     identity = _identity_mask(values.size, n_first)
-    return float(_difference_null(values, identity)[0])
+    return float(_studentized_null(values, identity)[0])
 
 
 # ------------------------------------------------------------ mode one: seeds
@@ -557,16 +643,21 @@ def compare_seed_replicated(
             f"{config.min_replicates_for_seed_mode} is the recommended minimum"
         )
 
+    warnings.extend(_heteroscedasticity_warnings(baseline_stats, candidate_stats))
+
     pooled = np.concatenate([baseline_stats, candidate_stats])
     rng = np.random.default_rng(config.seed)
     masks, exact = _label_permutations(pooled.size, n_baseline, config, rng)
-    null_distribution = _difference_null(pooled, masks)
+    null_distribution = _studentized_null(pooled, masks)
 
-    # The observed statistic comes out of the same expression as every null
-    # value, from the identity arrangement, so that in exact mode it IS
+    # The test statistic comes out of the same expression as every null value,
+    # from the identity arrangement, so that in exact mode it IS
     # `null_distribution[0]` rather than a number that merely ought to equal it.
+    # The effect below is the mean difference, which is what a reader wants
+    # reported; the Welch t is what the arrangements are ranked by.
     observed = _observed_statistic(pooled, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
+    effect = float(candidate_stats.mean() - baseline_stats.mean())
 
     # The smallest p value this design can produce at all. With three seeds per
     # condition that is 0.1, so no result can ever clear alpha 0.05, and saying
@@ -579,7 +670,7 @@ def compare_seed_replicated(
         )
 
     spread = _pooled_standard_deviation(baseline_stats, candidate_stats)
-    effect_size = observed / spread if spread > 0 else 0.0
+    effect_size = effect / spread if spread > 0 else 0.0
     ci_low, ci_high = _welch_interval(baseline_stats, candidate_stats, config.confidence_level)
 
     return ComparisonResult(
@@ -587,11 +678,11 @@ def compare_seed_replicated(
         baseline=baseline_name,
         candidate=candidate_name,
         mode=MODE_SEED_REPLICATE,
-        test_name="two sided permutation test on the final window mean",
+        test_name="two sided studentized permutation test (Welch t) on the final window mean",
         baseline_statistic=float(baseline_stats.mean()),
         candidate_statistic=float(candidate_stats.mean()),
-        effect=observed,
-        relative_effect_pct=_relative(observed, float(baseline_stats.mean())),
+        effect=effect,
+        relative_effect_pct=_relative(effect, float(baseline_stats.mean())),
         effect_size=float(effect_size),
         effect_size_name="Cohen's d over seed level statistics",
         ci_low=ci_low,
@@ -683,10 +774,11 @@ def compare_window_block(
     pooled_blocks = np.concatenate([baseline_blocks, candidate_blocks])
     rng = np.random.default_rng(config.seed)
     masks, exact = _label_permutations(pooled_blocks.size, n_baseline, config, rng)
-    null_distribution = _difference_null(pooled_blocks, masks)
+    null_distribution = _studentized_null(pooled_blocks, masks)
 
     observed = _observed_statistic(pooled_blocks, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
+    effect = float(candidate_blocks.mean() - baseline_blocks.mean())
     min_attainable = _min_attainable_p(n_baseline, n_candidate, exact, config)
     if min_attainable > config.alpha:
         warnings.append(
@@ -704,12 +796,12 @@ def compare_window_block(
         baseline=baseline_run.run_id,
         candidate=candidate_run.run_id,
         mode=MODE_WINDOW_BLOCK,
-        test_name="two sided block permutation test on the final window mean",
+        test_name="two sided studentized block permutation test (Welch t) on the final window mean",
         baseline_statistic=float(baseline_window.mean()),
         candidate_statistic=float(candidate_window.mean()),
-        effect=observed,
-        relative_effect_pct=_relative(observed, float(baseline_window.mean())),
-        effect_size=float(observed / spread) if spread > 0 else 0.0,
+        effect=effect,
+        relative_effect_pct=_relative(effect, float(baseline_window.mean())),
+        effect_size=float(effect / spread) if spread > 0 else 0.0,
         effect_size_name="Cohen's d over block means",
         ci_low=ci_low,
         ci_high=ci_high,

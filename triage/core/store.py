@@ -14,11 +14,17 @@ Two properties matter and both are tested:
 * **Ingest is resumable.** Every run records a fingerprint of its source. An
   unchanged source is skipped, a changed one replaces its rows in a single
   transaction, and interrupting an ingest can lose only the run in flight.
+
+Config and metadata are stored as strict JSON: `allow_nan=False`, with non
+finite numbers replaced by `null` first. RFC 8259 has no `NaN` or `Infinity`
+literal, so writing one would produce a database that only Python can read,
+and null is already how the rest of this codebase spells "no usable value".
 """
 
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import zlib
 from collections.abc import Iterable, Iterator
@@ -62,6 +68,37 @@ CREATE TABLE IF NOT EXISTS metrics (
 
 CREATE INDEX IF NOT EXISTS metrics_tag_idx ON metrics(tag);
 """
+
+
+def _sanitize(value: Any) -> Any:
+    """Replace non finite numbers with null, recursively.
+
+    Python's `json` module emits the bare tokens `NaN`, `Infinity` and
+    `-Infinity` by default. Those are not JSON: RFC 8259 has no non finite
+    literals, so a config written that way parses back in Python and fails in
+    every other reader, and this database is meant to be readable by anything
+    that speaks SQLite.
+
+    **The convention, chosen here and applied everywhere:** a non finite
+    configuration or metadata value is stored as `null`. Null already means
+    "no usable value" throughout this codebase (`Experiment.numeric_config`
+    drops non finite entries for exactly the same reason, and a null is
+    dropped by the same rule), so a NaN learning rate reads back as an absent
+    learning rate rather than as the string "nan", which would silently become
+    a categorical value and split a variant key.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {str(key): _sanitize(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize(item) for item in value]
+    return value
+
+
+def _dump_json(value: Any) -> str:
+    """Serialise config or metadata as strict, standards compliant JSON."""
+    return json.dumps(_sanitize(value), sort_keys=True, default=str, allow_nan=False)
 
 
 def _compress(array: np.ndarray, dtype: str) -> bytes:
@@ -125,8 +162,8 @@ class Store:
                     experiment.run_id,
                     experiment.source_path,
                     experiment.source_format,
-                    json.dumps(experiment.config, sort_keys=True, default=str),
-                    json.dumps(experiment.metadata, sort_keys=True, default=str),
+                    _dump_json(experiment.config),
+                    _dump_json(experiment.metadata),
                     source_hash,
                     parsed_at,
                 ),

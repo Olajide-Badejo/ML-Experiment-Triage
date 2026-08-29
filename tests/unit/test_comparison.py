@@ -8,6 +8,7 @@ every result carries the labelling the ground rules require.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from math import comb
 
 import numpy as np
@@ -517,6 +518,37 @@ def test_compare_all_covers_every_variant_and_tag() -> None:
     assert {result.candidate for result in results} == {"alt_a", "alt_b"}
     assert all(result.baseline == "base" for result in results)
     assert all(result.mode == MODE_SEED_REPLICATE for result in results)
+
+
+def test_compare_all_gives_every_result_a_stable_join_key() -> None:
+    """E4b: a caller rejoining results needed something better than id().
+
+    `tag` is not unique once one metric is compared across several conditions,
+    so a consumer holding a list of results had no way to say which row a
+    finding belonged to except the identity of the object. The key is
+    `variant|tag`, and it is left empty and settable for library callers who
+    build results themselves.
+    """
+    rng = np.random.default_rng(18)
+    runs = (
+        generate_condition("base", CurveSpec(), 3, rng)
+        + generate_condition("alt_a", CurveSpec(), 3, rng)
+        + generate_condition("alt_b", CurveSpec(), 3, rng)
+    )
+    results = compare_all(runs, baseline="base", config=CONFIG)
+
+    assert results
+    assert all(result.key == f"{result.candidate}|{result.tag}" for result in results)
+    assert len({result.key for result in results}) == len(results)
+    assert all("key" in result.to_dict() for result in results)
+
+
+def test_a_result_built_directly_carries_no_key_until_one_is_set() -> None:
+    rng = np.random.default_rng(19)
+    baseline, candidate = null_pair(CurveSpec(), n_seeds=3, rng=rng)
+    result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+    assert result.key == ""
+    assert replace(result, key="mine").key == "mine"
 
 
 def test_compare_all_accepts_a_run_id_as_the_baseline() -> None:

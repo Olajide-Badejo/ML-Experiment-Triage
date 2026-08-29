@@ -62,7 +62,7 @@ import math
 import re
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import comb
 from typing import Any
 
@@ -216,6 +216,11 @@ class ComparisonResult:
     warnings: tuple[str, ...] = ()
     #: Block length used by the window block mode, in steps; 0 in seed mode.
     block_length: int = 0
+    #: Stable join key, `variant|tag`, set by `compare_all`. A caller building
+    #: results itself is free to set its own; `tag` alone is not unique once one
+    #: metric is compared across several conditions, and a consumer rejoining
+    #: findings to results should not have to fall back on object identity.
+    key: str = ""
 
     @property
     def mode_label(self) -> str:
@@ -1147,17 +1152,16 @@ def compare_all(
             ):
                 continue
             try:
-                results.append(
-                    compare(
-                        baseline_runs,
-                        runs,
-                        tag,
-                        config,
-                        higher_is_better=direction_for(tag, config),
-                        baseline_name=baseline_key,
-                        candidate_name=variant_key,
-                    )
+                result = compare(
+                    baseline_runs,
+                    runs,
+                    tag,
+                    config,
+                    higher_is_better=direction_for(tag, config),
+                    baseline_name=baseline_key,
+                    candidate_name=variant_key,
                 )
+                results.append(replace(result, key=f"{variant_key}|{tag}"))
             except (ComparisonError, SeriesError):
                 continue
     return results

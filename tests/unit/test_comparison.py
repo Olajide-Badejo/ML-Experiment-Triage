@@ -379,6 +379,52 @@ def test_the_same_inputs_give_the_same_answer_twice() -> None:
     assert (first.ci_low, first.ci_high) == (second.ci_low, second.ci_high)
 
 
+# ------------------------------------------------ D16: the window block mode
+
+
+def test_the_block_length_follows_the_raw_windows_autocorrelation() -> None:
+    """D16: tau was estimated on the smoothed window, which is our own filter.
+
+    A nine point moving average makes any series look autocorrelated over about
+    nine points, so on white noise tau came out near 9 instead of near 1, the
+    block tripled to about 27, and the mode refused every realistically sized
+    run: two 400 step runs hold a 40 point window, which is one such block. The
+    autocorrelation that matters belongs to the data, so it is measured on the
+    raw window.
+    """
+    rng = np.random.default_rng(410)
+    spec = CurveSpec(n_steps=400, rho=0.0, seed_sigma=0.0)
+    baseline, candidate = null_pair(spec, n_seeds=1, rng=rng)
+    result = compare_window_block(baseline[0], candidate[0], "val/loss", CONFIG)
+    assert result.block_length <= 6, "white noise should not need a long block"
+    assert result.n_baseline >= 8
+
+
+def test_every_block_statistic_comes_from_the_points_actually_used() -> None:
+    """D16: the ragged tail was dropped from the front, and only from the effect.
+
+    Truncating from the start throws away the most recent points, which are the
+    ones the final window exists to look at, while `baseline_statistic` and
+    `candidate_statistic` were still means of the untruncated window: the two
+    disagreed with the reported effect by a measured 2.7 percent. Every number
+    now comes off the same block means, and the count reported is the count
+    used.
+    """
+    rng = np.random.default_rng(411)
+    # 797 window points is prime, so the tail is ragged at every block length.
+    spec = CurveSpec(n_steps=7970, rho=0.6, seed_sigma=0.0)
+    baseline, candidate = null_pair(spec, n_seeds=1, rng=rng)
+    result = compare_window_block(baseline[0], candidate[0], "val/loss", CONFIG)
+
+    window = window_values(baseline[0].series("val/loss"), CONFIG)
+    usable = (window.size // result.block_length) * result.block_length
+    assert 0 < usable < window.size, "this fixture is meant to have a ragged tail"
+    assert result.baseline_statistic == pytest.approx(window[-usable:].mean())
+    assert result.baseline_statistic != pytest.approx(window[:usable].mean())
+    assert result.effect == pytest.approx(result.candidate_statistic - result.baseline_statistic)
+    assert result.window_points == usable
+
+
 # ---------------------------------------------------------------- mode choice
 
 

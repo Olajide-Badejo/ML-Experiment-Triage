@@ -287,8 +287,14 @@ def direction_for(tag: str, config: ComparisonConfig | None = None) -> bool:
     return infer_direction(tag)
 
 
-def _finite_window(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
-    """The smoothed final window, or `ComparisonError` if it is not all finite.
+def _finite_window(
+    series: MetricSeries, config: ComparisonConfig, smooth: bool = True
+) -> np.ndarray:
+    """The final window, or `ComparisonError` if it is not all finite.
+
+    Smoothed by default, because the comparison statistic is a mean over the
+    smoothed window. `smooth=False` returns the same window unfiltered, which
+    is what the autocorrelation estimate has to see.
 
     This is the second of the two barriers against a non finite value, and it
     exists because the first one can be absent. `MetricSeries.__post_init__`
@@ -304,9 +310,11 @@ def _finite_window(series: MetricSeries, config: ComparisonConfig) -> np.ndarray
     produce a number is the only honest option, and it costs one comparison
     rather than the whole verdict table.
     """
-    smoothed = series.smoothed(config.smoothing_window)
+    values = (
+        series.smoothed(config.smoothing_window) if smooth else series.values.astype(np.float64)
+    )
     size = series.window_size(config.window_fraction, config.window_minimum)
-    window = smoothed[-size:]
+    window = values[-size:]
     if not bool(np.isfinite(window).all()):
         bad = int(window.size - int(np.isfinite(window).sum()))
         raise ComparisonError(
@@ -327,6 +335,11 @@ def window_statistic(series: MetricSeries, config: ComparisonConfig) -> float:
 def window_values(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
     """The smoothed final window itself, needed by the block mode."""
     return _finite_window(series, config)
+
+
+def raw_window_values(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
+    """The same final window, unsmoothed, for estimating autocorrelation."""
+    return _finite_window(series, config, smooth=False)
 
 
 def integrated_autocorrelation_time(values: np.ndarray) -> float:
@@ -359,8 +372,15 @@ def integrated_autocorrelation_time(values: np.ndarray) -> float:
 def block_length(windows: list[np.ndarray]) -> int:
     """Block length for the window block mode, from the autocorrelation time.
 
-    Two details here were both forced by the calibration suite, and both cost a
-    measured type I error of about 12 percent against a nominal 5 before they
+    Pass the RAW windows. Estimating tau on the smoothed window measures the
+    moving average rather than the data: a nine point filter leaves any series
+    correlated over about nine points, so white noise came back with a tau near
+    9 instead of near 1, the block tripled with it, and the mode then refused
+    almost every run of a realistic length. Two 400 step runs hold a 40 point
+    final window, which is one block of 27 and no test at all.
+
+    Two further details were both forced by the calibration suite, and both cost
+    a measured type I error of about 12 percent against a nominal 5 before they
     were fixed.
 
     First, tau is estimated on each window separately and the larger is taken,
@@ -554,9 +574,7 @@ def _heteroscedasticity_warnings(first: np.ndarray, second: np.ndarray) -> list[
     ]
 
 
-def _min_attainable_p(
-    n_first: int, n_second: int, exact: bool, config: ComparisonConfig
-) -> float:
+def _min_attainable_p(n_first: int, n_second: int, exact: bool, config: ComparisonConfig) -> float:
     """The smallest p value this design can produce at all.
 
     Two sided p values come out of counting arrangements at least as extreme as
@@ -720,7 +738,11 @@ def compare_window_block(
     both are segments of the same stationary process.
 
     Assumptions: each window is stationary; dependence decays within one block
-    length, taken as three times the estimated integrated autocorrelation time.
+    length, taken as three times the integrated autocorrelation time estimated
+    on the RAW window. The blocks themselves are cut from the smoothed window,
+    because the smoothed window mean is the statistic being compared, and the
+    ragged tail is dropped from the START so that the most recent points, the
+    ones the final window exists to look at, are the ones that survive.
 
     Precondition: the final window must hold at least `MIN_BLOCKS_PER_RUN`
     such blocks. Where it does not, this raises `ComparisonError` instead of
@@ -751,7 +773,12 @@ def compare_window_block(
 
     warnings = ["single run per condition: this cannot separate a real effect from seed variance"]
 
-    length = block_length([baseline_window, candidate_window])
+    length = block_length(
+        [
+            raw_window_values(baseline_run.series(tag), config),
+            raw_window_values(candidate_run.series(tag), config),
+        ]
+    )
     shortest = int(min(baseline_window.size, candidate_window.size))
     available = shortest // length
     if available < MIN_BLOCKS_PER_RUN:
@@ -797,10 +824,10 @@ def compare_window_block(
         candidate=candidate_run.run_id,
         mode=MODE_WINDOW_BLOCK,
         test_name="two sided studentized block permutation test (Welch t) on the final window mean",
-        baseline_statistic=float(baseline_window.mean()),
-        candidate_statistic=float(candidate_window.mean()),
+        baseline_statistic=float(baseline_blocks.mean()),
+        candidate_statistic=float(candidate_blocks.mean()),
         effect=effect,
-        relative_effect_pct=_relative(effect, float(baseline_window.mean())),
+        relative_effect_pct=_relative(effect, float(baseline_blocks.mean())),
         effect_size=float(effect / spread) if spread > 0 else 0.0,
         effect_size_name="Cohen's d over block means",
         ci_low=ci_low,
@@ -813,7 +840,7 @@ def compare_window_block(
         min_attainable_p=float(min_attainable),
         n_baseline=n_baseline,
         n_candidate=n_candidate,
-        window_points=int(min(baseline_window.size, candidate_window.size)),
+        window_points=int(min(n_baseline, n_candidate) * length),
         higher_is_better=higher_is_better,
         seed=config.seed,
         baseline_runs=(baseline_run.run_id,),
@@ -988,15 +1015,20 @@ def _welch_interval(
 
 
 def _block_means(values: np.ndarray, length: int) -> np.ndarray:
-    """Split a window into equal blocks, dropping the ragged tail.
+    """Split a window into equal blocks, dropping the ragged tail from the start.
 
     Dropping rather than padding keeps every block the same weight, which the
-    permutation over blocks assumes.
+    permutation over blocks assumes. Dropping from the START rather than the end
+    is the part that matters to a reader: the remainder used to come off the
+    most recent points, so a test about where a run ended up was run on
+    everything except where it ended up, and the effect computed from the
+    truncated blocks then disagreed with the statistics reported beside it by a
+    measured 2.7 percent.
     """
     usable = (values.size // length) * length
     if usable == 0:
         return np.array([values.mean()], dtype=np.float64)
-    return values[:usable].reshape(-1, length).mean(axis=1)
+    return values[-usable:].reshape(-1, length).mean(axis=1)
 
 
 def _block_bootstrap_interval(

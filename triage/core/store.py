@@ -236,6 +236,21 @@ class Store:
         ).fetchone()
         return None if row is None else str(row["source_path"])
 
+    def is_empty(self, run_id: str) -> bool:
+        """True when this run is stored and holds no series at all.
+
+        Used by ingest to re warn about a run with no scalars on every pass,
+        not only the pass that parsed it. A stored fingerprint made the second
+        ingest skip such a run in silence, which is how an empty run stopped
+        being visible at the point a reader was most likely to trust the tool.
+        """
+        if self.source_hash(run_id) is None:
+            return False
+        row = self.connection.execute(
+            "SELECT COUNT(*) AS n FROM metrics WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return int(row["n"]) == 0
+
     def is_unchanged(self, run_id: str, source_hash: str) -> bool:
         """True when this run is already stored with exactly this fingerprint."""
         return self.source_hash(run_id) == source_hash

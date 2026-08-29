@@ -12,6 +12,7 @@ functions of the database plus the recorded permutation seed.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -23,6 +24,33 @@ from triage.core.store import Store
 from triage.ingest import ingest
 
 DEFAULT_DATABASE = "triage.db"
+
+#: Accepted values of `--log-level`, lowest detail last so `--help` reads in
+#: the order a reader would raise it.
+LOG_LEVELS = ("debug", "info", "warning", "error")
+
+
+def configure_logging(level: str) -> None:
+    """Send every `triage.*` log record to stderr at `level`.
+
+    The package used to import `logging` nowhere at all, so the only way to
+    learn why a directory had not been read as a run was to add prints and
+    rebuild. Records go to stderr because they are diagnostics: stdout carries
+    the verdict table and the report path, and a reader piping those somewhere
+    must not get progress and warnings mixed into the data.
+
+    Configuration is scoped to the `triage` logger rather than the root, and
+    `propagate` is turned off, so importing this package as a library does not
+    reconfigure the host application's logging.
+    """
+    logger = logging.getLogger("triage")
+    logger.setLevel(getattr(logging, level.upper()))
+    logger.propagate = False
+    for existing in list(logger.handlers):
+        logger.removeHandler(existing)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(handler)
 
 # Measured by the calibration suite in tests/statistics and reproduced by
 # `make test`. Carried into every report footer so a reader never has to take
@@ -38,6 +66,16 @@ def add_common(parser: argparse.ArgumentParser) -> None:
         help=f"path to the triage database (default: {DEFAULT_DATABASE})",
     )
     parser.add_argument("--quiet", action="store_true", help="suppress progress bars, for CI logs")
+    parser.add_argument(
+        "--log-level",
+        default="warning",
+        choices=LOG_LEVELS,
+        help=(
+            "diagnostic detail on stderr (default: warning). `debug` explains every "
+            "discovery decision, which is the way to answer why a directory was not "
+            "read as a run"
+        ),
+    )
 
 
 def add_analysis_options(parser: argparse.ArgumentParser) -> None:
@@ -143,6 +181,12 @@ def run_ingest(args: argparse.Namespace) -> int:
     print(f"ingest: {result.summary()}")
     for run_id, message in result.failed:
         print(f"  failed: {run_id}: {message}", file=sys.stderr)
+        # The traceback is kept rather than printed by default: it is what
+        # separates a corrupt log from a bug in this tool, and it is noise
+        # until somebody is looking for exactly that.
+        logging.getLogger("triage.cli").debug(
+            "traceback for %s:\n%s", run_id, result.tracebacks.get(run_id, "(not recorded)")
+        )
     for run_id in result.empty:
         print(f"  warning: {run_id} parsed but carries no scalar metrics", file=sys.stderr)
     for run_id, dropped in sorted(result.dropped_by_run.items()):
@@ -229,6 +273,7 @@ def run_report(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_logging(args.log_level)
     handlers = {"ingest": run_ingest, "compare": run_compare, "report": run_report}
     try:
         return handlers[args.verb](args)

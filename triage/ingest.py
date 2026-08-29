@@ -11,17 +11,27 @@ SQLite. The contract it keeps:
   because one corrupt event file should not cost a sweep of forty runs;
 * every point the non finite filter discarded is counted and reported, because
   a series that quietly lost its diverged tail looks exactly like one that
-  never diverged.
+  never diverged;
+* a run that produced no scalar series is reported EVERY pass, including the
+  passes that skip it as unchanged, because the second ingest is where an
+  empty run used to become invisible.
+
+Diagnostics go through `logging.getLogger("triage.ingest")` and results go to
+stdout, so piping a run somewhere does not mix the two.
 """
 
 from __future__ import annotations
 
+import logging
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from triage.core.store import Store, StoreError
-from triage.parsers import DEFAULT_PARSERS, ParseError, Parser, discover_runs
+from triage.core.store import Store
+from triage.parsers import DEFAULT_PARSERS, Parser, discover_runs
 from triage.progress import track
+
+LOGGER = logging.getLogger("triage.ingest")
 
 
 @dataclass
@@ -37,6 +47,10 @@ class IngestResult:
     #: filter itself lives in `MetricSeries`; this is where the loss becomes
     #: visible, because a point dropped without a count is a point lost.
     dropped_by_run: dict[str, int] = field(default_factory=dict)
+    #: Full traceback per failed run, keyed by run id. `str(error)` alone loses
+    #: both which exception it was and where it came from, which is most of
+    #: what is needed to tell a corrupt log from a bug in this tool.
+    tracebacks: dict[str, str] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -103,18 +117,41 @@ def ingest(
             known = store.source_hash(run_id)
             if not force and known == fingerprint:
                 result.skipped.append(run_id)
+                # A skipped run is still checked for emptiness. Storing the
+                # fingerprint of a run with no scalars used to silence its
+                # warning from the second pass onward, so a run that logged
+                # nothing became indistinguishable from a healthy one exactly
+                # when a reader had stopped watching for it.
+                if store.is_empty(run_id):
+                    result.empty.append(run_id)
+                    LOGGER.warning("%s is stored with no scalar metrics", run_id)
                 continue
             experiment = parser.parse(path, identity_root)
             store.upsert(experiment, fingerprint)
             dropped = int(experiment.metadata.get("n_dropped_non_finite", 0) or 0)
             if dropped:
                 result.dropped_by_run[run_id] = dropped
+                LOGGER.warning("%s: dropped %d non finite point(s)", run_id, dropped)
             if not experiment.metrics:
                 result.empty.append(run_id)
+                LOGGER.warning("%s parsed but carries no scalar metrics", run_id)
             if known is None:
                 result.added.append(run_id)
             else:
                 result.updated.append(run_id)
-        except (ParseError, StoreError, OSError, ValueError) as error:
-            result.failed.append((run_id, str(error)))
+        # Exception, not a tuple of the failures anyone thought of. The tuple
+        # here was (ParseError, OSError, ValueError), and every gap in it was
+        # reachable: OverflowError from a poisoned step, RecursionError from a
+        # symlink cycle, sqlite3.Error from a locked database, zlib.error from
+        # a truncated blob. Each of those turned one bad run into a dead sweep,
+        # which is the exact promise this module's docstring makes and breaks.
+        # KeyboardInterrupt and SystemExit inherit from BaseException and so
+        # are NOT caught: stopping the ingest has to remain possible.
+        except Exception as error:
+            detail = f"{type(error).__name__}: {error}"
+            result.failed.append((run_id, detail))
+            result.tracebacks[run_id] = "".join(
+                traceback.format_exception(type(error), error, error.__traceback__)
+            )
+            LOGGER.error("%s failed: %s", run_id, detail, exc_info=error)
     return result

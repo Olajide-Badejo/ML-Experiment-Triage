@@ -287,30 +287,71 @@ class Parser(ABC):
 
 
 def _claiming_parser(directory: Path, parsers: list[Parser]) -> Parser | None:
-    """The first parser that recognises `directory`, or None."""
+    """The first parser that recognises `directory`, or None.
+
+    A `can_parse` that cannot read the directory answers "no" rather than
+    raising. Every parser probes by listing the directory, so a `PermissionError`
+    on one subdirectory used to escape `discover_runs` entirely and abort the
+    ingest before a single run had been parsed: one directory the process could
+    not open cost the whole sweep. It is logged and skipped instead.
+    """
     for parser in parsers:
-        if parser.can_parse(directory):
+        try:
+            claims = parser.can_parse(directory)
+        except OSError as error:
+            LOGGER.warning("%s could not examine %s: %s", type(parser).__name__, directory, error)
+            return None
+        if claims:
             return parser
     return None
 
 
+def _resolved(path: Path) -> Path:
+    """`path` with symlinks resolved, or the path itself when that fails."""
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _subdirectories(directory: Path) -> list[Path]:
+    """Sorted subdirectories of `directory`, or none when it cannot be read.
+
+    A directory the process may not open is not a reason to stop discovering:
+    a `PermissionError` raised here used to propagate out of `discover_runs`
+    and abort the ingest before the per run loop had begun, so one unreadable
+    directory anywhere under the root cost every run in the sweep. The error is
+    logged and the walk continues.
+    """
+    try:
+        return sorted(child for child in directory.iterdir() if child.is_dir())
+    except OSError as error:
+        LOGGER.warning("skipping %s: %s", directory, error)
+        return []
+
+
 def _has_parseable_subdirectory(directory: Path, parsers: list[Parser]) -> bool:
-    """True when any subdirectory below `directory` is itself a run.
+    """True when any directory below `directory` is itself a run.
 
     This is the whole of leaf claiming. The search goes all the way down rather
     than one level, because a sweep is often nested (`sweep/group/run`), and
     stopping at the first level would let a stray file at the sweep root claim
     the sweep exactly as before.
+
+    Iterative and cycle guarded for the same reason `discover_runs` is: a
+    symlink pointing at an ancestor makes the tree infinite.
     """
-    try:
-        children = sorted(child for child in directory.iterdir() if child.is_dir())
-    except OSError:
-        return False
-    for child in children:
+    seen: set[Path] = {_resolved(directory)}
+    pending = _subdirectories(directory)
+    while pending:
+        child = pending.pop()
+        key = _resolved(child)
+        if key in seen:
+            continue
+        seen.add(key)
         if _claiming_parser(child, parsers) is not None:
             return True
-        if _has_parseable_subdirectory(child, parsers):
-            return True
+        pending.extend(_subdirectories(child))
     return False
 
 
@@ -329,6 +370,14 @@ def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]
     Parsers are tried in the order given and the first match wins. Every claim
     and every descend decision is logged at debug level, so `--log-level debug`
     answers "why was this directory not a run" without a rebuild.
+
+    **Iterative, and it remembers where it has been.** The walk was recursive
+    and kept no history, so a symlink pointing at one of its own ancestors made
+    the tree infinite and the ingest died of `RecursionError`: verified, and
+    fatal rather than per run, because `RecursionError` was not in the caller's
+    catch tuple either. Directories are visited by resolved path and each is
+    visited once, which terminates on any cycle a filesystem can express, and
+    the explicit stack means depth costs memory rather than frames.
     """
     root = Path(root)
     if not root.exists():
@@ -343,12 +392,24 @@ def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]
         LOGGER.debug("skip %s: no parser claims it", root)
         return []
 
-    def walk(directory: Path) -> None:
+    seen: set[Path] = set()
+    # Reverse ordered stack, so popping visits children in sorted order and the
+    # result is the same list a recursive walk produced. Discovery order is
+    # part of the tool's determinism, not an accident of the data structure.
+    pending: list[Path] = [root]
+    while pending:
+        directory = pending.pop()
+        key = _resolved(directory)
+        if key in seen:
+            LOGGER.debug("skip %s: already visited as %s (symlink cycle)", directory, key)
+            continue
+        seen.add(key)
+
         parser = _claiming_parser(directory, parsers)
         if parser is not None and not _has_parseable_subdirectory(directory, parsers):
             LOGGER.debug("claim %s as a run (%s)", directory, parser.format_name)
             found.append((parser, directory))
-            return
+            continue
         if parser is not None:
             LOGGER.debug(
                 "descend into %s: it parses as %s, but a subdirectory is a run too, so it is a "
@@ -358,9 +419,6 @@ def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]
             )
         else:
             LOGGER.debug("descend into %s: no parser claims it", directory)
-        for child in sorted(directory.iterdir()):
-            if child.is_dir():
-                walk(child)
+        pending.extend(reversed(_subdirectories(directory)))
 
-    walk(root)
     return found

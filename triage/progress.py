@@ -5,6 +5,12 @@ bar; in a CI log or a piped file it is hundreds of lines of partial redraws that
 bury whatever you were actually looking for. So the bar is drawn only when
 stderr is a terminal, and otherwise the same information arrives as occasional
 plain lines.
+
+**Everything here writes to stderr, and that is not a detail.** The plain line
+branch used to `print` to stdout, which is the same stream the report path and
+the verdict table write their results to; piping the output of a run to a file
+interleaved progress chatter with the data, verified. Progress is diagnostics,
+results are data, and the two belong on different streams.
 """
 
 from __future__ import annotations
@@ -42,17 +48,28 @@ def track[T](
             total = None
 
     if is_terminal():
-        bar = tqdm(items, desc=description, unit="run", total=total, leave=False)
-        for item in bar:
-            if label is not None:
-                bar.set_postfix_str(label(item)[:38], refresh=False)
-            yield item
-        bar.close()
+        # try/finally, because this is a generator: a consumer that raises, or
+        # simply stops iterating, abandons it part way and the bar's close()
+        # would never run. What that leaves behind is a half drawn bar with no
+        # trailing newline, sitting on top of whatever the traceback printed
+        # next. The finally runs on garbage collection of an abandoned
+        # generator as well as on a normal exit, so the terminal is restored
+        # either way.
+        progress_bar = tqdm(
+            items, desc=description, unit="run", total=total, leave=False, file=sys.stderr
+        )
+        try:
+            for item in progress_bar:
+                if label is not None:
+                    progress_bar.set_postfix_str(label(item)[:38], refresh=False)
+                yield item
+        finally:
+            progress_bar.close()
         return
 
     counted = total if total is not None else 0
     for index, item in enumerate(items, start=1):
         if index == 1 or index % every == 0 or index == counted:
             suffix = f" {label(item)}" if label is not None else ""
-            print(f"[{description} {index}/{counted or '?'}]{suffix}", flush=True)
+            print(f"[{description} {index}/{counted or '?'}]{suffix}", file=sys.stderr, flush=True)
         yield item

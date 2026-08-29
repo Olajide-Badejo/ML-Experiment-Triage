@@ -10,13 +10,20 @@ that the boundary must lose a run loudly or not at all.
 from __future__ import annotations
 
 import logging
+import sqlite3
+import subprocess
+import sys
+import zlib
 from pathlib import Path
 
 import pytest
 
+from triage.cli import main
+from triage.core.experiment import Experiment
 from triage.core.store import Store
 from triage.ingest import ingest
-from triage.parsers import DEFAULT_PARSERS, discover_runs
+from triage.parsers import DEFAULT_PARSERS, Parser, discover_runs
+from triage.progress import track
 
 
 def write_run(directory: Path, rows: int = 30, value: float = 1.0) -> Path:
@@ -214,3 +221,240 @@ def test_reingesting_the_same_sweep_from_the_same_root_is_not_a_collision(
         second = ingest(root, store, show_progress=False)
     assert second.failed == []
     assert second.skipped == ["run_a"]
+
+
+# -------------------------------------------------------------------- D20
+
+
+class ExplodingParser(Parser):
+    """A parser whose `parse` raises whatever it was constructed with.
+
+    The point is to raise something OUTSIDE the old catch tuple of
+    (ParseError, OSError, ValueError). OverflowError, RecursionError,
+    sqlite3.Error and zlib.error were all reachable in practice and all fatal.
+    """
+
+    format_name = "exploding"
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def can_parse(self, path: Path) -> bool:
+        return path.is_dir() and path.name.startswith("bad")
+
+    def parse(self, path: Path, root: Path | None = None) -> Experiment:
+        raise self.error
+
+    def fingerprint(self, path: Path, root: Path | None = None) -> str:
+        return "exploding"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OverflowError("step out of range"),
+        RecursionError("too deep"),
+        sqlite3.Error("database is locked"),
+        zlib.error("invalid block"),
+        RuntimeError("something nobody predicted"),
+    ],
+)
+def test_one_unexpected_error_costs_one_run_not_the_sweep(
+    tmp_path: Path, temp_database: Path, error: Exception
+) -> None:
+    """Verified: an OverflowError from one poisoned line aborted the whole walk."""
+    root = tmp_path / "sweep"
+    write_run(root / "good_a")
+    (root / "bad_run").mkdir(parents=True)
+    write_run(root / "good_b")
+    parsers = [ExplodingParser(error), *DEFAULT_PARSERS]
+
+    with Store(temp_database) as store:
+        result = ingest(root, store, parsers=parsers, show_progress=False)
+        assert sorted(store.run_ids()) == ["good_a", "good_b"]
+
+    assert sorted(result.added) == ["good_a", "good_b"]
+    assert [name for name, _ in result.failed] == ["bad_run"]
+
+
+def test_a_failure_records_its_type_and_traceback(tmp_path: Path, temp_database: Path) -> None:
+    """str(error) alone loses which exception it was and where it came from."""
+    root = tmp_path / "sweep"
+    (root / "bad_run").mkdir(parents=True)
+    parsers = [ExplodingParser(OverflowError("step out of range")), *DEFAULT_PARSERS]
+
+    with Store(temp_database) as store:
+        result = ingest(root, store, parsers=parsers, show_progress=False)
+
+    message = result.failed[0][1]
+    assert "OverflowError" in message
+    assert "step out of range" in message
+    assert "bad_run" in result.tracebacks
+    assert "Traceback" in result.tracebacks["bad_run"]
+
+
+def test_keyboard_interrupt_is_not_swallowed(tmp_path: Path, temp_database: Path) -> None:
+    """A per run catch of Exception must still let the user stop the ingest."""
+    root = tmp_path / "sweep"
+    (root / "bad_run").mkdir(parents=True)
+    parsers = [ExplodingParser(KeyboardInterrupt()), *DEFAULT_PARSERS]
+
+    with Store(temp_database) as store, pytest.raises(KeyboardInterrupt):
+        ingest(root, store, parsers=parsers, show_progress=False)
+
+
+def test_system_exit_is_not_swallowed(tmp_path: Path, temp_database: Path) -> None:
+    root = tmp_path / "sweep"
+    (root / "bad_run").mkdir(parents=True)
+    parsers = [ExplodingParser(SystemExit(3)), *DEFAULT_PARSERS]
+
+    with Store(temp_database) as store, pytest.raises(SystemExit):
+        ingest(root, store, parsers=parsers, show_progress=False)
+
+
+def test_an_empty_run_warns_again_on_reingest(tmp_path: Path, temp_database: Path) -> None:
+    """Verified: an empty run stored a fingerprint, so its warning never returned.
+
+    The second pass skipped it as unchanged and said nothing, so a run that
+    produced no scalars looked identical to a healthy one from the second
+    ingest onwards.
+    """
+    root = tmp_path / "sweep"
+    empty = root / "empty_run"
+    empty.mkdir(parents=True)
+    # Parses cleanly, carries a step column, and yields no scalar series.
+    empty.joinpath("metrics.csv").write_text("step,note\n0,hello\n1,world\n", encoding="utf-8")
+
+    with Store(temp_database) as store:
+        first = ingest(root, store, show_progress=False)
+        assert first.empty == ["empty_run"]
+
+        second = ingest(root, store, show_progress=False)
+        assert second.empty == ["empty_run"], "the warning must survive the skip"
+
+
+def _link_to_self(link: Path, target: Path) -> None:
+    """Make `link` a directory link pointing at `target`, or skip the test.
+
+    A plain symlink needs Developer Mode or an elevated shell on Windows, so a
+    directory junction is used there instead: it creates the same cycle for a
+    walk that resolves paths, which is the thing under test, and it needs no
+    privilege. If neither is available the test is skipped rather than passing
+    on a filesystem where the defect cannot exist.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if sys.platform != "win32":
+        pytest.skip("this platform does not allow creating symlinks unprivileged")
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not link.exists():
+        pytest.skip(f"could not create a directory junction: {result.stderr.strip()}")
+
+
+def test_a_symlink_cycle_does_not_end_the_walk_in_a_recursion_error(
+    tmp_path: Path,
+) -> None:
+    """Verified fatal: walk() recursed forever through a directory loop."""
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    _link_to_self(root / "loop", root)
+
+    found = sorted(path for _parser, path in discover_runs(root, DEFAULT_PARSERS))
+    assert root / "run_a" in found
+
+
+def test_an_unreadable_directory_does_not_stop_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PermissionError on one subdirectory used to abort before the loop began."""
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    forbidden = root / "forbidden"
+    forbidden.mkdir()
+
+    real_iterdir = Path.iterdir
+
+    def guarded(self: Path):
+        if self.name == "forbidden":
+            raise PermissionError(13, "Permission denied")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", guarded)
+    found = sorted(path for _parser, path in discover_runs(root, DEFAULT_PARSERS))
+    assert found == [root / "run_a"]
+
+
+# ------------------------------------------------- D20: progress and logging
+
+
+def test_progress_lines_go_to_stderr_never_stdout(capsys: pytest.CaptureFixture[str]) -> None:
+    """Verified: progress on stdout interleaved with piped report output."""
+    consumed = list(track(range(3), "ingest", enabled=True))
+    captured = capsys.readouterr()
+    assert consumed == [0, 1, 2]
+    assert captured.out == ""
+    assert "ingest" in captured.err
+
+
+def test_the_progress_bar_is_closed_even_when_the_consumer_raises() -> None:
+    """A generator abandoned mid iteration must still tear its bar down."""
+    closed: list[bool] = []
+
+    class FakeBar:
+        def __init__(self, items, **_kwargs) -> None:
+            self.items = items
+
+        def __iter__(self):
+            return iter(self.items)
+
+        def set_postfix_str(self, *_args, **_kwargs) -> None:
+            return None
+
+        def close(self) -> None:
+            closed.append(True)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("triage.progress.tqdm", FakeBar)
+        patch.setattr("triage.progress.is_terminal", lambda: True)
+        stream = track(range(10), "ingest", enabled=True)
+        next(stream)
+        stream.close()
+
+    assert closed == [True], "the bar must be closed by a finally, not by falling off the end"
+
+
+def test_the_cli_routes_triage_logs_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    root.joinpath("index.csv").write_text("step,note\n0,1.0\n", encoding="utf-8")
+    database = tmp_path / "triage.db"
+
+    exit_code = main(
+        ["ingest", str(root), "--database", str(database), "--quiet", "--log-level", "debug"]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "descend" in captured.err, "debug discovery decisions belong on stderr"
+    assert "descend" not in captured.out
+
+
+def test_the_default_log_level_is_quiet_about_discovery(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    database = tmp_path / "triage.db"
+
+    assert main(["ingest", str(root), "--database", str(database), "--quiet"]) == 0
+    assert "descend" not in capsys.readouterr().err

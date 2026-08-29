@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,49 @@ from typing import Any
 from triage.core.experiment import Experiment, MetricSeries
 
 CONFIG_FILENAME = "config.json"
+
+
+#: Widest step this tool accepts. int64 is the storage type, and a value beyond
+#: this silently casts to INT64_MIN behind a numpy warning and then sorts to the
+#: front of the series, so it is refused instead.
+MAX_STEP = 2**62
+
+
+def validate_step(raw: Any, source: str, column: str) -> int:
+    """Check one step value and return it as an int, or raise `ParseError`.
+
+    The step axis is integral by definition here: a series is indexed by
+    training step, and two points cannot share one index. A fractional value
+    such as an epoch of 2.75 is therefore not a step, and casting it would
+    truncate 12 fractional epochs into 3 duplicate integers and destroy the
+    series, which is what used to happen. Infinity and NaN are refused for the
+    same reason, and so is a magnitude int64 cannot hold.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ParseError(
+            f"{source}: column {column!r} holds {raw!r}, which is not a step; "
+            f"steps must be integers"
+        )
+    if isinstance(raw, float):
+        if not math.isfinite(raw):
+            raise ParseError(
+                f"{source}: column {column!r} holds the non finite step {raw!r}; "
+                f"steps must be finite integers"
+            )
+        if raw != int(raw):
+            raise ParseError(
+                f"{source}: column {column!r} holds the fractional step {raw!r}; "
+                f"steps must be integers. Log an integer step alongside the "
+                f"fractional value, or scale it (for example epoch 2.75 at 400 "
+                f"steps per epoch is step 1100)"
+            )
+    step = int(raw)
+    if abs(step) > MAX_STEP:
+        raise ParseError(
+            f"{source}: column {column!r} holds the step {raw!r}, out of range for "
+            f"the int64 step axis; steps must satisfy abs(step) <= {MAX_STEP}"
+        )
+    return step
 
 
 def non_finite_metadata(metrics: dict[str, MetricSeries]) -> dict[str, Any]:

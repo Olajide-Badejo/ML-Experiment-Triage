@@ -12,6 +12,12 @@ object with a `metrics` or `history` list. Malformed lines are counted and
 reported in the experiment metadata rather than silently dropped or allowed to
 abort the parse: a truncated final line is what a killed training job leaves
 behind, and losing the other ten thousand records over it would be wrong.
+
+**Steps must be integers**, as in the CSV parser and for the same reason: the
+step axis indexes the series. A record whose step is fractional, non finite or
+out of int64 range stops the parse with a message naming the file and the key.
+A `null` step, and any record that carries no step key at all, is skipped and
+counted instead, because a header line is a legitimate part of these files.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from typing import Any
 import numpy as np
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import ParseError, Parser, non_finite_metadata
+from triage.parsers.base import ParseError, Parser, non_finite_metadata, validate_step
 from triage.parsers.csv_parser import STEP_COLUMNS, TAG_COLUMNS, VALUE_COLUMNS, WALL_COLUMNS
 
 RECORD_KEYS = ("metrics", "history", "records", "logs")
@@ -72,7 +78,7 @@ class JsonlParser(Parser):
         if not records:
             raise ParseError(f"{path} contained no usable records")
 
-        metrics = self._to_metrics(records)
+        metrics = self._to_metrics(records, ", ".join(p.name for p in files))
         return Experiment(
             run_id=self.run_id(path),
             source_path=str(path),
@@ -125,7 +131,9 @@ class JsonlParser(Parser):
                 malformed += 1
         return records, malformed
 
-    def _to_metrics(self, records: list[dict[str, Any]]) -> dict[str, MetricSeries]:
+    def _to_metrics(
+        self, records: list[dict[str, Any]], source_label: str
+    ) -> dict[str, MetricSeries]:
         step_key = _pick(records[0], STEP_COLUMNS)
         if step_key is None:
             raise ParseError(
@@ -139,9 +147,9 @@ class JsonlParser(Parser):
         collected: dict[str, list[tuple[int, float, float | None]]] = {}
         for record in records:
             raw_step = record.get(step_key)
-            if not isinstance(raw_step, (int, float)) or isinstance(raw_step, bool):
+            if raw_step is None:
                 continue
-            step = int(raw_step)
+            step = validate_step(raw_step, source_label, step_key)
             wall = record.get(wall_key) if wall_key else None
             wall_value = float(wall) if isinstance(wall, (int, float)) else None
 

@@ -16,6 +16,13 @@ what a framework callback writes when the set of metrics is not known up front:
 The shape is detected from the header rather than configured, because getting
 it wrong is loud (a metric named `value` with steps repeated) and asking the
 user to declare it would be one more thing to get wrong.
+
+**Steps must be integers.** The step axis indexes the series, so two points
+cannot share one index and a fractional value is not a step. `epoch` is an
+accepted step column name because most logs write whole epochs, but a column
+of fractional epochs (0.00, 0.25, 0.50, ...) stops the parse with a message
+naming the file and the column rather than truncating twelve points into three
+duplicates. Log an integer step beside the fractional value, or scale it.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from triage.core.experiment import Experiment, MetricSeries
-from triage.parsers.base import ParseError, Parser, non_finite_metadata
+from triage.parsers.base import MAX_STEP, ParseError, Parser, non_finite_metadata, validate_step
 
 STEP_COLUMNS = ("step", "global_step", "iteration", "iter", "epoch")
 TAG_COLUMNS = ("tag", "metric", "name", "key")
@@ -50,6 +57,28 @@ def _first_match(columns: list[str], candidates: tuple[str, ...]) -> str | None:
         if candidate in lowered:
             return lowered[candidate]
     return None
+
+
+def _validated_steps(column: pd.Series, source: Path, name: str) -> pd.Series:
+    """Coerce the step column to numbers, refusing anything that is not a step.
+
+    A cell that is not a number at all is left as NaN and its row is dropped
+    later, because a log with a blank step on one line is still usable. A cell
+    that IS a number but not an integral, in range one is a different matter:
+    it would truncate into a duplicate of another step and silently destroy the
+    series, so it stops the parse with a message naming the file and column.
+    """
+    numeric = pd.to_numeric(column, errors="coerce")
+    present = numeric.to_numpy(dtype=np.float64, na_value=np.nan)
+    finite = np.isfinite(present)
+    bad = finite & ((present != np.trunc(present)) | (np.abs(present) > MAX_STEP))
+    infinite = ~finite & ~np.isnan(present)
+    offenders = np.flatnonzero(bad | infinite)
+    if offenders.size:
+        # Re raise through the shared validator so the message, the remedy and
+        # the wording are identical to the JSON parser's.
+        validate_step(float(present[offenders[0]]), f"{source.name} in {source.parent}", name)
+    return numeric
 
 
 def _numeric(column: pd.Series) -> tuple[pd.Series, np.ndarray]:
@@ -119,7 +148,7 @@ class CsvParser(Parser):
         value_column = _first_match(columns, VALUE_COLUMNS)
         wall_column = _first_match(columns, WALL_COLUMNS)
 
-        steps = pd.to_numeric(frame[step_column], errors="coerce")
+        steps = _validated_steps(frame[step_column], source, step_column)
         walls = pd.to_numeric(frame[wall_column], errors="coerce") if wall_column else None
 
         if tag_column is not None and value_column is not None:

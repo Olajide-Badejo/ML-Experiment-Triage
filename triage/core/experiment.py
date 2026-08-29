@@ -29,6 +29,34 @@ class SeriesError(ValueError):
     """Raised when a series cannot be built or is unusable for a statistic."""
 
 
+def canonical_config_value(value: Any) -> str:
+    """Spell one config value so that equal values spell the same.
+
+    `repr()` does not have that property over the types a config actually
+    holds. A batch size written `32` by one launcher and `32.0` by another is
+    one condition, but `repr()` spells them `32` and `32.0`, which split a five
+    seed condition into five singletons; every one of them then failed the two
+    runs per side test and silently fell back to the weaker single run mode,
+    where a difference explained entirely by the seed can be reported as
+    significant. So an integral number is spelled as the integer it equals
+    whatever Python type carries it.
+
+    Booleans are deliberately NOT folded into 0 and 1 even though `bool` is a
+    subclass of `int`: `amp: true` and `amp: 1` are the same run in practice,
+    but a config that carries both spellings is more likely to be describing
+    two different things than one, and keeping them apart costs at worst an
+    unnecessary split, while folding them costs a wrong grouping.
+    """
+    if isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if math.isfinite(number) and number == int(number):
+            return str(int(number))
+        return repr(value)
+    return repr(value)
+
+
 @dataclass(frozen=True)
 class MetricSeries:
     """One tagged scalar series from one run, sorted by step and deduplicated.
@@ -199,13 +227,17 @@ class Experiment:
         Runs sharing a variant key are seed replicates of one another, which is
         what makes the strong permutation mode available. An explicit
         `variant` or `group` entry in the config wins; otherwise the key is
-        built from every non seed configuration entry, sorted for stability.
+        built from every non seed configuration entry, sorted for stability and
+        spelled through `canonical_config_value` so that two spellings of one
+        number do not split one condition in two.
         """
         for key in ("variant", "group"):
             if key in self.config:
                 return str(self.config[key])
         parts = [
-            f"{name}={self.config[name]!r}" for name in sorted(self.config) if name not in SEED_KEYS
+            f"{name}={canonical_config_value(self.config[name])}"
+            for name in sorted(self.config)
+            if name not in SEED_KEYS
         ]
         return ", ".join(parts) if parts else self.run_id
 

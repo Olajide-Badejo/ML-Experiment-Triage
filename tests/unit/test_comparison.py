@@ -560,6 +560,37 @@ def test_compare_all_accepts_a_run_id_as_the_baseline() -> None:
     assert [result.baseline for result in results] == ["base"]
 
 
+def test_a_refused_comparison_is_recorded_rather_than_dropped() -> None:
+    """D8: every refusal used to be swallowed by a bare `continue`.
+
+    Three single run conditions too short for the block mode produced "0
+    comparisons" and no hint that anything had been refused, while calling
+    `compare()` directly on the same runs raised the full remedy message. The
+    refusals are first class records now, one per condition and tag.
+    """
+    rng = np.random.default_rng(20)
+    runs = generate_condition("base", CurveSpec(), 3, rng) + generate_condition(
+        "too_short", CurveSpec(n_steps=120), 1, rng
+    )
+    results = compare_all(runs, baseline="base", config=CONFIG)
+
+    assert not [result for result in results if result.candidate == "too_short"]
+    assert len(results.refusals) == 1
+    refusal = results.refusals[0]
+    assert refusal.variant == "too_short"
+    assert refusal.tag == "val/loss"
+    assert "cannot be calibrated" in refusal.reason
+    assert "too_short" in refusal.describe()
+
+
+def test_a_comparison_that_succeeds_records_no_refusal() -> None:
+    rng = np.random.default_rng(21)
+    runs = generate_condition("base", CurveSpec(), 3, rng) + generate_condition(
+        "alt", CurveSpec(), 3, rng
+    )
+    assert compare_all(runs, baseline="base", config=CONFIG).refusals == ()
+
+
 def test_an_unknown_baseline_is_a_clear_error() -> None:
     rng = np.random.default_rng(17)
     runs = generate_condition("base", CurveSpec(), 2, rng)

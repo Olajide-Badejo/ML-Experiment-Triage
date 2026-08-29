@@ -255,6 +255,43 @@ class ComparisonResult:
         return data
 
 
+@dataclass(frozen=True)
+class ComparisonRefusal:
+    """One comparison that could not be made, and the reason it could not.
+
+    A refusal is a result. The claim this tool makes is that it declines to
+    answer rather than answering badly, and a refusal that is dropped on the
+    floor turns that claim into its opposite: three conditions too short for any
+    calibrated test reported "0 comparisons" and gave no hint that anything had
+    been attempted, while calling the same comparison directly raised a message
+    naming the remedy.
+    """
+
+    variant: str
+    tag: str
+    reason: str
+
+    def describe(self) -> str:
+        return f"{self.variant} on {self.tag}: {self.reason}"
+
+
+class ComparisonResults(list[ComparisonResult]):
+    """The comparisons that were made, carrying the ones that were not.
+
+    A list subclass rather than a wrapper, so that every existing caller of
+    `compare_all` keeps working unchanged while the refusals travel with the
+    results to the outputs that have to name them.
+    """
+
+    def __init__(
+        self,
+        results: Sequence[ComparisonResult] = (),
+        refusals: Sequence[ComparisonRefusal] = (),
+    ) -> None:
+        super().__init__(results)
+        self.refusals: tuple[ComparisonRefusal, ...] = tuple(refusals)
+
+
 # --------------------------------------------------------------------- helpers
 
 
@@ -1127,12 +1164,17 @@ def compare_all(
     baseline: str,
     tags: list[str] | None = None,
     config: ComparisonConfig | None = None,
-) -> list[ComparisonResult]:
+) -> ComparisonResults:
     """Compare every condition against `baseline` on every shared tag.
 
     `baseline` may name a run or a variant key. Runs are grouped into variants
     first, so a sweep with five seeds per setting yields one strong comparison
     per setting rather than twenty five noisy pairwise ones.
+
+    A comparison that cannot be made is recorded on `ComparisonResults.refusals`
+    rather than skipped, and every output this package writes names those
+    refusals. The returned object is still a list of results, so a caller that
+    only wants the comparisons that succeeded does not have to know any of this.
     """
     config = config or ComparisonConfig()
     variants = group_by_variant(experiments)
@@ -1143,6 +1185,7 @@ def compare_all(
         tags = sorted({tag for run in experiments for tag in run.tags})
 
     results: list[ComparisonResult] = []
+    refusals: list[ComparisonRefusal] = []
     for variant_key, runs in variants.items():
         if variant_key == baseline_key:
             continue
@@ -1161,10 +1204,11 @@ def compare_all(
                     baseline_name=baseline_key,
                     candidate_name=variant_key,
                 )
-                results.append(replace(result, key=f"{variant_key}|{tag}"))
-            except (ComparisonError, SeriesError):
+            except (ComparisonError, SeriesError) as error:
+                refusals.append(ComparisonRefusal(variant_key, tag, str(error)))
                 continue
-    return results
+            results.append(replace(result, key=f"{variant_key}|{tag}"))
+    return ComparisonResults(results, refusals)
 
 
 def _resolve_baseline(

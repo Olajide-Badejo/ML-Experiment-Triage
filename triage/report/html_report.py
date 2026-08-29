@@ -17,6 +17,7 @@ the verdict table below them.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from plotly.offline import get_plotlyjs
 
 from triage.analysis.comparison import (
     ComparisonConfig,
+    ComparisonRefusal,
     group_by_variant,
     window_statistic,
 )
@@ -72,6 +74,10 @@ class ReportContext:
     comparison_config: ComparisonConfig
     regression_config: RegressionConfig
     calibration: dict[str, str]
+    #: Comparisons the analysis declined to make, rendered as their own block.
+    #: A report that shows only what could be computed is not a report of what
+    #: was asked for.
+    refusals: tuple[ComparisonRefusal, ...] = ()
 
 
 def _rgba(hex_colour: str, alpha: float) -> str:
@@ -311,6 +317,7 @@ def build_context(
     comparison_config: ComparisonConfig,
     regression_config: RegressionConfig,
     calibration: dict[str, str],
+    refusals: Sequence[ComparisonRefusal] = (),
     title: str = "ML Experiment Triage",
 ) -> ReportContext:
     return ReportContext(
@@ -324,4 +331,5 @@ def build_context(
         comparison_config=comparison_config,
         regression_config=regression_config,
         calibration=calibration,
+        refusals=tuple(refusals),
     )

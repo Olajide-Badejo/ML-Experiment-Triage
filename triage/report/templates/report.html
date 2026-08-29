@@ -186,6 +186,35 @@ footer dd { margin: 0; }
 </div>
 {% endif %}
 
+{% if context.refusals %}
+<h2>Comparisons not made</h2>
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Condition</th>
+      <th>Metric</th>
+      <th class="wrap-cell">Why the comparison was refused</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for refusal in context.refusals %}
+    <tr>
+      <td>{{ refusal.variant }}</td>
+      <td>{{ refusal.tag }}</td>
+      <td class="wrap-cell">{{ refusal.reason }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  These conditions are in the database and are absent from the table above, because no calibrated
+  test could be built from what they carry. Refusing is the intended behaviour: a p value from a
+  design that cannot support one is worse than no p value. Each row names what would fix it.
+</p>
+{% endif %}
+
 <h2>Curves</h2>
 {% for tag, figure in figures.items() %}
 <h3>{{ tag }}</h3>

@@ -16,7 +16,12 @@ import logging
 import sys
 from pathlib import Path
 
-from triage.analysis.comparison import ComparisonConfig, ComparisonError, compare_all
+from triage.analysis.comparison import (
+    ComparisonConfig,
+    ComparisonError,
+    ComparisonRefusal,
+    compare_all,
+)
 from triage.analysis.regression import RegressionConfig, TriageReport, classify
 from triage.analysis.sensitivity import analyse
 from triage.calibration import SUMMARY
@@ -51,6 +56,7 @@ def configure_logging(level: str) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
     logger.addHandler(handler)
+
 
 # Measured by the calibration suite in tests/statistics and reproduced by
 # `make test`. Carried into every report footer so a reader never has to take
@@ -238,7 +244,16 @@ def run_ingest(args: argparse.Namespace) -> int:
     return 1 if result.failed else 0
 
 
-def analyse_database(args: argparse.Namespace) -> tuple[TriageReport, list, list]:
+def analyse_database(
+    args: argparse.Namespace,
+) -> tuple[TriageReport, list, list, tuple[ComparisonRefusal, ...]]:
+    """The whole analysis for one database, including what it refused to do.
+
+    The refusals travel out of here beside the findings because both outputs
+    have to name them. A comparison this tool declined to make is the thing it
+    most wants to be trusted for, and for one release it was the thing most
+    easily missed: `compare_all` caught the refusal and moved on.
+    """
     comparison_config, regression_config = configs_from(args)
     with Store(args.database) as store:
         experiments = store.load_all()
@@ -249,11 +264,11 @@ def analyse_database(args: argparse.Namespace) -> tuple[TriageReport, list, list
     findings = classify(results, regression_config)
     sensitivity = analyse(experiments, args.tags, comparison_config)
     report = TriageReport(findings=findings, config=regression_config, baseline=args.baseline)
-    return report, sensitivity, experiments
+    return report, sensitivity, experiments, results.refusals
 
 
 def run_compare(args: argparse.Namespace) -> int:
-    report, _sensitivity, _experiments = analyse_database(args)
+    report, _sensitivity, _experiments, refusals = analyse_database(args)
     comparison_config, regression_config = configs_from(args)
 
     print(f"\n{report.summary()}")
@@ -273,10 +288,16 @@ def run_compare(args: argparse.Namespace) -> int:
         )
 
     warnings = {warning for finding in report.findings for warning in finding.result.warnings}
-    if warnings:
+    if warnings or refusals:
         print("\ncaveats:")
         for warning in sorted(warnings):
             print(f"  - {warning}")
+        # A comparison that was refused is not a comparison that was fine. It
+        # is named here, under the same heading as every other caveat, because
+        # the alternative is a table that quietly has fewer rows than the sweep
+        # has conditions.
+        for refusal in refusals:
+            print(f"  - no comparison for {refusal.describe()}")
 
     print(f"\npermutation seed {comparison_config.seed}; rerunning reproduces these numbers.")
     return 0
@@ -285,7 +306,7 @@ def run_compare(args: argparse.Namespace) -> int:
 def run_report(args: argparse.Namespace) -> int:
     from triage.report.html_report import build_context, render
 
-    report, sensitivity, experiments = analyse_database(args)
+    report, sensitivity, experiments, refusals = analyse_database(args)
     comparison_config, regression_config = configs_from(args)
 
     context = build_context(
@@ -297,6 +318,7 @@ def run_report(args: argparse.Namespace) -> int:
         comparison_config=comparison_config,
         regression_config=regression_config,
         calibration=CALIBRATION_NOTE,
+        refusals=refusals,
         title=args.title,
     )
     output = render(context, args.output)

@@ -13,6 +13,11 @@ what a framework callback writes when the set of metrics is not known up front:
     0,train/loss,2.30
     0,val/loss,2.29
 
+A long form file describes one metric per row, so a further numeric column
+(`grad_norm` beside `value`, say) is data this shape cannot carry. Those
+columns are warned about by name and listed in the experiment metadata under
+`ignored_long_form_columns` rather than dropped in silence.
+
 The shape is detected from the header rather than configured, because getting
 it wrong is loud (a metric named `value` with steps repeated) and asking the
 user to declare it would be one more thing to get wrong.
@@ -32,6 +37,7 @@ series per tag, in sorted file order.
 from __future__ import annotations
 
 import io
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -166,6 +172,7 @@ class CsvParser(Parser):
         # parsers agree on the same logical input.
         collected: dict[str, _Points] = {}
         shapes: dict[str, str] = {}
+        ignored_columns: dict[str, list[str]] = {}
         for csv_path in files:
             # Decoding is done here rather than inside pandas so that a non
             # UTF-8 file raises ParseError naming the byte offset, which is the
@@ -177,7 +184,10 @@ class CsvParser(Parser):
                 )
             except (pd.errors.ParserError, pd.errors.EmptyDataError) as error:
                 raise ParseError(f"{csv_path} is not readable CSV: {error}") from error
-            shapes[csv_path.name] = self._collect_frame(frame, csv_path, collected)
+            shape, ignored = self._collect_frame(frame, csv_path, collected)
+            shapes[csv_path.name] = shape
+            if ignored:
+                ignored_columns[csv_path.name] = ignored
 
         # `MetricSeries` sorts by step and keeps the later write for a repeated
         # step, so building each tag once here is all the ordering needed.
@@ -192,6 +202,7 @@ class CsvParser(Parser):
             metadata={
                 "csv_files": [p.name for p in files],
                 "csv_shapes": shapes,
+                "ignored_long_form_columns": ignored_columns,
                 "scalar_tags": sorted(metrics),
                 **non_finite_metadata(metrics),
             },
@@ -199,8 +210,12 @@ class CsvParser(Parser):
 
     def _collect_frame(
         self, frame: pd.DataFrame, source: Path, collected: dict[str, _Points]
-    ) -> str:
-        """Add one file's points to the run wide accumulator, return its shape."""
+    ) -> tuple[str, list[str]]:
+        """Add one file's points to the accumulator.
+
+        Returns the shape that was detected and the names of any numeric
+        columns that shape could not account for.
+        """
         columns = [str(name) for name in frame.columns]
         step_column = _first_match(columns, STEP_COLUMNS)
         if step_column is None:
@@ -215,10 +230,31 @@ class CsvParser(Parser):
         walls = pd.to_numeric(frame[wall_column], errors="coerce") if wall_column else None
 
         if tag_column is not None and value_column is not None:
-            self._collect_long(frame, steps, walls, tag_column, value_column, collected)
-            return "long"
+            ignored = self._collect_long(
+                frame,
+                steps,
+                walls,
+                tag_column,
+                value_column,
+                collected,
+                {step_column, tag_column, value_column, wall_column or ""},
+            )
+            if ignored:
+                # The module docstring promises that getting the shape wrong is
+                # loud. A long form file with extra numeric columns is exactly
+                # that case: `grad_norm` and `lr` beside `value` are metrics
+                # somebody logged and would never see again, so say so rather
+                # than dropping them where only the diff would show it.
+                warnings.warn(
+                    f"{source.name}: long form CSV has extra numeric columns that carry no "
+                    f"tag and were not read: {', '.join(ignored)}. Move them into "
+                    f"{tag_column}/{value_column} rows, or write the file in wide form",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            return "long", ignored
         self._collect_wide(frame, steps, walls, {step_column, wall_column or ""}, collected)
-        return "wide"
+        return "wide", []
 
     def _collect_long(
         self,
@@ -228,7 +264,8 @@ class CsvParser(Parser):
         tag_column: str,
         value_column: str,
         collected: dict[str, _Points],
-    ) -> None:
+        skip: set[str],
+    ) -> list[str]:
         # A cell that is not a number at all (blank, or text such as "n/a") is
         # an absent point and never reaches the series. A cell that spells a
         # non finite number is a poisoned point: it is passed through so that
@@ -241,6 +278,17 @@ class CsvParser(Parser):
             if not keep.any():
                 continue
             collected.setdefault(str(tag), _Points()).add(steps, values, walls, keep)
+
+        # A long form file describes ONE metric per row, so any other column of
+        # numbers is data the shape cannot carry. Report it by name.
+        ignored = []
+        for name in frame.columns:
+            if str(name) in skip:
+                continue
+            _, column_measured = _numeric(frame[name])
+            if column_measured.any():
+                ignored.append(str(name))
+        return ignored
 
     def _collect_wide(
         self,

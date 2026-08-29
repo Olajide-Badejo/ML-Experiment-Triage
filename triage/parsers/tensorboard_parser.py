@@ -10,6 +10,12 @@ ingest reports rather than hides.
 Reading is delegated to `tensorboard.backend.event_processing` rather than
 decoding the record protocol here. The record framing has changed before, and
 the accumulator is the reference implementation that tracks it.
+
+A run is claimed only when it holds a file named with the full
+`events.out.tfevents.` prefix whose first bytes frame as a TFRecord. Both
+halves matter: this parser runs first, so claiming a directory on the strength
+of the substring `tfevents` alone hid a real `metrics.csv` sitting beside a
+file called `notes_tfevents.md`.
 """
 
 from __future__ import annotations
@@ -21,11 +27,48 @@ import numpy as np
 from triage.core.experiment import Experiment, MetricSeries
 from triage.parsers.base import ParseError, Parser, non_finite_metadata
 
-EVENT_FILE_GLOB = "*tfevents*"
+#: TensorBoard names every event file `events.out.tfevents.<time>.<host>...`.
+#: Matching the full prefix rather than the substring `tfevents` is the whole
+#: of defect D21a: `notes_tfevents.md` used to claim the run, and because this
+#: parser is first in DEFAULT_PARSERS, a real `metrics.csv` sitting beside that
+#: note was never read.
+EVENT_FILE_PREFIX = "events.out.tfevents."
+EVENT_FILE_GLOB = f"{EVENT_FILE_PREFIX}*"
+
+#: A TFRecord frames each record as an 8 byte little endian payload length, a
+#: 4 byte masked CRC of those 8 bytes, the payload, and a 4 byte payload CRC.
+#: The length alone is a strong enough check to reject a text file that merely
+#: carries the right name: an arbitrary 8 bytes of prose declares a payload far
+#: larger than the file. The CRCs are left to the accumulator, which is the
+#: reference implementation and already verifies them.
+RECORD_HEADER_BYTES = 12
+RECORD_FOOTER_BYTES = 4
 
 # 0 means keep every scalar rather than the accumulator's sampling default,
 # which silently downsamples long runs and would corrupt a window statistic.
 SIZE_GUIDANCE = {"scalars": 0, "histograms": 0, "images": 0, "audio": 0, "tensors": 0}
+
+
+def _is_event_file(path: Path) -> bool:
+    """True when `path` is named like an event file AND frames like one.
+
+    The name is necessary but not sufficient. A file that merely carries the
+    prefix, whether by accident or because someone copied a log next to it,
+    must not claim the run: this parser runs first, and a false claim hides
+    every other format in the same directory.
+    """
+    if not path.name.lower().startswith(EVENT_FILE_PREFIX) or not path.is_file():
+        return False
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            header = handle.read(RECORD_HEADER_BYTES)
+    except OSError:
+        return False
+    if len(header) < RECORD_HEADER_BYTES:
+        return False
+    payload = int.from_bytes(header[:8], "little")
+    return 0 < payload <= size - RECORD_HEADER_BYTES - RECORD_FOOTER_BYTES
 
 
 class TensorBoardParser(Parser):
@@ -34,14 +77,19 @@ class TensorBoardParser(Parser):
     format_name = "tensorboard"
 
     def can_parse(self, path: Path) -> bool:
-        if path.is_dir():
-            return any(path.glob(EVENT_FILE_GLOB))
-        return EVENT_FILE_GLOB.strip("*") in path.name
+        candidates = sorted(path.glob(EVENT_FILE_GLOB)) if path.is_dir() else [path]
+        return any(_is_event_file(candidate) for candidate in candidates)
 
     def parse(self, path: Path) -> Experiment:
         from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
         directory = path if path.is_dir() else path.parent
+        event_files = sorted(p.name for p in directory.glob(EVENT_FILE_GLOB) if _is_event_file(p))
+        if not event_files:
+            raise ParseError(
+                f"no readable TensorBoard event file in {directory}; a file named "
+                f"{EVENT_FILE_PREFIX}... must begin with a valid TFRecord header"
+            )
         accumulator = EventAccumulator(str(directory), size_guidance=SIZE_GUIDANCE)
         try:
             accumulator.Reload()
@@ -60,7 +108,6 @@ class TensorBoardParser(Parser):
                 wall_times=np.fromiter((event.wall_time for event in events), dtype=np.float64),
             )
 
-        event_files = sorted(p.name for p in directory.glob(EVENT_FILE_GLOB))
         return Experiment(
             run_id=self.run_id(directory),
             source_path=str(directory),

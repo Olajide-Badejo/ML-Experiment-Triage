@@ -26,7 +26,7 @@ at all when the two conditions hold the same number of runs. The effect and the
 interval reported beside the p value are still on the mean difference, which is
 the quantity a reader can act on.
 
-**Two modes, answering two different questions.**
+**Three modes, answering three different questions.**
 
 `seed_replicate`
     Several seeds per condition. The unit of analysis is the run, and the
@@ -46,6 +46,14 @@ the quantity a reader can act on.
     so when seed variance is present it is anticonservative. The calibration
     suite measures exactly how anticonservative, and the number is published
     rather than buried.
+
+`paired_cluster`
+    Two conditions scored on the SAME units, which is the usual shape of an
+    offline evaluation rather than a training sweep. The unit of analysis is
+    the pair, the labels swap within a pair rather than shuffling across
+    units, and whole clusters of pairs swap together when the units are not
+    independent of one another. The statistic is whatever the caller passes,
+    because what is being compared is often not a mean of anything.
 """
 
 from __future__ import annotations
@@ -53,7 +61,7 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from math import comb
 from typing import Any
@@ -106,6 +114,7 @@ HIGHER_IS_BETTER = (
 
 MODE_SEED_REPLICATE = "seed_replicate"
 MODE_WINDOW_BLOCK = "window_block"
+MODE_PAIRED_CLUSTER = "paired_cluster"
 
 # Block length as a multiple of the estimated autocorrelation time, and the
 # fewest blocks per run the window block mode will accept. Both numbers were
@@ -114,12 +123,21 @@ MODE_WINDOW_BLOCK = "window_block"
 BLOCK_TAU_MULTIPLIER = 3.0
 MIN_BLOCKS_PER_RUN = 8
 
+#: Labels for the modes this module implements. The vocabulary is OPEN: a
+#: caller that builds a `ComparisonResult` with a mode of its own gets the
+#: fallback below rather than a `KeyError` out of `mode_label` and `to_dict`,
+#: which between them are every reporting path there is. A consumer describing
+#: its own design truthfully must not be punished for it.
 MODE_LABELS = {
     MODE_SEED_REPLICATE: "seed replicated permutation test (strong claim)",
     MODE_WINDOW_BLOCK: (
         "single run window block permutation test (WEAKER CLAIM: cannot see seed to seed variance)"
     ),
+    MODE_PAIRED_CLUSTER: (
+        "paired permutation test with clustered label swaps (paired claim, clustered resampling)"
+    ),
 }
+MODE_LABEL_FALLBACK = "{mode} (a mode this version of triage does not describe)"
 
 
 class ComparisonError(ValueError):
@@ -201,7 +219,8 @@ class ComparisonResult:
 
     @property
     def mode_label(self) -> str:
-        return MODE_LABELS[self.mode]
+        """The claim this mode makes, or the mode itself when it is not ours."""
+        return MODE_LABELS.get(self.mode, MODE_LABEL_FALLBACK.format(mode=self.mode))
 
     @property
     def is_weak_mode(self) -> bool:
@@ -848,6 +867,206 @@ def compare_window_block(
         warnings=tuple(warnings),
         block_length=int(length),
     )
+
+
+# ---------------------------------------------------------- mode three: pairs
+
+
+def paired_permutation(
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    statistic: Callable[[np.ndarray], float],
+    clusters: Sequence[Hashable] | None = None,
+    config: ComparisonConfig | None = None,
+    higher_is_better: bool = True,
+) -> ComparisonResult:
+    """Paired permutation test on any statistic of a vector of outcomes.
+
+    Null hypothesis: within each unit the two condition labels are exchangeable,
+    so swapping a unit's baseline and candidate values is a draw from the same
+    world. This is the right null when the two conditions were measured on the
+    SAME units, which is the usual shape of an offline evaluation: the same
+    fields, the same forms, the same examples, scored twice. Shuffling labels
+    across units instead, as the seed replicated mode does, would throw away the
+    pairing that makes such a comparison sensitive.
+
+    Assumptions: the pairs line up positionally, and, when `clusters` is given,
+    units sharing a cluster key are exchangeable only as a block. The statistic
+    is any function of one vector to one number, because the quantity being
+    compared is often not a mean of anything: a macro F1 over a split cannot be
+    written as an average of per item numbers, and a test that assumed it could
+    would be answering a different question.
+
+    `clusters` is not optional detail. Fields on one form template share their
+    markup, their locale and their author, so treating them as independent units
+    counts evidence that is not there. When they are clustered, whole clusters
+    swap together, and the smallest attainable p value falls out of the number
+    of CLUSTERS: `2 / 2**n_clusters` under exhaustive enumeration. Twelve pairs
+    in three templates can reach 0.25 and no lower, and reporting that plainly
+    is more useful than a smaller number that was never earned.
+
+    Enumeration is exhaustive when `2**n_clusters` is within
+    `config.exhaustive_limit`, so the p value is exact; above that the swaps are
+    sampled and the add one correction applies, as everywhere else here.
+
+    Returns a `ComparisonResult` with mode `paired_cluster`. The direction is the
+    caller's to state, because there is no tag name to infer it from.
+    """
+    config = config or ComparisonConfig()
+    baseline = np.asarray(baseline)
+    candidate = np.asarray(candidate)
+    if baseline.shape != candidate.shape:
+        raise ComparisonError(
+            f"paired permutation needs the two conditions to be the same length and shape, "
+            f"pair by pair; got {baseline.shape} and {candidate.shape}"
+        )
+    n_pairs = int(baseline.shape[0]) if baseline.ndim else 0
+    if n_pairs < 2:
+        raise ComparisonError(f"paired permutation needs at least 2 pairs; got {n_pairs}")
+    for name, values in (("baseline", baseline), ("candidate", candidate)):
+        if np.issubdtype(values.dtype, np.inexact) and not bool(np.isfinite(values).all()):
+            raise ComparisonError(
+                f"the {name} array holds non finite values, and no permutation count can rank "
+                f"a statistic computed from one; drop or repair those rows first"
+            )
+
+    cluster_index, n_clusters = _cluster_index(clusters, n_pairs)
+    exhaustive = 2**n_clusters <= config.exhaustive_limit
+    if exhaustive:
+        # Row zero is the all false pattern, which is the data as it arrived, so
+        # the observed statistic is inside its own null distribution by
+        # construction rather than by a separate calculation that ought to agree.
+        rows = np.arange(2**n_clusters, dtype=np.int64)
+        patterns = ((rows[:, None] >> np.arange(n_clusters)) & 1).astype(bool)
+    else:
+        rng = np.random.default_rng(config.seed)
+        patterns = rng.random((config.n_permutations, n_clusters)) < 0.5
+
+    null_distribution = np.empty(patterns.shape[0], dtype=np.float64)
+    for row in range(patterns.shape[0]):
+        swapped_baseline, swapped_candidate = _swap_pairs(
+            baseline, candidate, patterns[row][cluster_index]
+        )
+        null_distribution[row] = float(statistic(swapped_candidate)) - float(
+            statistic(swapped_baseline)
+        )
+
+    baseline_statistic = float(statistic(baseline))
+    candidate_statistic = float(statistic(candidate))
+    observed = (
+        float(null_distribution[0]) if exhaustive else candidate_statistic - baseline_statistic
+    )
+    p_value = permutation_p_value(observed, null_distribution, exhaustive)
+
+    warnings: list[str] = []
+    if n_clusters < n_pairs:
+        warnings.append(
+            f"{n_pairs} pairs fall into {n_clusters} clusters and whole clusters swap together, "
+            f"so this p value rests on {n_clusters} independent units, not {n_pairs}"
+        )
+    min_attainable = 2.0 / 2**n_clusters if exhaustive else 1.0 / (1 + int(patterns.shape[0]))
+    if min_attainable > config.alpha:
+        warnings.append(
+            f"with {n_clusters} clusters the smallest attainable p value is "
+            f"{min_attainable:.3f}, above alpha {config.alpha:g}; add clusters before concluding"
+        )
+
+    null_spread = float(np.std(null_distribution, ddof=1)) if null_distribution.size > 1 else 0.0
+    ci_low, ci_high = _cluster_bootstrap_interval(
+        baseline, candidate, statistic, cluster_index, n_clusters, config
+    )
+
+    return ComparisonResult(
+        tag="",
+        baseline="baseline",
+        candidate="candidate",
+        mode=MODE_PAIRED_CLUSTER,
+        test_name="two sided paired permutation test with clustered label swaps",
+        baseline_statistic=baseline_statistic,
+        candidate_statistic=candidate_statistic,
+        effect=observed,
+        relative_effect_pct=_relative(observed, baseline_statistic),
+        effect_size=observed / null_spread if null_spread > 0 else 0.0,
+        effect_size_name="effect in standard deviations of the permutation null",
+        ci_low=ci_low,
+        ci_high=ci_high,
+        ci_method=(
+            "percentile bootstrap over clusters"
+            if clusters is not None
+            else "percentile bootstrap over pairs"
+        ),
+        ci_level=config.confidence_level,
+        p_value=p_value,
+        n_permutations=int(null_distribution.size),
+        exact=exhaustive,
+        min_attainable_p=float(min_attainable),
+        n_baseline=n_pairs,
+        n_candidate=n_pairs,
+        window_points=0,
+        higher_is_better=higher_is_better,
+        seed=config.seed,
+        warnings=tuple(warnings),
+    )
+
+
+def _cluster_index(clusters: Sequence[Hashable] | None, n_pairs: int) -> tuple[np.ndarray, int]:
+    """Map each pair to a cluster number, in order of first appearance.
+
+    First appearance rather than sorted order, so a caller is never asked
+    whether its keys are comparable. The p value does not depend on the
+    numbering either way: the enumeration covers the same set of swaps.
+    """
+    if clusters is None:
+        return np.arange(n_pairs, dtype=np.int64), n_pairs
+    keys = list(clusters)
+    if len(keys) != n_pairs:
+        raise ComparisonError(
+            f"paired permutation needs one cluster key per pair; got {len(keys)} keys "
+            f"for {n_pairs} pairs"
+        )
+    numbering: dict[Hashable, int] = {}
+    index = np.empty(n_pairs, dtype=np.int64)
+    for position, key in enumerate(keys):
+        index[position] = numbering.setdefault(key, len(numbering))
+    return index, len(numbering)
+
+
+def _swap_pairs(
+    baseline: np.ndarray, candidate: np.ndarray, swap: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The two vectors with the marked pairs exchanged between them."""
+    swapped_baseline = baseline.copy()
+    swapped_candidate = candidate.copy()
+    swapped_baseline[swap] = candidate[swap]
+    swapped_candidate[swap] = baseline[swap]
+    return swapped_baseline, swapped_candidate
+
+
+def _cluster_bootstrap_interval(
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    statistic: Callable[[np.ndarray], float],
+    cluster_index: np.ndarray,
+    n_clusters: int,
+    config: ComparisonConfig,
+) -> tuple[float, float]:
+    """Percentile interval from resampling whole clusters with replacement.
+
+    Clusters rather than rows, for the same reason the permutation swaps them
+    together: resampling rows inside a cluster would treat correlated
+    observations as independent and return an interval narrower than the
+    evidence supports.
+    """
+    rng = np.random.default_rng(config.seed + 1)
+    members = [np.flatnonzero(cluster_index == number) for number in range(n_clusters)]
+    draws = rng.integers(0, n_clusters, size=(config.n_bootstrap, n_clusters))
+    differences = np.empty(config.n_bootstrap, dtype=np.float64)
+    for row in range(config.n_bootstrap):
+        index = np.concatenate([members[number] for number in draws[row]])
+        differences[row] = float(statistic(candidate[index])) - float(statistic(baseline[index]))
+    tail = (1.0 - config.confidence_level) / 2.0
+    low, high = np.quantile(differences, [tail, 1.0 - tail])
+    return float(low), float(high)
 
 
 # ------------------------------------------------------------------ dispatcher

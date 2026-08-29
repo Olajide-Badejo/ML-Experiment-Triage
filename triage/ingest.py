@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from triage.core.store import Store
+from triage.core.store import Store, StoreError
 from triage.parsers import DEFAULT_PARSERS, ParseError, Parser, discover_runs
 from triage.progress import track
 
@@ -94,17 +94,17 @@ def ingest(
         runs,
         "ingest",
         enabled=show_progress and bool(runs),
-        label=lambda pair: pair[0].run_id(pair[1]),
+        label=lambda pair: pair[0].run_id(pair[1], identity_root),
     )
     for parser, path in tracked:
-        run_id = parser.run_id(path)
+        run_id = parser.run_id(path, identity_root)
         try:
             fingerprint = parser.fingerprint(path, root=identity_root)
             known = store.source_hash(run_id)
             if not force and known == fingerprint:
                 result.skipped.append(run_id)
                 continue
-            experiment = parser.parse(path)
+            experiment = parser.parse(path, identity_root)
             store.upsert(experiment, fingerprint)
             dropped = int(experiment.metadata.get("n_dropped_non_finite", 0) or 0)
             if dropped:
@@ -115,6 +115,6 @@ def ingest(
                 result.added.append(run_id)
             else:
                 result.updated.append(run_id)
-        except (ParseError, OSError, ValueError) as error:
+        except (ParseError, StoreError, OSError, ValueError) as error:
             result.failed.append((run_id, str(error)))
     return result

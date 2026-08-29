@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from triage.core import Experiment, MetricSeries, Store
+from triage.core.store import SCHEMA_VERSION, StoreError
 from triage.ingest import ingest
 from triage.parsers import DEFAULT_PARSERS, CsvParser
 
@@ -92,6 +93,37 @@ def test_upsert_replaces_rather_than_merges(temp_database: Path) -> None:
 
         assert store.load("run_a").tags == ["train/loss"]
         assert store.source_hash("run_a") == "hash-2"
+
+
+def test_upsert_refuses_a_run_id_arriving_from_another_source(temp_database: Path) -> None:
+    """D4: two distinct runs sharing one id used to overwrite each other silently."""
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+
+        impostor = make_experiment()
+        impostor.source_path = "/logs/somewhere_else"
+        with pytest.raises(StoreError, match="already stored"):
+            store.upsert(impostor, "hash-2")
+
+        # The stored row is untouched by the refused write.
+        assert store.load("run_a").source_path == "/logs/run_a"
+        assert store.source_hash("run_a") == "hash-1"
+
+
+def test_upsert_accepts_the_same_run_from_the_same_source(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+        store.upsert(make_experiment(), "hash-2")
+        assert store.source_hash("run_a") == "hash-2"
+
+
+def test_the_schema_version_is_recorded(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        row = store.connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+    assert int(row["value"]) == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 2, "the D4 identity change is not compatible with a version 1 database"
 
 
 def test_unchanged_source_reports_unchanged(temp_database: Path) -> None:
@@ -180,20 +212,27 @@ def test_one_bad_run_does_not_stop_the_walk(tmp_path: Path, temp_database: Path)
 
 
 def test_ingest_reads_a_mixed_format_tree(fixture_root: Path, temp_database: Path) -> None:
+    """Run ids are paths relative to the ingest root, one directory deep here.
+
+    These were bare basenames before D4. The fixture tree groups each run under
+    a directory naming its format, so every id now carries that prefix, and
+    that is the point of the change: the basenames alone are only unique here
+    by luck of the fixture naming.
+    """
     with Store(temp_database) as store:
         result = ingest(fixture_root, store, parsers=DEFAULT_PARSERS, show_progress=False)
         assert len(result.added) == 6
         assert store.run_ids() == [
-            "csv_long_run",
-            "csv_wide_run",
-            "healthy_steps",
-            "jsonl_run",
-            "killed_run",
-            "tb_run",
+            "csv_long/csv_long_run",
+            "csv_wide/csv_wide_run",
+            "jsonl/jsonl_run",
+            "jsonl_truncated/killed_run",
+            "tensorboard/tb_run",
+            "tpt_jsonl/healthy_steps",
         ]
         formats = {run.run_id: run.source_format for run in store.load_all()}
-    assert formats["tb_run"] == "tensorboard"
-    assert formats["jsonl_run"] == "jsonl"
+    assert formats["tensorboard/tb_run"] == "tensorboard"
+    assert formats["jsonl/jsonl_run"] == "jsonl"
 
 
 def test_store_survives_reingest_of_a_real_fixture(fixture_root: Path, temp_database: Path) -> None:

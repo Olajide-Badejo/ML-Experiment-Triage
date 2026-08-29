@@ -157,7 +157,7 @@ class CsvParser(Parser):
             return bool(files_with_suffix(path, ".csv"))
         return path.suffix.lower() == ".csv"
 
-    def parse(self, path: Path) -> Experiment:
+    def parse(self, path: Path, root: Path | None = None) -> Experiment:
         directory = path if path.is_dir() else path.parent
         files = files_with_suffix(path, ".csv") if path.is_dir() else [path]
         if not files:
@@ -194,7 +194,7 @@ class CsvParser(Parser):
         metrics = {tag: points.to_series(tag) for tag, points in sorted(collected.items())}
 
         return Experiment(
-            run_id=self.run_id(path),
+            run_id=self.run_id(path, root),
             source_path=str(path),
             source_format=self.format_name,
             config=self.config_for(directory),

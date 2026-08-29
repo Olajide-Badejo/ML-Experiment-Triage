@@ -100,7 +100,7 @@ class JsonlParser(Parser):
             p for p in files_with_suffix(directory, ".json") if not is_config_file(p)
         ]
 
-    def parse(self, path: Path) -> Experiment:
+    def parse(self, path: Path, root: Path | None = None) -> Experiment:
         directory = path if path.is_dir() else path.parent
         files = self._log_files(path) if path.is_dir() else [path]
         if not files:
@@ -118,7 +118,7 @@ class JsonlParser(Parser):
 
         metrics, counts = self._to_metrics(records, ", ".join(p.name for p in files))
         return Experiment(
-            run_id=self.run_id(path),
+            run_id=self.run_id(path, root),
             source_path=str(path),
             source_format=self.format_name,
             config=self.config_for(directory),

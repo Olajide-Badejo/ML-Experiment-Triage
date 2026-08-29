@@ -197,13 +197,41 @@ class Parser(ABC):
         """True when this parser recognises `path` as one run it can read."""
 
     @abstractmethod
-    def parse(self, path: Path) -> Experiment:
-        """Read `path` into an `Experiment`. Raises `ParseError` on bad input."""
+    def parse(self, path: Path, root: Path | None = None) -> Experiment:
+        """Read `path` into an `Experiment`. Raises `ParseError` on bad input.
+
+        `root` is the ingest root, which fixes the run's identity: see
+        `run_id`. It defaults to the run's parent, so parsing a single run on
+        its own gives it the plain name it has always had.
+        """
 
     # ------------------------------------------------------------- shared help
 
-    def run_id(self, path: Path) -> str:
-        return path.name if path.is_dir() else path.stem
+    def run_id(self, path: Path, root: Path | None = None) -> str:
+        """Identity of the run at `path`, relative to the ingest root.
+
+        This is the database PRIMARY KEY, so it has to be unique across a
+        sweep, and the basename is not: `sweep_a/seed0` and `sweep_b/seed0`
+        ingested in one pass produced ONE row holding the second run's values,
+        reported as "1 added, 1 updated", with nothing said about the run that
+        was lost. Nested TensorBoard layouts (`runX/train`, `runX/val`)
+        guaranteed the same collision on every sweep.
+
+        The path relative to the ingest root fixes it, and costs nothing in the
+        flat layout everyone actually uses: a run directly under the root is
+        still just `seed0`. Separators are forward slashes whatever the
+        platform, so a sweep ingested on Windows and the same sweep ingested on
+        Linux produce the same ids and the same database. A bare file keeps its
+        stem, extension dropped, since a run named `metrics.csv` reads badly
+        everywhere it is printed.
+        """
+        base = Path(root) if root is not None else path.parent
+        if path.is_dir():
+            return _relative_key(path, base)
+        relative = _relative_key(path, base)
+        parent, _, name = relative.rpartition("/")
+        stem = Path(name).stem
+        return f"{parent}/{stem}" if parent else stem
 
     def config_for(self, path: Path) -> dict[str, Any]:
         """Load the `config.json` sitting beside the run, or an empty config."""

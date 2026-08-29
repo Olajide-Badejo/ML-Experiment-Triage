@@ -93,7 +93,7 @@ class TensorBoardParser(Parser):
             return bool(_event_files(path))
         return _is_event_file(path)
 
-    def parse(self, path: Path) -> Experiment:
+    def parse(self, path: Path, root: Path | None = None) -> Experiment:
         from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
         directory = path if path.is_dir() else path.parent
@@ -122,7 +122,10 @@ class TensorBoardParser(Parser):
             )
 
         return Experiment(
-            run_id=self.run_id(directory),
+            # Identity is the run DIRECTORY, not the event file inside it: a
+            # bare event file passed on its own belongs to the directory that
+            # holds it, and every other event file there is part of the same run.
+            run_id=self.run_id(directory, root),
             source_path=str(directory),
             source_format=self.format_name,
             config=self.config_for(directory),

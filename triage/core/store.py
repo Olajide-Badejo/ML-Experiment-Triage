@@ -37,7 +37,12 @@ import numpy as np
 
 from triage.core.experiment import Experiment, MetricSeries
 
-SCHEMA_VERSION = 1
+#: Version 2 is the D4 identity change: `run_id` is the run's path relative to
+#: the ingest root rather than its directory basename, so the ids in a version
+#: 1 database do not mean what the ids in a version 2 one mean. Detecting that
+#: and migrating or refusing is D14's job; this constant records which of the
+#: two a database was written by, which is what a migration will need.
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -68,6 +73,10 @@ CREATE TABLE IF NOT EXISTS metrics (
 
 CREATE INDEX IF NOT EXISTS metrics_tag_idx ON metrics(tag);
 """
+
+
+class StoreError(RuntimeError):
+    """Raised when a write would corrupt what is already stored."""
 
 
 def _sanitize(value: Any) -> Any:
@@ -147,7 +156,26 @@ class Store:
         Replacing rather than merging is deliberate. A source whose fingerprint
         changed may have gained tags, lost tags or been rewritten entirely, and
         a merge would leave stale series behind with no way to notice.
+
+        Replacing is only safe when the incoming run IS the stored one, which
+        is why the source path is checked first. `run_id` is the PRIMARY KEY,
+        and when it was the directory basename two genuinely different runs
+        could share it: `sweep_a/seed0` and `sweep_b/seed0` ingested in one
+        pass produced a single row holding the second run's values, reported as
+        "1 added, 1 updated", with no warning anywhere. D4 made identity
+        path relative, which removes that collision; this check catches what
+        remains, such as one database fed from two different ingest roots, and
+        it raises rather than overwriting so the cost is one run rather than a
+        silently wrong comparison.
         """
+        stored_path = self.source_path(experiment.run_id)
+        if stored_path is not None and stored_path != experiment.source_path:
+            raise StoreError(
+                f"run id {experiment.run_id!r} is already stored from a different source: "
+                f"{stored_path!r} is on record and {experiment.source_path!r} was offered. "
+                f"Two runs cannot share one id. Ingest each root into its own database, or "
+                f"delete the stored run first if it really was moved"
+            )
         parsed_at = datetime.now(UTC).isoformat(timespec="seconds")
         with self.connection:
             self.connection.execute("DELETE FROM metrics WHERE run_id = ?", (experiment.run_id,))
@@ -200,6 +228,13 @@ class Store:
             "SELECT source_hash FROM experiments WHERE run_id = ?", (run_id,)
         ).fetchone()
         return None if row is None else str(row["source_hash"])
+
+    def source_path(self, run_id: str) -> str | None:
+        """The source path recorded for a run, or None when it is not stored."""
+        row = self.connection.execute(
+            "SELECT source_path FROM experiments WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return None if row is None else str(row["source_path"])
 
     def is_unchanged(self, run_id: str, source_hash: str) -> bool:
         """True when this run is already stored with exactly this fingerprint."""

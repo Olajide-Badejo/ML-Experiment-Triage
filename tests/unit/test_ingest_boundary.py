@@ -134,3 +134,83 @@ def test_claim_and_descend_decisions_are_logged_at_debug_level(
     messages = [record.getMessage() for record in caplog.records]
     assert any("claim" in message and "run_a" in message for message in messages)
     assert any("descend" in message for message in messages)
+
+
+# --------------------------------------------------------------------- D4
+
+
+def test_two_sweeps_with_the_same_seed_name_are_two_rows(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    """The verified defect: ONE row holding the second run, "1 added, 1 updated"."""
+    root = tmp_path / "sweep"
+    write_run(root / "sweep_a" / "seed0", value=1.0)
+    write_run(root / "sweep_b" / "seed0", value=2.0)
+
+    with Store(temp_database) as store:
+        result = ingest(root, store, show_progress=False)
+        assert store.run_ids() == ["sweep_a/seed0", "sweep_b/seed0"]
+        assert len(store) == 2
+        # And each row holds its own numbers, not the last one parsed twice.
+        first = store.load("sweep_a/seed0").series("loss").values[0]
+        second = store.load("sweep_b/seed0").series("loss").values[0]
+        assert first != second
+    assert len(result.added) == 2
+    assert result.updated == []
+
+
+def test_a_run_directly_under_the_root_keeps_its_plain_name(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    """The common flat layout must not gain a path prefix it does not need."""
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    with Store(temp_database) as store:
+        ingest(root, store, show_progress=False)
+        assert store.run_ids() == ["run_a"]
+
+
+def test_run_ids_use_forward_slashes_on_every_platform(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    root = tmp_path / "sweep"
+    write_run(root / "group" / "run_a")
+    with Store(temp_database) as store:
+        ingest(root, store, show_progress=False)
+        assert store.run_ids() == ["group/run_a"]
+        assert "\\" not in store.run_ids()[0]
+
+
+def test_a_run_id_arriving_from_a_different_source_path_fails_that_run(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    """Identity collision must cost one run loudly, never overwrite in silence."""
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    with Store(temp_database) as store:
+        ingest(root, store, show_progress=False)
+
+        # The same run id now arrives from somewhere else entirely, which is
+        # what a rename or two roots ingested into one database produces.
+        moved = write_run(tmp_path / "other" / "run_a", value=5.0)
+        result = ingest(moved.parent, store, show_progress=False)
+
+        assert result.added == []
+        assert [name for name, _ in result.failed] == ["run_a"]
+        assert len(store) == 1
+        # The stored row is untouched: still the original path and numbers.
+        assert store.load("run_a").source_path.replace("\\", "/").endswith("sweep/run_a")
+    message = result.failed[0][1]
+    assert "already stored" in message or "different source" in message
+
+
+def test_reingesting_the_same_sweep_from_the_same_root_is_not_a_collision(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    root = tmp_path / "sweep"
+    write_run(root / "run_a")
+    with Store(temp_database) as store:
+        ingest(root, store, show_progress=False)
+        second = ingest(root, store, show_progress=False)
+    assert second.failed == []
+    assert second.skipped == ["run_a"]

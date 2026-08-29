@@ -19,12 +19,17 @@ optional `config.json`:
 A bare file is also accepted, in which case the run takes its name from the
 file stem. That is a convenience for one off comparisons, not the layout the
 demo or the tests use.
+
+A directory is claimed as a run only when nothing beneath it is a run: a sweep
+root that happens to hold a stray parseable file is a container, not a run.
+See `discover_runs`.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -33,6 +38,8 @@ from typing import Any
 from triage.core.experiment import Experiment, MetricSeries
 
 CONFIG_FILENAME = "config.json"
+
+LOGGER = logging.getLogger("triage.parsers")
 
 
 #: Widest step this tool accepts. int64 is the storage type, and a value beyond
@@ -189,13 +196,49 @@ class Parser(ABC):
         return digest.hexdigest()
 
 
+def _claiming_parser(directory: Path, parsers: list[Parser]) -> Parser | None:
+    """The first parser that recognises `directory`, or None."""
+    for parser in parsers:
+        if parser.can_parse(directory):
+            return parser
+    return None
+
+
+def _has_parseable_subdirectory(directory: Path, parsers: list[Parser]) -> bool:
+    """True when any subdirectory below `directory` is itself a run.
+
+    This is the whole of leaf claiming. The search goes all the way down rather
+    than one level, because a sweep is often nested (`sweep/group/run`), and
+    stopping at the first level would let a stray file at the sweep root claim
+    the sweep exactly as before.
+    """
+    try:
+        children = sorted(child for child in directory.iterdir() if child.is_dir())
+    except OSError:
+        return False
+    for child in children:
+        if _claiming_parser(child, parsers) is not None:
+            return True
+        if _has_parseable_subdirectory(child, parsers):
+            return True
+    return False
+
+
 def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]]:
     """Find every run under `root`, pairing each with the parser that claims it.
 
-    The walk is top down and does not descend into a directory that has already
-    been claimed, so a run directory containing subdirectories of checkpoints
-    yields one run rather than several. Parsers are tried in the order given,
-    and the first match wins.
+    **Leaf claiming.** A directory becomes a run only when no directory beneath
+    it is itself parseable. The walk used to claim the first directory a parser
+    recognised and stop there, which meant one stray `index.csv` written at a
+    sweep root claimed the sweep: both real runs under it were never looked at,
+    and the tool exited 0 having ingested one row. Descending past a claimable
+    parent costs a little discovery time and is the only rule under which a
+    nested TensorBoard layout (`runX/train`, `runX/val`) and a run directory
+    holding a `checkpoints/` subdirectory both come out right.
+
+    Parsers are tried in the order given and the first match wins. Every claim
+    and every descend decision is logged at debug level, so `--log-level debug`
+    answers "why was this directory not a run" without a rebuild.
     """
     root = Path(root)
     if not root.exists():
@@ -203,16 +246,28 @@ def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]
 
     found: list[tuple[Parser, Path]] = []
     if root.is_file():
-        for parser in parsers:
-            if parser.can_parse(root):
-                return [(parser, root)]
+        parser = _claiming_parser(root, parsers)
+        if parser is not None:
+            LOGGER.debug("claim %s as a run (%s, single file)", root, parser.format_name)
+            return [(parser, root)]
+        LOGGER.debug("skip %s: no parser claims it", root)
         return []
 
     def walk(directory: Path) -> None:
-        for parser in parsers:
-            if parser.can_parse(directory):
-                found.append((parser, directory))
-                return
+        parser = _claiming_parser(directory, parsers)
+        if parser is not None and not _has_parseable_subdirectory(directory, parsers):
+            LOGGER.debug("claim %s as a run (%s)", directory, parser.format_name)
+            found.append((parser, directory))
+            return
+        if parser is not None:
+            LOGGER.debug(
+                "descend into %s: it parses as %s, but a subdirectory is a run too, so it is a "
+                "container rather than a leaf",
+                directory,
+                parser.format_name,
+            )
+        else:
+            LOGGER.debug("descend into %s: no parser claims it", directory)
         for child in sorted(directory.iterdir()):
             if child.is_dir():
                 walk(child)

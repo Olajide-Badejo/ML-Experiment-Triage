@@ -222,20 +222,46 @@ def infer_direction(tag: str) -> bool:
     return best_higher > best_lower
 
 
+def _finite_window(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
+    """The smoothed final window, or `ComparisonError` if it is not all finite.
+
+    This is the second of the two barriers against a non finite value, and it
+    exists because the first one can be absent. `MetricSeries.__post_init__`
+    drops non finite points, so a series built through the parsers can never
+    carry one; a series loaded from a database written before that filter
+    existed, or handed in by a caller of this module's public functions, can.
+
+    What the barrier buys is worth its cost. One NaN in a final window makes
+    the statistic NaN, `np.abs(null) >= nan` False for every arrangement, and
+    the exact p value `0 / total`, so a diverged run is reported as the most
+    significant finding in the table at p = 0.0000. An infinity does the same
+    to the effect and the relative effect and ranks the run first. Refusing to
+    produce a number is the only honest option, and it costs one comparison
+    rather than the whole verdict table.
+    """
+    smoothed = series.smoothed(config.smoothing_window)
+    size = series.window_size(config.window_fraction, config.window_minimum)
+    window = smoothed[-size:]
+    if not bool(np.isfinite(window).all()):
+        bad = int(window.size - int(np.isfinite(window).sum()))
+        raise ComparisonError(
+            f"tag {series.tag!r} has {bad} non finite value(s) in its final window of "
+            f"{window.size} points, so no statistic computed from it would be meaningful. "
+            f"Reingest the run: parsing drops non finite points and reports the count"
+        )
+    return window
+
+
 def window_statistic(series: MetricSeries, config: ComparisonConfig) -> float:
     """The comparison statistic: mean of the smoothed final window."""
     if series.is_empty:
         raise ComparisonError(f"tag {series.tag!r} has no points")
-    smoothed = series.smoothed(config.smoothing_window)
-    size = series.window_size(config.window_fraction, config.window_minimum)
-    return float(np.mean(smoothed[-size:]))
+    return float(np.mean(_finite_window(series, config)))
 
 
 def window_values(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
     """The smoothed final window itself, needed by the block mode."""
-    smoothed = series.smoothed(config.smoothing_window)
-    size = series.window_size(config.window_fraction, config.window_minimum)
-    return smoothed[-size:]
+    return _finite_window(series, config)
 
 
 def integrated_autocorrelation_time(values: np.ndarray) -> float:
@@ -301,7 +327,18 @@ def permutation_p_value(
     in Genetics and Molecular Biology* 9(1), 2010). For an exhaustive
     enumeration the observed arrangement is itself one of the permutations, so
     the same expression is the exact p value.
+
+    A non finite observed effect is refused rather than counted. Every IEEE
+    comparison against a NaN is False, so `np.abs(null) >= nan` counts zero
+    arrangements as extreme and the exact branch returns `0 / total`, which is
+    a p value of exactly zero on a run that diverged: the single most confident
+    claim the tool can make, made from the absence of a number.
     """
+    if not math.isfinite(observed):
+        raise ComparisonError(
+            f"the observed effect is {observed!r}, which no permutation count can rank; "
+            f"a non finite effect means the underlying window was not finite"
+        )
     at_least_as_extreme = int(np.count_nonzero(np.abs(null_distribution) >= abs(observed) - 1e-15))
     total = null_distribution.size
     if exact:

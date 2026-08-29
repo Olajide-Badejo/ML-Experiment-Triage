@@ -145,6 +145,12 @@ def run_ingest(args: argparse.Namespace) -> int:
         print(f"  failed: {run_id}: {message}", file=sys.stderr)
     for run_id in result.empty:
         print(f"  warning: {run_id} parsed but carries no scalar metrics", file=sys.stderr)
+    for run_id, dropped in sorted(result.dropped_by_run.items()):
+        print(
+            f"  warning: {run_id} lost {dropped} non finite point(s) (NaN or infinite), "
+            f"which are dropped rather than compared",
+            file=sys.stderr,
+        )
     print(
         f"database: {stats['runs']} runs, {stats['series']} series, {stats['points']:,} points, "
         f"{stats['database_bytes'] / 1024:.0f} KB on disk "

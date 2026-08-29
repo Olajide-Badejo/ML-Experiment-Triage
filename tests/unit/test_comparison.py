@@ -25,6 +25,7 @@ from triage.analysis.comparison import (
     integrated_autocorrelation_time,
     permutation_p_value,
     window_statistic,
+    window_values,
 )
 from triage.core.experiment import Experiment, MetricSeries
 from triage.synthetic import CurveSpec, effect_pair, generate_condition, null_pair
@@ -127,6 +128,67 @@ def test_sampled_p_value_never_returns_zero() -> None:
 def test_exact_p_value_counts_the_observed_arrangement() -> None:
     null = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
     assert permutation_p_value(2.0, null, exact=True) == pytest.approx(2 / 5)
+
+
+# ------------------------------------------------------ D1: the second barrier
+
+
+def poisoned_series(values: list[float], tag: str = "val/loss") -> MetricSeries:
+    """A series holding non finite values, built past the constructor's filter.
+
+    `MetricSeries.__post_init__` is the first barrier and drops these points,
+    so this reaches around it with `object.__setattr__` on purpose. The point
+    of the test is that the comparison layer does not depend on that barrier
+    having held: a series loaded from a database written by an older version,
+    or built by a caller that mutated the arrays afterwards, must still stop
+    here rather than fabricate a p value of exactly zero.
+    """
+    array = np.asarray(values, dtype=np.float32)
+    series = MetricSeries(
+        tag=tag,
+        steps=np.arange(array.size, dtype=np.int64),
+        values=np.zeros(array.size, dtype=np.float32),
+    )
+    object.__setattr__(series, "values", array)
+    object.__setattr__(series, "steps", np.arange(array.size, dtype=np.int64))
+    return series
+
+
+@pytest.mark.parametrize("poison", [np.nan, np.inf, -np.inf])
+def test_window_statistic_refuses_a_non_finite_window(poison: float) -> None:
+    series = poisoned_series([1.0] * 39 + [float(poison)])
+    with pytest.raises(ComparisonError, match="non finite"):
+        window_statistic(series, CONFIG)
+
+
+@pytest.mark.parametrize("poison", [np.nan, np.inf, -np.inf])
+def test_window_values_refuses_a_non_finite_window(poison: float) -> None:
+    series = poisoned_series([1.0] * 39 + [float(poison)])
+    with pytest.raises(ComparisonError, match="non finite"):
+        window_values(series, CONFIG)
+
+
+def test_a_non_finite_point_smoothing_reaches_into_the_window_is_refused() -> None:
+    """The barrier is applied after smoothing, which is what carries the poison in.
+
+    The 9 point moving average spreads one NaN over 4 points either side, so a
+    NaN just outside the final window still lands inside it once smoothed. The
+    check therefore sits on the smoothed window rather than on the raw values,
+    and this pins that: the poisoned point is at index 196 of 200, four steps
+    before the 20 point window begins.
+    """
+    values = [1.0] * 200
+    values[196] = float(np.nan)
+    with pytest.raises(ComparisonError, match="non finite"):
+        window_statistic(poisoned_series(values), CONFIG)
+
+
+@pytest.mark.parametrize("observed", [np.nan, np.inf, -np.inf])
+def test_permutation_p_value_refuses_a_non_finite_observed(observed: float) -> None:
+    """A NaN observed made every comparison False and returned an exact p of 0."""
+    null = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+    with pytest.raises(ComparisonError, match="non finite"):
+        permutation_p_value(float(observed), null, exact=True)
 
 
 def test_identical_conditions_give_a_large_p_value() -> None:

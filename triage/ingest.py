@@ -8,7 +8,10 @@ SQLite. The contract it keeps:
 * each run is committed on its own, so an interrupted ingest loses only the run
   in flight and rerunning picks up where it stopped;
 * a run that fails to parse is recorded as a failure and the walk continues,
-  because one corrupt event file should not cost a sweep of forty runs.
+  because one corrupt event file should not cost a sweep of forty runs;
+* every point the non finite filter discarded is counted and reported, because
+  a series that quietly lost its diverged tail looks exactly like one that
+  never diverged.
 """
 
 from __future__ import annotations
@@ -30,10 +33,19 @@ class IngestResult:
     skipped: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     empty: list[str] = field(default_factory=list)
+    #: Non finite points discarded while parsing, per run that lost any. The
+    #: filter itself lives in `MetricSeries`; this is where the loss becomes
+    #: visible, because a point dropped without a count is a point lost.
+    dropped_by_run: dict[str, int] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
         return len(self.added) + len(self.updated) + len(self.skipped) + len(self.failed)
+
+    @property
+    def dropped_non_finite(self) -> int:
+        """Non finite points discarded across every run parsed in this pass."""
+        return sum(self.dropped_by_run.values())
 
     def summary(self) -> str:
         parts = [
@@ -45,6 +57,11 @@ class IngestResult:
             parts.append(f"{len(self.empty)} with no scalars")
         if self.failed:
             parts.append(f"{len(self.failed)} failed")
+        if self.dropped_non_finite:
+            parts.append(
+                f"{self.dropped_non_finite} non finite points dropped "
+                f"across {len(self.dropped_by_run)} run(s)"
+            )
         return ", ".join(parts)
 
 
@@ -84,6 +101,9 @@ def ingest(
                 continue
             experiment = parser.parse(path)
             store.upsert(experiment, fingerprint)
+            dropped = int(experiment.metadata.get("n_dropped_non_finite", 0) or 0)
+            if dropped:
+                result.dropped_by_run[run_id] = dropped
             if not experiment.metrics:
                 result.empty.append(run_id)
             if known is None:

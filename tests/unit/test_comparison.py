@@ -8,6 +8,8 @@ every result carries the labelling the ground rules require.
 
 from __future__ import annotations
 
+from math import comb
+
 import numpy as np
 import pytest
 
@@ -159,6 +161,44 @@ def test_sampled_p_value_never_returns_zero() -> None:
 def test_exact_p_value_counts_the_observed_arrangement() -> None:
     null = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
     assert permutation_p_value(2.0, null, exact=True) == pytest.approx(2 / 5)
+
+
+def test_a_tie_at_the_observed_value_is_counted_at_any_scale() -> None:
+    """D10: the tie tolerance has to be relative, or it stops working at scale.
+
+    A null value that differs from the observed one only by floating point error
+    IS the observed arrangement, and must be counted as extreme. At values
+    around 50 that error is about 1e-14, so an absolute tolerance of 1e-15 threw
+    the observed arrangement out of its own null distribution.
+    """
+    observed = 50.0
+    null = np.array([observed * (1 - 1e-14), 0.0, -observed * (1 - 1e-14)])
+    assert permutation_p_value(observed, null, exact=True) == pytest.approx(2 / 3)
+
+
+def test_an_exact_p_value_never_falls_below_its_own_floor() -> None:
+    """D10: catastrophic cancellation produced an impossible exact p of 0.0.
+
+    The null used to reconstruct the second group as `total - first_sums` while
+    the observed statistic was computed directly, so on values around 50 the two
+    disagreed in the last bits and the observed arrangement could fail its own
+    `>=` test. The exact floor at 3 against 5 is 1 / C(8, 3); zero is not a p
+    value this design can produce, whatever the data.
+    """
+    rng = np.random.default_rng(2024)
+    floor = 1.0 / comb(8, 3)
+    smallest = 1.0
+    for trial in range(60):
+        # A clear separation, so the observed arrangement is the extreme one in
+        # essentially every trial: that is the case where losing it shows up.
+        baseline = [flat_run(f"base{trial}_seed{i}", 50.0 + rng.normal(0, 0.001)) for i in range(3)]
+        candidate = [
+            flat_run(f"alt{trial}_seed{i}", 50.05 + rng.normal(0, 0.001)) for i in range(5)
+        ]
+        result = compare_seed_replicated(baseline, candidate, "val/loss", CONFIG)
+        assert result.exact
+        smallest = min(smallest, result.p_value)
+    assert smallest >= floor - 1e-12, f"smallest exact p was {smallest}, below the floor {floor}"
 
 
 # ------------------------------------------------------ D1: the second barrier

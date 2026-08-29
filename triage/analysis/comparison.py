@@ -393,7 +393,16 @@ def permutation_p_value(
             f"the observed effect is {observed!r}, which no permutation count can rank; "
             f"a non finite effect means the underlying window was not finite"
         )
-    at_least_as_extreme = int(np.count_nonzero(np.abs(null_distribution) >= abs(observed) - 1e-15))
+    # The tie tolerance is relative, because floating point error is. An
+    # absolute 1e-15 is the right size for values around 1 and far too small for
+    # values around 50, where the last bits of a sum are worth about 1e-14: on
+    # such data the observed arrangement failed its own comparison and the exact
+    # p value came out as 0.0, which is not a value this test can produce.
+    magnitude = max(abs(observed), float(np.abs(null_distribution).max(initial=0.0)))
+    tolerance = 1e-9 * magnitude
+    at_least_as_extreme = int(
+        np.count_nonzero(np.abs(null_distribution) >= abs(observed) - tolerance)
+    )
     total = null_distribution.size
     if exact:
         return float(at_least_as_extreme / total)
@@ -411,6 +420,12 @@ def _label_permutations(
     Returns a boolean matrix of shape (n_permutations, n_total) whose rows each
     select `n_first` positions for the first group, and a flag saying whether
     the enumeration was exhaustive.
+
+    Row zero of an exhaustive enumeration is the identity arrangement, the first
+    `n_first` positions, which is the observed grouping itself. Callers rely on
+    that: taking the observed statistic from that row rather than computing it
+    separately is what guarantees the observed arrangement is inside its own
+    null distribution, bit for bit.
     """
     total_arrangements = comb(n_total, n_first)
     if total_arrangements <= config.exhaustive_limit:
@@ -428,13 +443,47 @@ def _label_permutations(
     return masks, False
 
 
+def _identity_mask(n_total: int, n_first: int) -> np.ndarray:
+    """The one row arrangement that is the data as it actually arrived."""
+    mask = np.zeros((1, n_total), dtype=bool)
+    mask[0, :n_first] = True
+    return mask
+
+
 def _difference_null(values: np.ndarray, masks: np.ndarray) -> np.ndarray:
-    """Difference of group means for every arrangement, second group minus first."""
+    """Difference of group means for every arrangement, second group minus first.
+
+    Both group sums are formed directly rather than one being reconstructed as
+    `total - first_sums`. The subtraction looks free and is not: on values whose
+    mean is far from zero it cancels away most of the significant digits, and
+    the null it produced then disagreed with a directly computed observed
+    statistic by more than the tie tolerance, so the observed arrangement was
+    counted out of its own null distribution and the exact p value came back as
+    an impossible 0.0.
+    """
     n_first = int(masks[0].sum())
     n_second = values.size - n_first
     first_sums = masks @ values
-    total = values.sum()
-    return (total - first_sums) / n_second - first_sums / n_first
+    second_sums = (~masks) @ values
+    return second_sums / n_second - first_sums / n_first
+
+
+def _observed_statistic(
+    values: np.ndarray,
+    n_first: int,
+    null_distribution: np.ndarray,
+    exact: bool,
+) -> float:
+    """The statistic for the arrangement the data actually came in.
+
+    In exact mode this is literally row zero of the null distribution. In
+    sampled mode the identity arrangement is not among the draws, so it is
+    computed here through the same expression rather than a different one.
+    """
+    if exact:
+        return float(null_distribution[0])
+    identity = _identity_mask(values.size, n_first)
+    return float(_difference_null(values, identity)[0])
 
 
 # ------------------------------------------------------------ mode one: seeds
@@ -488,7 +537,10 @@ def compare_seed_replicated(
     masks, exact = _label_permutations(pooled.size, n_baseline, config, rng)
     null_distribution = _difference_null(pooled, masks)
 
-    observed = float(candidate_stats.mean() - baseline_stats.mean())
+    # The observed statistic comes out of the same expression as every null
+    # value, from the identity arrangement, so that in exact mode it IS
+    # `null_distribution[0]` rather than a number that merely ought to equal it.
+    observed = _observed_statistic(pooled, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
 
     # The smallest p value this design can produce at all. With three seeds per
@@ -609,7 +661,7 @@ def compare_window_block(
     masks, exact = _label_permutations(pooled_blocks.size, n_baseline, config, rng)
     null_distribution = _difference_null(pooled_blocks, masks)
 
-    observed = float(candidate_blocks.mean() - baseline_blocks.mean())
+    observed = _observed_statistic(pooled_blocks, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
     arrangements = comb(pooled_blocks.size, n_baseline)
     min_attainable = 2.0 / arrangements if exact else 1.0 / (1 + config.n_permutations)

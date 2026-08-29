@@ -94,6 +94,40 @@ def _numeric(column: pd.Series) -> tuple[pd.Series, np.ndarray]:
     return numeric, measured
 
 
+class _Points:
+    """Points for one tag, accumulated across every CSV file in a run.
+
+    Wall times survive only when every contributing file carried them; a run
+    that logged them in one file and not another has no consistent time axis,
+    and inventing one would be worse than having none.
+    """
+
+    def __init__(self) -> None:
+        self.steps: list[np.ndarray] = []
+        self.values: list[np.ndarray] = []
+        self.walls: list[np.ndarray | None] = []
+
+    def add(
+        self, steps: pd.Series, values: pd.Series, walls: pd.Series | None, keep: np.ndarray
+    ) -> None:
+        self.steps.append(steps.to_numpy()[keep].astype(np.int64))
+        self.values.append(values.to_numpy()[keep].astype(np.float32))
+        self.walls.append(None if walls is None else walls.to_numpy()[keep].astype(np.float64))
+
+    def to_series(self, tag: str) -> MetricSeries:
+        wall_times = (
+            np.concatenate([w for w in self.walls if w is not None])
+            if all(w is not None for w in self.walls)
+            else None
+        )
+        return MetricSeries(
+            tag=tag,
+            steps=np.concatenate(self.steps),
+            values=np.concatenate(self.values),
+            wall_times=wall_times,
+        )
+
+
 class CsvParser(Parser):
     """Parses one or more CSV files into a single experiment."""
 
@@ -110,16 +144,25 @@ class CsvParser(Parser):
         if not files:
             raise ParseError(f"no CSV files under {path}")
 
-        metrics: dict[str, MetricSeries] = {}
+        # Points accumulate across every file in the run directory before any
+        # series is built. A run split into `part1.csv` and `part2.csv` is one
+        # series of five points, not the second file's two: the previous code
+        # did `metrics.update(...)` per file, so the later file replaced the
+        # earlier one under the same tag and 60% of the data vanished. The
+        # JSONL parser has always concatenated, so this also makes the two
+        # parsers agree on the same logical input.
+        collected: dict[str, _Points] = {}
         shapes: dict[str, str] = {}
         for csv_path in files:
             try:
                 frame = pd.read_csv(csv_path, keep_default_na=False, na_values=[])
             except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError) as error:
                 raise ParseError(f"{csv_path} is not readable CSV: {error}") from error
-            parsed, shape = self._parse_frame(frame, csv_path)
-            shapes[csv_path.name] = shape
-            metrics.update(parsed)
+            shapes[csv_path.name] = self._collect_frame(frame, csv_path, collected)
+
+        # `MetricSeries` sorts by step and keeps the later write for a repeated
+        # step, so building each tag once here is all the ordering needed.
+        metrics = {tag: points.to_series(tag) for tag, points in sorted(collected.items())}
 
         return Experiment(
             run_id=self.run_id(path),
@@ -135,9 +178,10 @@ class CsvParser(Parser):
             },
         )
 
-    def _parse_frame(
-        self, frame: pd.DataFrame, source: Path
-    ) -> tuple[dict[str, MetricSeries], str]:
+    def _collect_frame(
+        self, frame: pd.DataFrame, source: Path, collected: dict[str, _Points]
+    ) -> str:
+        """Add one file's points to the run wide accumulator, return its shape."""
         columns = [str(name) for name in frame.columns]
         step_column = _first_match(columns, STEP_COLUMNS)
         if step_column is None:
@@ -152,45 +196,41 @@ class CsvParser(Parser):
         walls = pd.to_numeric(frame[wall_column], errors="coerce") if wall_column else None
 
         if tag_column is not None and value_column is not None:
-            return self._parse_long(frame, steps, walls, tag_column, value_column), "long"
-        return self._parse_wide(frame, steps, walls, {step_column, wall_column or ""}), "wide"
+            self._collect_long(frame, steps, walls, tag_column, value_column, collected)
+            return "long"
+        self._collect_wide(frame, steps, walls, {step_column, wall_column or ""}, collected)
+        return "wide"
 
-    def _parse_long(
+    def _collect_long(
         self,
         frame: pd.DataFrame,
         steps: pd.Series,
         walls: pd.Series | None,
         tag_column: str,
         value_column: str,
-    ) -> dict[str, MetricSeries]:
+        collected: dict[str, _Points],
+    ) -> None:
         # A cell that is not a number at all (blank, or text such as "n/a") is
         # an absent point and never reaches the series. A cell that spells a
         # non finite number is a poisoned point: it is passed through so that
         # `MetricSeries` drops it and counts it, which is what makes the three
         # formats agree on the same poisoned run.
         values, measured = _numeric(frame[value_column])
-        metrics: dict[str, MetricSeries] = {}
         for tag, index in frame.groupby(frame[tag_column].astype(str)).groups.items():
             rows = frame.index.isin(index)
             keep = rows & steps.notna().to_numpy() & measured
             if not keep.any():
                 continue
-            metrics[str(tag)] = MetricSeries(
-                tag=str(tag),
-                steps=steps.to_numpy()[keep].astype(np.int64),
-                values=values.to_numpy()[keep].astype(np.float32),
-                wall_times=None if walls is None else walls.to_numpy()[keep].astype(np.float64),
-            )
-        return metrics
+            collected.setdefault(str(tag), _Points()).add(steps, values, walls, keep)
 
-    def _parse_wide(
+    def _collect_wide(
         self,
         frame: pd.DataFrame,
         steps: pd.Series,
         walls: pd.Series | None,
         skip: set[str],
-    ) -> dict[str, MetricSeries]:
-        metrics: dict[str, MetricSeries] = {}
+        collected: dict[str, _Points],
+    ) -> None:
         for name in frame.columns:
             if str(name) in skip:
                 continue
@@ -198,10 +238,4 @@ class CsvParser(Parser):
             keep = steps.notna().to_numpy() & measured
             if not keep.any():
                 continue  # a text column such as a note or a checkpoint path
-            metrics[str(name)] = MetricSeries(
-                tag=str(name),
-                steps=steps.to_numpy()[keep].astype(np.int64),
-                values=values.to_numpy()[keep].astype(np.float32),
-                wall_times=None if walls is None else walls.to_numpy()[keep].astype(np.float64),
-            )
-        return metrics
+            collected.setdefault(str(name), _Points()).add(steps, values, walls, keep)

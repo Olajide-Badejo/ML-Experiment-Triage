@@ -38,7 +38,7 @@ from triage.analysis.comparison import (
     window_statistic,
 )
 from triage.analysis.regression import RegressionConfig, TriageReport
-from triage.analysis.sensitivity import SensitivityResult
+from triage.analysis.sensitivity import SensitivityReport, SensitivityResult
 from triage.calibration import SUMMARY
 from triage.core.experiment import Experiment
 
@@ -181,6 +181,17 @@ class ReportContext:
     #: A report that shows only what could be computed is not a report of what
     #: was asked for.
     refusals: tuple[ComparisonRefusal, ...] = ()
+
+    @property
+    def sensitivity_caveat(self) -> str:
+        """The caveat the analysis wrote, rather than a second copy of it.
+
+        The template used to hand duplicate this prose, which made it two things
+        to keep true and, worse, a fixed sentence where the real caveat carries
+        the numbers: how few conditions the weakest correlation actually rests
+        on. A template cannot know that and the analysis already does.
+        """
+        return SensitivityReport(results=list(self.sensitivity)).caveat()
 
 
 def _rgba(hex_colour: str, alpha: float) -> str:

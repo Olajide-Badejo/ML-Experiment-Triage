@@ -25,7 +25,7 @@ from markupsafe import escape
 
 from triage.analysis.comparison import ComparisonConfig, ComparisonRefusal, compare_all
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
-from triage.analysis.sensitivity import analyse
+from triage.analysis.sensitivity import SensitivityReport, analyse
 from triage.core.experiment import Experiment, MetricSeries
 from triage.report import html_report
 from triage.report.html_report import (
@@ -641,3 +641,30 @@ def test_a_five_hundred_run_sweep_renders_a_readable_page(tmp_path: Path) -> Non
     # Every condition is still accounted for in the inventory, which is the
     # table the chart must not silently disagree with.
     assert markup_of(html).count("<tr>") >= 20
+
+
+# ---------------------------------- D36: one source for the sensitivity caveat
+
+
+def test_the_sensitivity_caveat_is_the_one_the_analysis_wrote(tmp_path: Path) -> None:
+    """D36: the template hand duplicated the prose of `SensitivityReport.caveat`.
+
+    Two copies of one caveat is two things to keep true. The analysis knows how
+    few conditions the weakest correlation rests on and says so with the number
+    in it, which a template cannot do at all.
+    """
+    runs = every_section()
+    context = build(runs, "base")
+    caveat = SensitivityReport(results=list(context.sensitivity)).caveat()
+    assert "conditions" in caveat
+
+    markup = markup_of(render_html(tmp_path, runs, "base"))
+    assert str(escape(caveat)) in markup
+    assert "cannot be separated from it here." not in markup.replace(str(escape(caveat)), "")
+
+
+def test_a_sweep_with_nothing_to_correlate_says_what_the_analysis_says(
+    tmp_path: Path,
+) -> None:
+    markup = markup_of(render_html(tmp_path, two_conditions(["val/loss"]), "base"))
+    assert SensitivityReport().caveat() in markup

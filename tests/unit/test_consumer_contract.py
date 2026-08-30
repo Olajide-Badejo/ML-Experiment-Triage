@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 import subprocess
 import sys
+import tomllib
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -496,3 +499,49 @@ def test_the_missing_extra_error_is_an_import_error() -> None:
     from triage._extras import MissingExtraError
 
     assert issubclass(MissingExtraError, ImportError)
+
+
+def project_table() -> dict[str, Any]:
+    """The `[project]` table of the pyproject this checkout builds from."""
+    root = Path(__file__).resolve().parents[2]
+    with (root / "pyproject.toml").open("rb") as handle:
+        table: dict[str, Any] = tomllib.load(handle)["project"]
+    return table
+
+
+def requirement_names(requirements: list[str]) -> list[str]:
+    return sorted(re.split(r"[<>=!~;\[ ]", requirement)[0] for requirement in requirements)
+
+
+def test_the_core_install_is_numpy_and_scipy_and_nothing_else() -> None:
+    """E1, as filed. The declaration is the promise; the imports are the proof."""
+    assert requirement_names(project_table()["dependencies"]) == ["numpy", "scipy"]
+
+
+def test_the_extras_are_the_split_that_was_asked_for() -> None:
+    extras = project_table()["optional-dependencies"]
+    assert {"parsers", "report", "cli", "agentic", "all"} <= set(extras)
+    assert requirement_names(extras["parsers"]) == ["pandas", "tensorboard", "tqdm"]
+    assert requirement_names(extras["report"]) == ["jinja2", "plotly"]
+    assert extras["cli"] == ["ml-experiment-triage[parsers,report]"]
+    assert extras["agentic"] == ["choreographer>=1.3"]
+    assert extras["all"] == ["ml-experiment-triage[cli,agentic]"]
+
+
+def test_the_declared_floors_are_the_versions_the_results_were_measured_on() -> None:
+    """D30. A floor nothing has ever installed is a guess written as a fact.
+
+    These four decode the numbers this package publishes: numpy and scipy do
+    the statistics, pandas the CSV values, and the plotly bundle is inlined
+    into the report verbatim so its version is part of the output bytes.
+    """
+    table = project_table()
+    declared = dict(
+        requirement.split(">=", 1)
+        for requirement in table["dependencies"] + table["optional-dependencies"]["parsers"]
+        if ">=" in requirement and "," not in requirement
+    )
+    assert declared["numpy"] == "2.5"
+    assert declared["scipy"] == "1.18"
+    assert declared["pandas"] == "3.0"
+    assert "plotly>=6.9,<7" in table["optional-dependencies"]["report"]

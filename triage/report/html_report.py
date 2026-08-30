@@ -61,6 +61,15 @@ AXIS = "#c3c2b7"
 
 MAX_PLOT_POINTS = 1200
 
+#: How far seed lengths inside one condition may differ before the figure says
+#: so. Runs never stop on exactly the same step, so a tolerance of nothing would
+#: print the caveat on every honest sweep and teach the reader to ignore it.
+RAGGED_TOLERANCE = 0.05
+
+#: The caveat itself. Plain ASCII, because it is interpolated into the Plotly
+#: JSON payload and read back out by a test.
+RAGGED_NOTE = "seeds of one condition end at different steps; curves stop where their seeds do"
+
 #: Everything a figure div id may contain. Metric tags arrive from CSV headers,
 #: JSONL keys and TensorBoard tags, so they are third party data and are
 #: whitelisted rather than blacklisted on the way into an HTML attribute.
@@ -126,6 +135,18 @@ def _variant_curve(
     hides the very thing this tool exists to account for, so the spread across
     seeds is drawn as a band and a reader can see immediately whether two
     conditions are separated by more than their own run to run noise.
+
+    Outside its own step range a seed contributes nothing rather than its last
+    value. `np.interp` clamps by default, so a run killed at step 200 of 1000
+    used to be extended as a flat line to step 1000 and folded into both the
+    mean and the envelope, inside the very window the statistic is taken over.
+    The band there was drawn from a number no seed ever measured. Aggregating
+    with the `nan` aware reductions makes each point an average of the seeds
+    that actually reached it, and the band collapses onto the survivor rather
+    than straddling it and a corpse.
+
+    The grid comes from the longest run, so at least one seed is alive at every
+    grid point and no column is empty.
     """
     usable = [run for run in runs if run.has(tag)]
     reference = max(usable, key=lambda run: len(run.series(tag))).series(tag)
@@ -136,11 +157,28 @@ def _variant_curve(
         series = run.series(tag)
         curves.append(
             np.interp(
-                grid, series.steps.astype(np.float64), series.smoothed(config.smoothing_window)
+                grid,
+                series.steps.astype(np.float64),
+                series.smoothed(config.smoothing_window),
+                left=np.nan,
+                right=np.nan,
             )
         )
     stacked = np.vstack(curves)
-    return grid, stacked.mean(axis=0), stacked.min(axis=0), stacked.max(axis=0)
+    return (
+        grid,
+        np.nanmean(stacked, axis=0),
+        np.nanmin(stacked, axis=0),
+        np.nanmax(stacked, axis=0),
+    )
+
+
+def _is_ragged(runs: list[Experiment], tag: str) -> bool:
+    """Whether the seeds of one condition disagree about how long a run is."""
+    lengths = [len(run.series(tag)) for run in runs if run.has(tag)]
+    if len(lengths) < 2:
+        return False
+    return min(lengths) < (1.0 - RAGGED_TOLERANCE) * max(lengths)
 
 
 def build_metric_figure(
@@ -163,10 +201,12 @@ def build_metric_figure(
 
     ordered = [baseline_key] + [key for key in variants if key != baseline_key]
     colour_index = 0
+    ragged = False
     for variant_key in ordered:
         runs = variants.get(variant_key, [])
         if not any(run.has(tag) for run in runs):
             continue
+        ragged = ragged or _is_ragged(runs, tag)
         is_baseline = variant_key == baseline_key
         if is_baseline:
             colour = BASELINE_COLOUR
@@ -220,10 +260,25 @@ def build_metric_figure(
             annotation_font={"size": 11, "color": MUTED_INK},
         )
 
+    # A reader looking at a band that narrows to nothing deserves to be told
+    # why rather than left to infer that the seeds converged.
+    if ragged:
+        figure.add_annotation(
+            text=RAGGED_NOTE,
+            xref="paper",
+            yref="paper",
+            x=1.0,
+            y=-0.30,
+            xanchor="right",
+            yanchor="top",
+            showarrow=False,
+            font={"size": 11, "color": MUTED_INK},
+        )
+
     figure.update_layout(
         template="none",
         height=380,
-        margin={"l": 60, "r": 24, "t": 16, "b": 48},
+        margin={"l": 60, "r": 24, "t": 16, "b": 72 if ragged else 48},
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
         font={"family": 'system-ui, -apple-system, "Segoe UI", sans-serif', "color": "#52514e"},

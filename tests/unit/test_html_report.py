@@ -25,7 +25,7 @@ from triage.analysis.comparison import ComparisonConfig, ComparisonRefusal, comp
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.core.experiment import Experiment, MetricSeries
-from triage.report.html_report import build_context, render
+from triage.report.html_report import RAGGED_NOTE, _variant_curve, build_context, render
 
 #: The proof of concept payload from the specification. It closes the `id`
 #: attribute the tag was interpolated into and opens an image element whose
@@ -197,3 +197,69 @@ def test_a_hostile_condition_name_cannot_close_the_script_block(tmp_path: Path) 
 
     assert "<script>alert(2)</script>" not in html
     assert "Plotly.newPlot(" in html
+
+
+# ----------------------------------------------------- D9: ragged run lengths
+
+
+def ragged_pair(tag: str) -> list[Experiment]:
+    """One seed that ran to the end and one that was killed a fifth of the way in."""
+    return [
+        make_run("long", "cand", 0, [tag], n_points=200, noise_seed=1),
+        make_run("short", "cand", 1, [tag], n_points=40, noise_seed=2),
+    ]
+
+
+def test_a_run_that_died_early_contributes_nothing_past_its_last_step() -> None:
+    """D9: the band in the final window was fabricated from a clamped curve.
+
+    `np.interp` clamps by default, so a seed killed at step 40 of 200 was
+    extended as a flat line to step 200 and folded into the mean and the min max
+    envelope, exactly inside the shaded window the statistic is taken over. The
+    figure then showed a spread across seeds that no seed ever measured.
+    """
+    tag = "val/loss"
+    runs = ragged_pair(tag)
+    grid, mean, low, high = _variant_curve(runs, tag, ComparisonConfig())
+
+    assert grid.size == 200, "the grid still comes from the longest run"
+    assert np.isfinite(mean).all() and np.isfinite(low).all() and np.isfinite(high).all()
+
+    survivor = np.interp(
+        grid,
+        runs[0].series(tag).steps.astype(np.float64),
+        runs[0].series(tag).smoothed(ComparisonConfig().smoothing_window),
+    )
+    # Past step 40 exactly one seed has data, so the band has to collapse onto
+    # that seed rather than straddle it and the dead one.
+    assert high[-1] == low[-1] == mean[-1]
+    assert mean[-1] == survivor[-1]
+    assert high[-1] - low[-1] == 0.0
+
+
+def test_the_seeds_that_do_overlap_are_still_averaged() -> None:
+    """The fix must not throw away the region where both seeds are alive."""
+    tag = "val/loss"
+    runs = ragged_pair(tag)
+    _, mean, low, high = _variant_curve(runs, tag, ComparisonConfig())
+
+    assert high[0] > low[0], "both seeds are alive at step 0, so there is a spread"
+    assert low[0] <= mean[0] <= high[0]
+
+
+def test_a_figure_over_ragged_seeds_says_so(tmp_path: Path) -> None:
+    tag = "val/loss"
+    runs = [
+        *[make_run(f"base-{i}", "base", i, [tag], noise_seed=i) for i in range(3)],
+        make_run("cand-0", "cand", 0, [tag], offset=0.4, n_points=200, noise_seed=10),
+        make_run("cand-1", "cand", 1, [tag], offset=0.4, n_points=200, noise_seed=11),
+        make_run("cand-2", "cand", 2, [tag], offset=0.4, n_points=40, noise_seed=12),
+    ]
+    html = render_html(tmp_path, runs, "base")
+    assert RAGGED_NOTE in html
+
+
+def test_a_figure_over_even_seeds_is_not_annotated(tmp_path: Path) -> None:
+    """The annotation is a caveat, and a caveat printed always is noise."""
+    html = render_html(tmp_path, two_conditions(["val/loss"]), "base")
+    assert RAGGED_NOTE not in html

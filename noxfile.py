@@ -14,14 +14,17 @@ here and the Makefile became a wrapper that forwards to these sessions.
     nox -s package               build the wheel and prove it installs and runs
 
 **Every session but `package` runs in the project's own `.venv`** rather than in
-a virtual environment nox creates. The environment is built once by `nox -s env`
-from the pinned `requirements.txt`, and the point of pinning is that every
-session sees the same versions; letting nox resolve a fresh set per session
-would mean the tests and the calibration gates ran against something other than
-what is recorded. `package` is the exception, and has to be: it exists to prove
-that a wheel installs and runs somewhere that has never seen this source tree,
-so it builds throwaway environments outside the repository and installs the
-built artifact into them.
+a virtual environment nox creates, and falls back to the interpreter nox itself
+is running under when there is no `.venv`, which is the shape of a CI runner.
+The environment is built once by `nox -s env` from the pinned
+`requirements.txt`, and the point of pinning is that every session sees the same
+versions; letting nox resolve a fresh set per session would mean the tests and
+the calibration gates ran against something other than what is recorded.
+
+`package` is the exception, and has to be: it exists to prove that a wheel
+installs and runs somewhere that has never seen this source tree, so it builds
+throwaway environments outside the repository and installs the built artifact
+into them.
 """
 
 from __future__ import annotations
@@ -60,11 +63,20 @@ def venv_python(venv: Path) -> Path:
 
 
 def python(session: nox.Session) -> str:
-    """The project interpreter, with a message rather than a stack trace if absent."""
+    """The project interpreter: `.venv` if there is one, else the running one.
+
+    Locally there is a `.venv` and it is what every session should use. On a CI
+    runner the environment IS the interpreter, built by the setup step from the
+    same pinned requirements, and insisting on a `.venv` there would mean
+    building a second one inside the first for no reason. The chosen path is
+    logged, because a session that ran against something other than what the
+    reader expected is worth being able to see.
+    """
     interpreter = venv_python(VENV)
-    if not interpreter.exists():
-        session.error(f"no interpreter at {interpreter}. Run `nox -s env` first.")
-    return str(interpreter)
+    if interpreter.exists():
+        return str(interpreter)
+    session.log(f"no {interpreter}; running against {sys.executable}")
+    return sys.executable
 
 
 def run(session: nox.Session, *arguments: str) -> None:

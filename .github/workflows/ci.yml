@@ -3,6 +3,22 @@ name: CI
 # Everything in this project runs on CPU, so CI runs the real suite rather than
 # a subset. The calibration tests are the point of having tests here at all, and
 # skipping them in CI would leave the one claim that matters unverified.
+#
+# The jobs answer different questions, which is why they are separate:
+#
+#   lint / typecheck  is the source in the shape this project keeps it in
+#   test              does it work, on every platform and Python it claims
+#   calibration       does its 5 percent still mean 5 percent
+#   demo              does the end to end path still reproduce its record
+#   ranges            does it install from the version ranges it publishes
+#   core-only         does a numpy plus scipy install work, which is E1
+#   package           does the built wheel install somewhere new and run
+#   reports           are the committed PDFs the ones this tree builds
+#
+# Development happens on Windows and the package claims 3.12, so a matrix of
+# ubuntu alone on 3.13 was testing neither. The calibration gates stay on one
+# runner: they are a wall clock measurement, and six of them would be six
+# different machines measuring six different things.
 
 on:
   push:
@@ -18,52 +34,161 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # bash on every runner, Windows included. The default there is pwsh, whose
+    # wrapper only checks the exit code of the LAST command in a `run` block, so
+    # a `pip install` that fails halfway through a multi line step is reported
+    # green. bash runs with `-e`, where the first failure ends the step.
+    shell: bash
+
 jobs:
+  lint:
+    name: Format, lint, dashes and fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the pinned toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      # poppler-utils supplies pdftotext, which the dash guard uses to check the
+      # text inside the committed PDFs and not merely their sources.
+      - name: Install poppler for the PDF text check
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      # ruff format, ruff check, the dash guard and the fixture check, in one
+      # session that is the same one `make lint` runs locally.
+      - name: Lint
+        run: nox -s lint
+
+      - name: The Markdown documents match the measured calibration
+        run: nox -s docs -- --check
+
+  typecheck:
+    name: mypy strict
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the pinned toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      - name: Type check the package
+        run: nox -s typecheck
+
   test:
-    name: Lint, tests and calibration gates
+    name: Tests on ${{ matrix.os }}, Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    strategy:
+      # One platform failing is information about that platform, so the others
+      # are allowed to finish and say whether it is local or general.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the pinned toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      # The floor is below the 94 percent this currently measures rather than
+      # at it. A coverage gate that sits on the current number turns every
+      # honest refactor into a coverage argument; one that sits well under it
+      # catches a module going dark, which is what it is for.
+      - name: Unit and integration tests with coverage
+        run: >
+          python -m pytest tests -q -m "not slow"
+          --cov=triage --cov-report=term-missing --cov-fail-under=90
+
+  calibration:
+    name: Statistical calibration gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
+      - name: Install the pinned toolchain
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -e . --no-deps
 
-      - name: Check formatting and lint
-        run: |
-          python -m ruff format --check .
-          python -m ruff check .
-
-      # poppler-utils supplies pdftotext, which the guard uses to check the
-      # text inside the committed PDFs and not merely their sources.
-      - name: Install poppler for the PDF text check
-        run: sudo apt-get update && sudo apt-get install -y poppler-utils
-
-      - name: Dash guard over sources and committed PDFs
-        run: python scripts/check_no_dashes.py .
-
-      - name: The Markdown documents match the measured calibration
-        run: python scripts/render_calibration_docs.py --check
-
-      - name: Unit tests
-        run: python -m pytest tests/unit -q
-
-      - name: Statistical calibration gates
+      # `-s` so the measured rates are printed into the log. They are the
+      # result, and a green tick that does not say 4.53 percent is worth less.
+      - name: Run the gates
         run: python -m pytest tests/statistics -q -s
 
-      - name: Integration tests
-        run: python -m pytest tests/integration -q
+      # Written by the suite: the published table joined to what this run
+      # measured. A test in the same suite asserts the two agree.
+      - name: Upload the measured gates
+        uses: actions/upload-artifact@v4
+        with:
+          name: calibration-gates
+          path: experiments/results/calibration_gates.json
+          if-no-files-found: error
+
+  demo:
+    name: The demo reproduces its committed verdicts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the pinned toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
 
       - name: Demo workflow
         run: python -m examples.demo_workflow --quiet
@@ -78,23 +203,137 @@ jobs:
           path: experiments/results/triage_report.html
           if-no-files-found: error
 
-  reports:
-    name: Compile the PDFs from the committed database
+  ranges:
+    name: Install from the published version ranges
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: test
 
+    # Deliberately does NOT install requirements.txt. Every other job pins, so
+    # the declared ranges in pyproject.toml had never been resolved by anything
+    # and were a guess written as a fact (D30). This job is the only thing that
+    # finds out what `pip install ml-experiment-triage[dev]` actually gets.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install from pyproject alone
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: Show what the ranges resolved to
+        run: python -m pip list
+
+      - name: Tests against the resolved versions
+        run: python -m pytest tests -q -m "not slow"
+
+  core-only:
+    name: A core install is numpy and scipy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # E1, the consumer's filed issue, as a job. `pip install
+    # ml-experiment-triage` with no extras must import and do statistics with
+    # numpy and scipy alone; before the split it could not even be imported,
+    # because triage/__init__.py reached triage.parsers and that reached pandas.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install with no extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Nothing from an extra came with it
+        run: |
+          python -m pip list --format=freeze > installed.txt
+          cat installed.txt
+          ! grep -iE '^(pandas|plotly|jinja2|tensorboard|tqdm)==' installed.txt
+
+      # Run from a directory that is not the checkout, so the import under test
+      # is the installed package and not the source tree sitting in the cwd.
+      - name: The statistics API works on arrays
+        working-directory: ${{ runner.temp }}
+        run: |
+          python - <<'PY'
+          import numpy as np
+          import triage
+          from triage import ComparisonConfig, compare_all, paired_permutation
+
+          print("triage", triage.__version__)
+          baseline = np.array([0.80, 0.82, 0.79, 0.81, 0.83, 0.80])
+          candidate = np.array([0.88, 0.90, 0.87, 0.89, 0.91, 0.88])
+          result = paired_permutation(baseline, candidate, statistic=np.mean)
+          assert 0.0 < result.p_value <= 1.0, result.p_value
+          print("paired permutation p =", round(result.p_value, 4))
+          assert callable(compare_all) and ComparisonConfig().alpha == 0.05
+          PY
+
+  package:
+    name: Build the wheel and run it on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    # D31. Nothing had ever built, installed or run the wheel: every
+    # integration test calls cli.main in process from the source tree, so
+    # resolving the report template out of site-packages was untested. The nox
+    # session builds, runs twine check --strict, and installs into two
+    # throwaway environments outside the repository, one with [cli] and one
+    # bare, then makes each do its job.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
+      - name: Install the pinned toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-deps
+
+      - name: Build, check and smoke test the wheel
+        run: nox -s package
+
+      - name: Upload the distributions
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+
+  reports:
+    name: Compile the PDFs from the committed database
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [lint, test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the pinned toolchain
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
@@ -126,6 +365,11 @@ jobs:
           kpsewhich microtype.sty
           pdftotext -v 2>&1 | head -1
 
+      # Read the committed PDFs BEFORE the build overwrites them. This is the
+      # only moment the committed bytes still exist in the working tree.
+      - name: Read the text of the committed PDFs
+        run: python scripts/check_pdf_text.py --snapshot committed-report-text
+
       # The reports compile from the committed demo database, so this job proves
       # the PDFs build from a plain checkout without regenerating the sweep.
       - name: Generate report assets from the committed database
@@ -135,6 +379,14 @@ jobs:
         run: |
           python scripts/build_pdf.py report/main.tex --bibtex
           python scripts/build_pdf.py report_debug/debug_report.tex
+
+      # D35h. Compiling proved only that the documents compile. This proves the
+      # PDF somebody downloads from the repository is the one this source
+      # produces, which is what makes committing a binary artifact defensible.
+      # Text rather than bytes, because a PDF carries a creation timestamp and
+      # a document id and so is never byte identical twice.
+      - name: The committed PDFs are the ones this tree builds
+        run: python scripts/check_pdf_text.py --compare committed-report-text
 
       - name: Dash guard over sources and freshly compiled PDFs
         run: python scripts/check_no_dashes.py .

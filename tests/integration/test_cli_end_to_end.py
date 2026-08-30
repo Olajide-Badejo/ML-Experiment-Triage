@@ -375,6 +375,44 @@ def test_an_unknown_baseline_exits_with_an_error(
     assert "matches no run or variant" in capsys.readouterr().err
 
 
+def test_compare_names_a_mistyped_database_instead_of_creating_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D14: the read paths open read only, so a typo is a typo, not a new file.
+
+    A read write open created the missing file, found nothing in it, and
+    reported an empty sweep, which reads as "your ingest did nothing" rather
+    than "that path is wrong".
+    """
+    missing = tmp_path / "nope" / "typo.db"
+    assert main(["compare", "--database", str(missing), "--baseline", BASELINE, "--quiet"]) == 2
+    assert "no such database" in capsys.readouterr().err
+    assert not missing.parent.exists()
+
+
+def test_reporting_on_a_database_does_not_change_it(database: Path, tmp_path: Path) -> None:
+    """Evidence must not modify its own source: `report` is a pure read."""
+    import hashlib
+
+    before = hashlib.sha256(database.read_bytes()).hexdigest()
+    assert (
+        main(
+            [
+                "report",
+                "--database",
+                str(database),
+                "--baseline",
+                BASELINE,
+                "--output",
+                str(tmp_path / "untouched.html"),
+                "--quiet",
+            ]
+        )
+        == 0
+    )
+    assert hashlib.sha256(database.read_bytes()).hexdigest() == before
+
+
 # ------------------------------------------------------------- sensitivity
 
 

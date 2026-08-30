@@ -25,7 +25,7 @@ from triage.analysis.comparison import (
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.calibration import SUMMARY
-from triage.core.store import Store
+from triage.core.store import Store, StoreError
 from triage.ingest import ingest
 
 DEFAULT_DATABASE = "triage.db"
@@ -302,7 +302,12 @@ def analyse_database(
     easily missed: `compare_all` caught the refusal and moved on.
     """
     comparison_config, regression_config = configs_from(args)
-    with Store(args.database) as store:
+    # Read only, and that is a correctness property rather than tidiness. A read
+    # write open creates the file it was pointed at, so a typo in --database
+    # became an empty database and then "this sweep has no runs"; and it sets
+    # the journal mode, which is a write into the database header, so rendering
+    # a report changed the bytes of the database the report is evidence about.
+    with Store.open_read_only(args.database) as store:
         experiments = store.load_all()
     if not experiments:
         raise ComparisonError(f"{args.database} holds no runs; run `triage ingest` first")
@@ -388,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {"ingest": run_ingest, "compare": run_compare, "report": run_report}
     try:
         return handlers[args.verb](args)
-    except (ComparisonError, FileNotFoundError, KeyError) as error:
+    except (ComparisonError, StoreError, FileNotFoundError, KeyError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 

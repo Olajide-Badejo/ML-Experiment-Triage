@@ -53,6 +53,12 @@ SERIES_COLOURS = (
     "#4a3aa7",  # violet
     "#e34948",  # red
 )
+#: Line styles the candidate series cycle through once the palette wraps. Eight
+#: colours drawn solid means condition nine is pixel identical to condition one,
+#: on the chart and in the legend swatch alike, so the dash advances with every
+#: full turn of the palette. `dot` is absent on purpose: it is the baseline's,
+#: and the baseline has to stay the one line a reader can find without counting.
+SERIES_DASHES = ("solid", "dash", "longdash", "dashdot")
 BASELINE_COLOUR = "#52514e"  # secondary ink: the baseline is a reference, not a series
 SURFACE = "#fcfcfb"
 MUTED_INK = "#898781"
@@ -209,9 +215,10 @@ def build_metric_figure(
         ragged = ragged or _is_ragged(runs, tag)
         is_baseline = variant_key == baseline_key
         if is_baseline:
-            colour = BASELINE_COLOUR
+            colour, dash = BASELINE_COLOUR, "dot"
         else:
             colour = SERIES_COLOURS[colour_index % len(SERIES_COLOURS)]
+            dash = SERIES_DASHES[(colour_index // len(SERIES_COLOURS)) % len(SERIES_DASHES)]
             colour_index += 1
 
         grid, mean, low, high = _variant_curve(runs, tag, config)
@@ -241,7 +248,7 @@ def build_metric_figure(
                 y=line_y,
                 mode="lines",
                 name=f"{label}, {seeds} seed{'s' if seeds != 1 else ''}",
-                line={"color": colour, "width": 2, "dash": "dot" if is_baseline else "solid"},
+                line={"color": colour, "width": 2, "dash": dash},
                 hovertemplate=(
                     f"<b>{label}</b><br>step %{{x:,.0f}}<br>{safe_tag} %{{y:.4f}}<extra></extra>"
                 ),

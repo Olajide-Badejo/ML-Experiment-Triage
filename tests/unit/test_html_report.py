@@ -337,3 +337,41 @@ def test_the_inventory_covers_every_metric_and_marks_the_gaps(tmp_path: Path) ->
 def test_a_report_with_no_metrics_at_all_says_so(tmp_path: Path) -> None:
     path = render(build([], "base"), tmp_path / "empty.html")
     assert "no metric" in path.read_text(encoding="utf-8").lower()
+
+
+# ------------------------------------ D25: telling many conditions apart
+
+
+LINE_STYLE = re.compile(r'"line":\{"color":"(#[0-9a-f]{6})","dash":"([a-z]+)","width":2\}')
+
+
+def many_conditions(count: int, tag: str = "val/loss", seeds: int = 3) -> list[Experiment]:
+    """`count` conditions including the baseline, separated by a graded effect."""
+    runs = [make_run(f"base-{seed}", "base", seed, [tag], noise_seed=seed) for seed in range(seeds)]
+    for index in range(1, count):
+        for seed in range(seeds):
+            runs.append(
+                make_run(
+                    f"c{index:02d}-{seed}",
+                    f"c{index:02d}",
+                    seed,
+                    [tag],
+                    offset=0.02 * index,
+                    noise_seed=1000 * index + seed,
+                )
+            )
+    return runs
+
+
+def test_condition_nine_is_not_pixel_identical_to_condition_one(tmp_path: Path) -> None:
+    """D25: the palette has eight slots and the line style wrapped with it.
+
+    Condition nine took colour slot one back and drew it as the same solid line,
+    so two conditions were indistinguishable on the chart and in the legend swatch
+    alike. The dash pattern now advances when the colour wraps.
+    """
+    html = render_html(tmp_path, many_conditions(12), "base")
+
+    styles = LINE_STYLE.findall(html)
+    assert len(styles) == 12, "one line per condition, baseline included"
+    assert len(set(styles)) == 12, "no two conditions may share a colour and a dash"

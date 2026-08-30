@@ -300,6 +300,34 @@ def _bin_triples(rows: Any) -> list[tuple[float, float, int]]:
     return triples
 
 
+@dataclass(frozen=True)
+class SummaryBlock:
+    """The automated summary as the page needs it: a heading, prose, a caption.
+
+    Plain data, and deliberately not `triage.llm.summarizer.LlmSummary`. The
+    reporting layer imports nothing from the LLM layer, for the same reason it
+    imports nothing from `triage.autofill`: a report is a rendering of numbers
+    somebody else computed, and a template that could reach back into a model
+    client would be a template that could produce a number the analysis never
+    saw. The caller converts; this is the shape it converts to.
+    """
+
+    heading: str
+    text: str
+    caption: str
+    n_dropped: int = 0
+
+    @classmethod
+    def of(cls, summary: Any) -> SummaryBlock:
+        """Adapt anything with the `LlmSummary` shape, without importing it."""
+        return cls(
+            heading=str(summary.heading),
+            text=str(summary.text),
+            caption=str(summary.caption()),
+            n_dropped=int(summary.n_dropped),
+        )
+
+
 def load_autofill_section(path: str | Path) -> AutofillSection | None:
     """Read an evaluation output directory, or `None` when there is nothing there.
 
@@ -367,6 +395,12 @@ class ReportContext:
     #: one. `None` renders nothing at all, so a report of an ordinary sweep is
     #: byte identical to what it was before this section existed.
     autofill: AutofillSection | None = None
+    #: The grounded automated summary, when `--llm-summary` asked for one. `None`
+    #: by default and therefore by default absent from the page, which is what
+    #: keeps two builds of the same report byte identical: generated text is the
+    #: one thing here that is not a pure function of the database, and it is
+    #: opt in for exactly that reason.
+    llm_summary: SummaryBlock | None = None
 
     @property
     def sensitivity_caveat(self) -> str:
@@ -893,6 +927,10 @@ def build_context(
     # page it rendered before (D27: the report is a byte identical function of
     # the database, and a new section is exactly what quietly breaks that).
     autofill: AutofillSection | None = None,
+    # Off by default for the same reason, and more so: this one is GENERATED
+    # rather than computed, so it is the only block on the page that a rerun
+    # could change. `triage report --llm-summary` is how a reader asks for it.
+    llm_summary: SummaryBlock | None = None,
     # The one input that is not the database. Left to the wall clock the report
     # cannot be a pure function of what it was built from, so a caller who needs
     # it to be says what moment to stamp; `SOURCE_DATE_EPOCH` does the same for
@@ -912,4 +950,5 @@ def build_context(
         calibration=calibration,
         refusals=tuple(refusals),
         autofill=autofill,
+        llm_summary=llm_summary,
     )

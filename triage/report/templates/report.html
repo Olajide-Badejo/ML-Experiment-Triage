@@ -146,6 +146,18 @@ footer dd { margin: 0; }
   </div>
 </div>
 
+{% if context.llm_summary %}
+<h2>{{ context.llm_summary.heading }}</h2>
+<div class="note">
+  <p>{{ context.llm_summary.text }}</p>
+</div>
+<p class="caption">
+  {{ context.llm_summary.caption }} Everything below this block is computed rather than
+  generated; this paragraph is the only part of the page a language model wrote, and every
+  number in it survived a check against the report's own figures.
+</p>
+{% endif %}
+
 <h2>Verdicts, ranked by severity</h2>
 <div class="scroll">
 <table>

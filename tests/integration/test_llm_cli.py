@@ -9,6 +9,7 @@ real thing. Nothing here opens a socket.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -214,10 +215,26 @@ def ingested(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return database
 
 
+@pytest.fixture
+def database(ingested: Path, tmp_path: Path) -> Path:
+    """A private copy of the module database, per test.
+
+    The response cache lives in the same file as the runs, which is the design;
+    the consequence for a test file is that two tests sharing a database share a
+    cache, and one of them then measures the other's HTTP calls. A copy per test
+    keeps each one measuring itself.
+    """
+    private = tmp_path / "triage.db"
+    for suffix in ("", "-wal", "-shm"):
+        source = ingested.with_name(ingested.name + suffix)
+        if source.is_file():
+            shutil.copy(source, private.with_name(private.name + suffix))
+    return private
+
+
 def test_summarize_grounds_the_generated_text(
-    ingested: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    database: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    database = ingested
     fake = FakeTransport(
         {
             "/api/tags": TAGS,
@@ -242,9 +259,8 @@ def test_summarize_grounds_the_generated_text(
 
 
 def test_ask_refuses_a_question_it_cannot_ground(
-    ingested: Path, service: FakeTransport, capsys: pytest.CaptureFixture[str]
+    database: Path, service: FakeTransport, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    database = ingested
     code = cli.main(["llm", "ask", "what is the capital of Germany?", "--database", str(database)])
 
     assert code == cli.EXIT_USAGE
@@ -252,10 +268,9 @@ def test_ask_refuses_a_question_it_cannot_ground(
 
 
 def test_the_bare_ask_verb_is_the_same_verb(
-    ingested: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    database: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Section 6.5 spells it `triage ask`; Section 5.5 spells it `triage llm ask`."""
-    database = ingested
     fake = FakeTransport(
         {
             "/api/tags": TAGS,
@@ -300,3 +315,99 @@ def test_the_annotation_cache_lives_in_the_database_the_user_named(
         counts = store.cache_counts()
     assert counts["responses"] == 40
     assert counts["embeddings"] > 0
+
+
+# --------------------------------------------- the summary block in the report
+
+
+SUMMARY_TEXT = (
+    "The sweep was compared against the baseline condition. "
+    "One condition improved by 999.9 percent, which no measurement supports. "
+    "The tool reports the remaining comparisons with their gates."
+)
+
+
+def report_transport() -> FakeTransport:
+    return FakeTransport({"/api/tags": TAGS, "/api/chat": fake_chat_says(SUMMARY_TEXT)})
+
+
+def test_the_default_report_is_byte_identical_to_what_it_always_was(
+    database: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The determinism invariant: no flag, no generated text, no difference."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1735689600")
+    first = tmp_path / "a.html"
+    second = tmp_path / "b.html"
+    for output in (first, second):
+        arguments = [
+            "report", "--database", str(database),
+            "--baseline", "lr0.0010_bs32",
+            "--output", str(output), "--quiet",
+        ]  # fmt: skip
+        assert cli.main(arguments) == cli.EXIT_OK
+
+    assert first.read_bytes() == second.read_bytes()
+    assert b"Automated summary" not in first.read_bytes()
+
+
+def test_the_flag_embeds_the_grounded_summary_under_the_specified_heading(
+    database: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1735689600")
+    fake = report_transport()
+    monkeypatch.setattr(ollama_client, "urllib_transport", fake)
+    output = tmp_path / "with_summary.html"
+
+    code = cli.main(
+        [
+            "report", "--database", str(database),
+            "--baseline", "lr0.0010_bs32",
+            "--output", str(output), "--llm-summary", "--quiet",
+        ]
+    )  # fmt: skip
+
+    assert code == cli.EXIT_OK
+    page = output.read_text(encoding="utf-8")
+    assert "Automated summary (local LLM: mistral-nemo:12b-instruct-2407-q4_K_M)" in page
+    assert "999.9" not in page, "the grounding pass runs before the page is written"
+    assert "compared against the baseline condition" in page
+    assert "sentence(s) were deleted" in page
+
+
+def test_the_flagged_report_is_deterministic_through_the_cache(
+    database: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1735689600")
+    fake = report_transport()
+    monkeypatch.setattr(ollama_client, "urllib_transport", fake)
+    first = tmp_path / "one.html"
+    second = tmp_path / "two.html"
+    for output in (first, second):
+        cli.main(
+            [
+                "report", "--database", str(database),
+                "--baseline", "lr0.0010_bs32",
+                "--output", str(output), "--llm-summary", "--quiet",
+            ]
+        )  # fmt: skip
+
+    assert first.read_bytes() == second.read_bytes()
+    assert len(fake.bodies("/api/chat")) == 1, "the second build reads the cache"
+
+
+def test_a_model_that_is_not_running_costs_the_summary_and_not_the_report(
+    database: Path, tmp_path: Path, down: FakeTransport, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "no_summary.html"
+    code = cli.main(
+        [
+            "report", "--database", str(database),
+            "--baseline", "lr0.0010_bs32",
+            "--output", str(output), "--llm-summary", "--quiet",
+        ]
+    )  # fmt: skip
+
+    assert code == cli.EXIT_OK
+    assert output.is_file()
+    assert "no automated summary" in capsys.readouterr().err
+    assert "Automated summary" not in output.read_text(encoding="utf-8")

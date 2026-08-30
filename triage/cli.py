@@ -29,6 +29,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from triage import __version__
 from triage.analysis.comparison import (
@@ -408,6 +409,18 @@ def build_parser() -> argparse.ArgumentParser:
             "directory with no calibration file adds nothing and is not an error"
         ),
     )
+    report_parser.add_argument(
+        "--llm-summary",
+        action="store_true",
+        help=(
+            "add a plain language summary written by a local model, with every number "
+            "in it checked against this report and every sentence carrying an "
+            "unsupported one deleted. OFF by default, and that is a correctness "
+            "property rather than caution: without it the page is a byte identical "
+            "function of the database, which is what the reproducibility gate checks"
+        ),
+    )
+    add_llm_options(report_parser)
 
     demo_parser = subparsers.add_parser(
         "demo",
@@ -991,6 +1004,51 @@ def no_comparisons_code(report: TriageReport) -> int:
     return EXIT_NO_COMPARISONS
 
 
+def llm_summary_for(args: argparse.Namespace, analysis: Analysis) -> Any:
+    """The generated summary block, or `None` when nobody asked for one.
+
+    `None` is the whole point of this function existing separately. Without
+    `--llm-summary` nothing here imports the LLM layer, nothing reaches
+    localhost, and the rendered page is exactly the page this tool rendered
+    before Section 6 existed, which is what the byte identical reproducibility
+    gate is checking.
+
+    A model that is not running is reported and skipped rather than raised. The
+    report is the product; a summary is an addition to it, and failing to
+    produce a whole report because an optional paragraph could not be written
+    would be the wrong trade in both directions.
+    """
+    if not getattr(args, "llm_summary", False):
+        return None
+
+    from triage.core.store import Store as WritableStore
+    from triage.llm.ollama_client import LlmError, OllamaClient
+    from triage.llm.summarizer import summarise_report
+    from triage.report.html_report import SummaryBlock
+
+    try:
+        client = OllamaClient(host=args.host, chat_model=args.model, num_ctx=args.num_ctx)
+        chosen = client.resolve_chat_model(args.model)
+        with WritableStore(args.database) as store:
+            summary = summarise_report(
+                client,
+                store,
+                analysis.report,
+                refusals=[refusal.describe() for refusal in analysis.refusals],
+                model=chosen,
+            )
+    except LlmError as error:
+        print(f"note: no automated summary in this report: {error}", file=sys.stderr)
+        return None
+    if summary.n_dropped:
+        print(
+            f"note: the grounding pass deleted {summary.n_dropped} generated sentence(s) "
+            f"carrying numbers this report does not support",
+            file=sys.stderr,
+        )
+    return SummaryBlock.of(summary)
+
+
 def run_report(args: argparse.Namespace) -> int:
     from triage.report.html_report import build_context, load_autofill_section, render
 
@@ -1008,6 +1066,8 @@ def run_report(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    summary = llm_summary_for(args, analysis)
+
     context = build_context(
         experiments=analysis.experiments,
         triage=analysis.report,
@@ -1020,6 +1080,7 @@ def run_report(args: argparse.Namespace) -> int:
         refusals=analysis.refusals,
         title=args.title,
         autofill=autofill,
+        llm_summary=summary,
     )
     output = render(context, args.output)
     size_kb = output.stat().st_size / 1024

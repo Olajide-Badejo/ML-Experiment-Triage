@@ -384,7 +384,10 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
         context=context,
         figures=figures,
         runs=summarise_runs(context.experiments, context.comparison_config),
-        plotly_js=get_plotlyjs(),
+        # Fetched only when there is something for it to draw. `get_plotlyjs`
+        # reads the bundle off disk, so this also keeps an empty report cheap
+        # to build and not merely cheap to store.
+        plotly_js=get_plotlyjs() if figures else "",
         n_runs=len(context.experiments),
     )
     output = Path(output_path)

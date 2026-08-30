@@ -263,3 +263,25 @@ def test_a_figure_over_even_seeds_is_not_annotated(tmp_path: Path) -> None:
     """The annotation is a caveat, and a caveat printed always is noise."""
     html = render_html(tmp_path, two_conditions(["val/loss"]), "base")
     assert RAGGED_NOTE not in html
+
+
+# ------------------------------------------- D23: the runtime is not free
+
+
+def test_a_report_with_no_figures_does_not_inline_the_plotly_runtime(tmp_path: Path) -> None:
+    """D23: 4.9 MB of charting runtime shipped even with nothing to chart."""
+    path = render(build([], "base"), tmp_path / "empty.html")
+
+    assert path.stat().st_size < 100_000, "nothing to draw, so nothing to draw it with"
+    html = path.read_text(encoding="utf-8")
+    assert "Plotly.newPlot(" not in html
+    assert "<script>" not in html, "the guarded block must not be emitted empty either"
+
+
+def test_a_report_with_figures_still_inlines_the_runtime(tmp_path: Path) -> None:
+    """Self contained is the promise the whole module is shaped around."""
+    html = render_html(tmp_path, two_conditions(["val/loss"]), "base")
+
+    assert len(html) > 1_000_000
+    assert "Plotly.newPlot(" in html
+    assert "<script src=" not in html

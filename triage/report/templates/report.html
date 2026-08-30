@@ -4,7 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ context.title }}: {{ context.baseline }}</title>
+{# The charting runtime is nearly five megabytes. A report with nothing to
+   chart used to ship it anyway, which made an empty result the largest cheap
+   thing this tool produces. #}
+{% if plotly_js %}
 <script>{{ plotly_js | safe }}</script>
+{% endif %}
 <style>
 :root {
   color-scheme: light;

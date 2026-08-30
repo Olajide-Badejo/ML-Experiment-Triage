@@ -203,6 +203,22 @@ def demo(session: nox.Session) -> None:
     run(session, "-m", "examples.demo_workflow", *session.posargs)
 
 
+@nox.session(name="demo-autofill", **IN_PROJECT_VENV)
+def demo_autofill(session: nox.Session) -> None:
+    """The autofill vertical end to end: generate, sweep, evaluate, report.
+
+    Chains the four autofill and LLM verbs into the three ordinary ones, which
+    is the demonstration: `ingest`, `compare` and `report` are handed the run
+    directories with no autofill specific flag. The LLM step prints why it is
+    skipping and the demo continues when Ollama is not running, so this session
+    is a pure function of its seeds on a machine with no model at all.
+
+    `nox -s demo-autofill -- --skip-llm` never attempts it; `-- --n-fields 4000
+    --seeds 5` reproduces the documented numbers rather than the quick ones.
+    """
+    run(session, "-m", "examples.demo_autofill", *session.posargs)
+
+
 @nox.session(**IN_PROJECT_VENV)
 def docs(session: nox.Session) -> None:
     """Render the measured calibration numbers into the Markdown documents.

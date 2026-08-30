@@ -185,6 +185,10 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 markers = [
     "slow: calibration tests that run thousands of permutations",
+    # Section 6.6. Skipped automatically when `health()` fails, which is every
+    # machine without a local Ollama and therefore every CI runner. `pytest -m
+    # ollama` is how it is run deliberately, once before a release.
+    "ollama: tests that talk to a real local Ollama, skipped when there is none",
 ]
 # A deprecation is an error, and the exceptions are named by the module that
 # emits them. The blanket `ignore::DeprecationWarning` this replaces silenced

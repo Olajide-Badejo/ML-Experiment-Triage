@@ -42,6 +42,7 @@ help:
 	@echo "  test-unit       the inner loop: everything but the calibration gates"
 	@echo "  test-property   the property suite at the thorough Hypothesis profile"
 	@echo "  demo            regenerate the synthetic sweep, database and HTML report"
+	@echo "  demo-autofill   the autofill vertical end to end (LLM step skips if Ollama is down)"
 	@echo "  assets          regenerate report figures and tables from the database"
 	@echo "  calibration-docs render the measured calibration numbers into the Markdown"
 	@echo "  pdfs            compile the main and debug reports"
@@ -112,6 +113,13 @@ test-integration:
 
 demo:
 	$(NOX) -s demo
+
+# The autofill vertical: generate, sweep, evaluate with the model, the rules and
+# the local LLM, then ingest, compare and report with no autofill specific flag.
+# The LLM step prints why it skipped when Ollama is not running; nothing after it
+# depends on it, so the target is deterministic on a machine with no model.
+demo-autofill:
+	$(NOX) -s demo-autofill
 
 verify-demo:
 	$(NOX) -s demo -- --verify-committed

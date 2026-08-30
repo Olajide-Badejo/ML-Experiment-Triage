@@ -56,7 +56,15 @@ h3 { font-size: 15px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 600;
 .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--grid); white-space: nowrap; }
-th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+/* A 500 run sweep puts 503 unpaginated rows in this table. A header that
+   scrolls away leaves a grid of numbers whose columns nobody can name, so it
+   stays put while the rows move under it. */
+th {
+  color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface); box-shadow: inset 0 -1px 0 var(--rule);
+}
 tbody tr:last-child td { border-bottom: none; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.wrap-cell { white-space: normal; min-width: 260px; }

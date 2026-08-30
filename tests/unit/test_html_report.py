@@ -15,16 +15,19 @@ numbers on it are a pure function of the database.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 from markupsafe import escape
 
 from triage.analysis.comparison import ComparisonConfig, ComparisonRefusal, compare_all
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.core.experiment import Experiment, MetricSeries
+from triage.report import html_report
 from triage.report.html_report import (
     MAX_PLOTTED_CONDITIONS,
     RAGGED_NOTE,
@@ -413,3 +416,29 @@ def test_the_baseline_is_always_drawn_however_many_conditions_there_are(
     """The baseline is the reference every other line is read against."""
     html = render_html(tmp_path, many_conditions(MAX_PLOTTED_CONDITIONS + 6, seeds=3), "base")
     assert '"name":"base (baseline),' in html
+
+
+def test_the_table_headers_stay_put_while_a_long_table_scrolls(tmp_path: Path) -> None:
+    """503 unpaginated rows with the header off screen is a table of numbers
+    whose columns nobody can name."""
+    html = render_html(tmp_path, two_conditions(["val/loss"]), "base")
+    assert "position: sticky" in html
+
+
+def test_a_report_over_the_size_limit_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ten megabytes of evidence does not survive being emailed, which is the
+    one thing this report is built to do."""
+    monkeypatch.setattr(html_report, "LARGE_REPORT_BYTES", 1024)
+    with caplog.at_level(logging.WARNING, logger="triage.report"):
+        render_html(tmp_path, two_conditions(["val/loss"]), "base")
+    assert any("larger than" in record.getMessage() for record in caplog.records)
+
+
+def test_a_report_under_the_size_limit_says_nothing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="triage.report"):
+        render(build([], "base"), tmp_path / "empty.html")
+    assert not caplog.records

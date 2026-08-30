@@ -17,6 +17,7 @@ the verdict table below them.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -40,7 +41,15 @@ from triage.analysis.sensitivity import SensitivityResult
 from triage.calibration import SUMMARY
 from triage.core.experiment import Experiment
 
+LOGGER = logging.getLogger("triage.report")
+
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+#: The size past which the report stops being the thing it is built to be. This
+#: page exists to be emailed, dropped in a bucket and opened offline, and a
+#: 14.5 MB attachment does none of those well. Past this the tool says so rather
+#: than silently handing over something that will bounce.
+LARGE_REPORT_BYTES = 10 * 1024 * 1024
 
 # Reference categorical palette, light mode, in documented slot order.
 SERIES_COLOURS = (
@@ -511,6 +520,16 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
+
+    size = output.stat().st_size
+    if size > LARGE_REPORT_BYTES:
+        LOGGER.warning(
+            "report %s is %.1f MB, larger than the %.0f MB this format carries "
+            "comfortably: consider reporting on fewer conditions or metrics at once",
+            output,
+            size / 1024 / 1024,
+            LARGE_REPORT_BYTES / 1024 / 1024,
+        )
     return output
 
 

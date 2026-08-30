@@ -36,6 +36,7 @@ from triage.analysis.comparison import (
 )
 from triage.analysis.regression import RegressionConfig, TriageReport
 from triage.analysis.sensitivity import SensitivityResult
+from triage.calibration import SUMMARY
 from triage.core.experiment import Experiment
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -322,7 +323,11 @@ def build_context(
     database: str,
     comparison_config: ComparisonConfig,
     regression_config: RegressionConfig,
-    calibration: dict[str, str],
+    # The measured error rates, defaulted rather than required (D32). They live
+    # in `triage.calibration`, which is the single source the README, the PDFs,
+    # the figures and the CLI all read, and a caller assembling a context should
+    # not have to know that in order to get the footer this tool is built around.
+    calibration: dict[str, str] = SUMMARY,
     refusals: Sequence[ComparisonRefusal] = (),
     title: str = "ML Experiment Triage",
 ) -> ReportContext:

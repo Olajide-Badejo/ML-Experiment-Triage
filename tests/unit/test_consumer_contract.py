@@ -19,6 +19,8 @@ here is written out literally.
 from __future__ import annotations
 
 import importlib
+import subprocess
+import sys
 import warnings
 
 import numpy as np
@@ -209,3 +211,123 @@ def test_the_jsonl_parser_and_its_error_are_still_the_probe_they_use() -> None:
     """Their bridge hands a step free outcomes file to this parser as a probe."""
     assert issubclass(ParseError, Exception)
     assert hasattr(JsonlParser(), "can_parse")
+
+
+# ------------------------------------------------- D32: the top level surface
+
+#: `triage.__all__`, exactly as the consumer's issue #5 part 3 asked for it, in
+#: the order it was filed. `dir(triage)` was empty: every one of these names was
+#: reachable only through a deep module path, so the package had a public API in
+#: practice and none on paper, and a consumer pinning it had nothing to pin to.
+TOP_LEVEL = (
+    "Experiment",
+    "MetricSeries",
+    "Store",
+    "StoreError",
+    "ingest",
+    "IngestResult",
+    "discover_runs",
+    "ParseError",
+    "ComparisonConfig",
+    "ComparisonResult",
+    "compare_all",
+    "paired_permutation",
+    "RegressionConfig",
+    "classify",
+    "rank",
+    "TriageReport",
+    "analyse",
+    "build_context",
+    "render",
+)
+
+#: Where each top level name really lives. The re export is a convenience and
+#: the deep path is the contract (Section 1 rule 5), so both must resolve and,
+#: crucially, must be the SAME object: two names for two objects would be the
+#: worst of both, with a consumer's isinstance check passing or failing by which
+#: import line they happened to write.
+DEEP_PATHS = {
+    "Experiment": "triage.core.experiment",
+    "MetricSeries": "triage.core.experiment",
+    "Store": "triage.core.store",
+    "StoreError": "triage.core.store",
+    "ingest": "triage.ingest",
+    "IngestResult": "triage.ingest",
+    "discover_runs": "triage.parsers",
+    "ParseError": "triage.parsers",
+    "ComparisonConfig": "triage.analysis.comparison",
+    "ComparisonResult": "triage.analysis.comparison",
+    "compare_all": "triage.analysis.comparison",
+    "paired_permutation": "triage.analysis.comparison",
+    "RegressionConfig": "triage.analysis.regression",
+    "classify": "triage.analysis.regression",
+    "rank": "triage.analysis.regression",
+    "TriageReport": "triage.analysis.regression",
+    "analyse": "triage.analysis.sensitivity",
+    "build_context": "triage.report.html_report",
+    "render": "triage.report.html_report",
+}
+
+
+def test_the_top_level_all_is_exactly_the_list_that_was_asked_for() -> None:
+    """Membership, not order: `__all__` is sorted, the filed list was not."""
+    import triage
+
+    assert set(triage.__all__) == set(TOP_LEVEL)
+    assert len(triage.__all__) == len(TOP_LEVEL) == 19
+    assert set(DEEP_PATHS) == set(TOP_LEVEL)
+    # And the lazy resolution table cannot drift from the advertised list.
+    assert set(triage._EXPORTS) == set(triage.__all__)
+
+
+@pytest.mark.parametrize("name", TOP_LEVEL)
+def test_every_top_level_name_resolves_and_is_the_deep_one(name: str) -> None:
+    import triage
+
+    from_top = getattr(triage, name)
+    from_deep = getattr(importlib.import_module(DEEP_PATHS[name]), name)
+    assert from_top is from_deep, f"triage.{name} must BE {DEEP_PATHS[name]}.{name}"
+
+
+def test_dir_of_the_package_lists_the_public_names() -> None:
+    """`dir(triage)` was empty, which is what a package with no API looks like."""
+    import triage
+
+    listed = dir(triage)
+    assert set(TOP_LEVEL) <= set(listed)
+    assert "__version__" in listed
+
+
+def test_importing_the_package_does_not_drag_in_the_reporting_stack() -> None:
+    """The consumer installs numpy and scipy and nothing else (E1).
+
+    `build_context` and `render` are in `__all__`, and their module imports
+    plotly and jinja2. Re exporting them eagerly would therefore have made
+    `import triage` fail on precisely the install the statistics API exists to
+    serve, so the top level names resolve on first access rather than on import.
+    """
+    code = (
+        "import sys, triage; "
+        "assert 'plotly' not in sys.modules, sorted(m for m in sys.modules if 'plotly' in m); "
+        "assert 'jinja2' not in sys.modules"
+    )
+    assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_an_unknown_top_level_name_still_raises_attribute_error() -> None:
+    """The lazy hook must not turn a typo into something that looks importable."""
+    import triage
+
+    with pytest.raises(AttributeError, match="no attribute 'nope'"):
+        triage.nope  # noqa: B018 - the attribute access IS the assertion
+
+
+def test_build_context_defaults_its_calibration_note() -> None:
+    """D32: a caller building a context should not have to know where it lives."""
+    import inspect
+
+    from triage.calibration import SUMMARY
+    from triage.report.html_report import build_context
+
+    default = inspect.signature(build_context).parameters["calibration"].default
+    assert default is SUMMARY

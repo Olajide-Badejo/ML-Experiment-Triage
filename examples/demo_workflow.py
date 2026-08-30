@@ -1,7 +1,13 @@
 """The whole tool end to end: synthesise, ingest, compare, report.
 
-    python examples/demo_workflow.py
-    python examples/demo_workflow.py --verify-committed
+    python -m examples.demo_workflow
+    python -m examples.demo_workflow --verify-committed
+
+**Run it as a module, not as a path.** `python examples/demo_workflow.py` puts
+`examples/` on `sys.path` instead of the repository root, and the first import
+below is `from examples.make_synthetic_runs import ...`, so the documented
+invocation raised `ModuleNotFoundError: No module named 'examples'` before it
+printed a line. The `-m` form is what the Makefile and CI have always used.
 
 Plain form regenerates the synthetic sweep, rebuilds the demo database that the
 LaTeX reports and CI compile from, and writes the HTML report.

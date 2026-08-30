@@ -533,3 +533,58 @@ def test_every_figure_is_labelled_for_a_reader_who_cannot_see_it(tmp_path: Path)
         assert 'role="img"' in figure
         assert "aria-label=" in figure
     assert "val/loss" in markup
+
+
+# ------------------------------------------------- D27: a stamp you can fix
+
+
+#: An arbitrary but fixed moment. `1700000000` is the same instant in UTC.
+FIXED_GENERATED_AT = "2023-11-14 22:13 UTC"
+FIXED_EPOCH = "1700000000"
+
+
+def test_the_page_stamps_the_moment_it_was_given(tmp_path: Path) -> None:
+    html = render_html(
+        tmp_path, two_conditions(["val/loss"]), "base", generated_at=FIXED_GENERATED_AT
+    )
+    assert FIXED_GENERATED_AT in html
+
+
+def test_two_builds_with_a_fixed_stamp_are_byte_identical(tmp_path: Path) -> None:
+    """D27: the determinism gate used to mask the timestamp and pass by luck.
+
+    Masking is not a fix, it is a way of not testing the thing. With the moment
+    supplied rather than read off the wall clock, the report is a pure function
+    of its inputs and the two files can be compared as bytes.
+    """
+    runs = two_conditions(["val/loss"])
+    first = render(build(runs, "base", generated_at=FIXED_GENERATED_AT), tmp_path / "first.html")
+    second = render(build(runs, "base", generated_at=FIXED_GENERATED_AT), tmp_path / "second.html")
+
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_source_date_epoch_fixes_the_stamp_in_utc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reproducible builds convention, so a caller that cannot pass an
+    argument, `make` for instance, can still pin the stamp. UTC on purpose: the
+    local zone name is what made the old footer differ between two machines
+    building from one database."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", FIXED_EPOCH)
+    assert build([], "base").generated_at == FIXED_GENERATED_AT
+
+
+def test_an_explicit_stamp_beats_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", FIXED_EPOCH)
+    assert build([], "base", generated_at="whenever").generated_at == "whenever"
+
+
+def test_an_unparseable_source_date_epoch_falls_back_rather_than_failing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A malformed environment variable must not cost somebody their report."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "not a number")
+    with caplog.at_level(logging.WARNING, logger="triage.report"):
+        stamp = build([], "base").generated_at
+    assert stamp
+    assert FIXED_GENERATED_AT not in stamp
+    assert any("SOURCE_DATE_EPOCH" in record.getMessage() for record in caplog.records)

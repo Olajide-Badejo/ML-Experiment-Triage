@@ -27,7 +27,12 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.1",
     "scipy>=1.11",
-    "plotly>=5.18",
+    # Upper bounded on purpose. The report is required to be byte identical
+    # across two builds from one database, and the Plotly runtime is inlined
+    # into it verbatim, so the version of that bundle is part of the output. A
+    # floor of 5.18 let an installation produce a file that differed from the
+    # committed one in several megabytes of vendored JavaScript.
+    "plotly>=6.9,<7",
     "jinja2>=3.1",
     "tensorboard>=2.15",
     "tqdm>=4.66",

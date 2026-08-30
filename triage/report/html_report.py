@@ -18,10 +18,11 @@ the verdict table below them.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,13 @@ RAGGED_TOLERANCE = 0.05
 #: JSON payload and read back out by a test.
 RAGGED_NOTE = "seeds of one condition end at different steps; curves stop where their seeds do"
 
+#: How the footer and the header spell the moment the report was built.
+GENERATED_AT_FORMAT = "%Y-%m-%d %H:%M %Z"
+
+#: The reproducible builds convention, honoured so that a caller who cannot pass
+#: an argument, a Makefile or a CI job for instance, can still pin the stamp.
+SOURCE_DATE_EPOCH = "SOURCE_DATE_EPOCH"
+
 #: Everything a figure div id may contain. Metric tags arrive from CSV headers,
 #: JSONL keys and TensorBoard tags, so they are third party data and are
 #: whitelisted rather than blacklisted on the way into an HTML attribute.
@@ -107,6 +115,41 @@ UNSAFE_IN_SLUG = re.compile(r"[^A-Za-z0-9_-]")
 def _slug(text: str) -> str:
     """A metric tag reduced to characters that cannot end an HTML attribute."""
     return UNSAFE_IN_SLUG.sub("-", text)
+
+
+def resolve_generated_at(generated_at: str | datetime | None = None) -> str:
+    """The moment to stamp on the report, in order of who gets to decide.
+
+    An explicit argument first, then `SOURCE_DATE_EPOCH`, then the wall clock.
+    Only the last of those is non reproducible, and it is the one a caller who
+    cares about reproducibility never reaches.
+
+    The environment value is read as UTC rather than as local time. The old
+    footer used `datetime.now().astimezone()`, so it carried a locale dependent
+    zone name and two machines building from one database disagreed about the
+    contents of the file, which is precisely what a reproducibility gate exists
+    to catch and precisely what the masking in that gate hid.
+    """
+    if generated_at is not None:
+        if isinstance(generated_at, datetime):
+            return generated_at.strftime(GENERATED_AT_FORMAT)
+        return generated_at
+
+    raw = os.environ.get(SOURCE_DATE_EPOCH)
+    if raw:
+        try:
+            seconds = int(raw.strip())
+        except ValueError:
+            LOGGER.warning(
+                "%s is set to %r, which is not an integer number of seconds; "
+                "falling back to the wall clock, so this report will not be reproducible",
+                SOURCE_DATE_EPOCH,
+                raw,
+            )
+        else:
+            return datetime.fromtimestamp(seconds, tz=UTC).strftime(GENERATED_AT_FORMAT)
+
+    return datetime.now().astimezone().strftime(GENERATED_AT_FORMAT)
 
 
 def _plotly_text(text: str) -> str:
@@ -565,11 +608,16 @@ def build_context(
     calibration: dict[str, str] = SUMMARY,
     refusals: Sequence[ComparisonRefusal] = (),
     title: str = "ML Experiment Triage",
+    # The one input that is not the database. Left to the wall clock the report
+    # cannot be a pure function of what it was built from, so a caller who needs
+    # it to be says what moment to stamp; `SOURCE_DATE_EPOCH` does the same for
+    # a caller that only has an environment to work with.
+    generated_at: str | datetime | None = None,
 ) -> ReportContext:
     return ReportContext(
         title=title,
         baseline=baseline,
-        generated_at=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z"),
+        generated_at=resolve_generated_at(generated_at),
         database=database,
         experiments=experiments,
         triage=triage,

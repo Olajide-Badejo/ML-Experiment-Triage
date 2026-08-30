@@ -127,7 +127,7 @@ def ingest(
                     LOGGER.warning("%s is stored with no scalar metrics", run_id)
                 continue
             experiment = parser.parse(path, identity_root)
-            store.upsert(experiment, fingerprint)
+            store.upsert(experiment, fingerprint, ingest_root=str(identity_root))
             dropped = int(experiment.metadata.get("n_dropped_non_finite", 0) or 0)
             if dropped:
                 result.dropped_by_run[run_id] = dropped

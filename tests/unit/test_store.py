@@ -8,15 +8,18 @@ the logs. These tests hold the store to that.
 
 from __future__ import annotations
 
+import hashlib
+import sqlite3
+import threading
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from triage.core import Experiment, MetricSeries, Store
-from triage.core.store import SCHEMA_VERSION, StoreError
+from triage.core.store import ID_CHUNK, SCHEMA_VERSION, SQLITE_TIMEOUT_SECONDS, StoreError
 from triage.ingest import ingest
-from triage.parsers import DEFAULT_PARSERS, CsvParser
+from triage.parsers import DEFAULT_PARSERS, CsvParser, JsonlParser
 
 
 def make_experiment(run_id: str = "run_a", n: int = 250) -> Experiment:
@@ -243,3 +246,253 @@ def test_store_survives_reingest_of_a_real_fixture(fixture_root: Path, temp_data
         stored = store.load("csv_wide_run")
     for tag in direct.tags:
         np.testing.assert_array_equal(stored.series(tag).values, direct.series(tag).values)
+
+
+# ------------------------------------------------------- D14: the version gate
+
+#: The version 1 schema, written out rather than imported, because the whole
+#: point of a migration test is to build a database the current code did not.
+V1_SCHEMA = """
+CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE experiments (
+    run_id        TEXT PRIMARY KEY,
+    source_path   TEXT NOT NULL,
+    source_format TEXT NOT NULL,
+    config_json   TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    source_hash   TEXT NOT NULL,
+    parsed_at     TEXT NOT NULL
+);
+CREATE TABLE metrics (
+    run_id          TEXT NOT NULL,
+    tag             TEXT NOT NULL,
+    n_points        INTEGER NOT NULL,
+    steps_blob      BLOB NOT NULL,
+    values_blob     BLOB NOT NULL,
+    wall_times_blob BLOB,
+    PRIMARY KEY (run_id, tag),
+    FOREIGN KEY (run_id) REFERENCES experiments(run_id) ON DELETE CASCADE
+);
+"""
+
+
+def write_version_one_database(path: Path, version: int = 1) -> None:
+    """A database in the v1 shape, stamped with `version`."""
+    connection = sqlite3.connect(str(path))
+    connection.executescript(V1_SCHEMA)
+    connection.execute(
+        "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?)", (str(version),)
+    )
+    connection.execute(
+        "INSERT INTO experiments VALUES ('seed0', '/logs/seed0', 'csv', '{}', '{}', 'h', 'then')"
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_a_newer_schema_version_is_refused_by_name(tmp_path: Path) -> None:
+    """A v99 database used to open in silence and be rewritten to the current one."""
+    path = tmp_path / "future.db"
+    write_version_one_database(path, version=99)
+    with pytest.raises(StoreError, match="schema version 99"):
+        Store(path)
+    # And the refused open left the stored version alone rather than stamping it.
+    connection = sqlite3.connect(str(path))
+    assert connection.execute("SELECT value FROM schema_meta").fetchone()[0] == "99"
+    connection.close()
+
+
+def test_a_version_one_database_migrates_additively(tmp_path: Path) -> None:
+    """The v1 rows survive, the v2 columns appear, and the stamp moves forward."""
+    path = tmp_path / "old.db"
+    write_version_one_database(path)
+    with Store(path) as store:
+        assert store.schema_version == SCHEMA_VERSION
+        assert store.run_ids() == ["seed0"]
+        # D4: the ids in a v1 database are basenames and cannot be assumed to
+        # mean what a v2 id means, so the migration says so per row rather than
+        # pretending the identity changed with the version stamp.
+        assert store.legacy_identity_runs() == ["seed0"]
+        columns = {
+            row["name"] for row in store.connection.execute("PRAGMA table_info(experiments)")
+        }
+        assert {"ingest_root", "identity_scheme"} <= columns
+
+        # A run written by this version is on the new identity scheme.
+        store.upsert(make_experiment(), "hash-1", ingest_root="/logs")
+        assert store.legacy_identity_runs() == ["seed0"]
+        assert store.ingest_root("run_a") == "/logs"
+
+
+def test_a_file_that_is_not_a_database_is_refused_as_one(tmp_path: Path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text("this is not a database\n", encoding="utf-8")
+    with pytest.raises(StoreError, match="not a triage database"):
+        Store(path)
+
+
+def test_a_directory_named_as_the_database_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path / "somewhere"
+    directory.mkdir()
+    with pytest.raises(StoreError):
+        Store(directory)
+
+
+def test_the_database_runs_in_wal_mode_with_a_timeout(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        mode = store.connection.execute("PRAGMA journal_mode").fetchone()[0]
+    assert str(mode).lower() == "wal"
+    assert SQLITE_TIMEOUT_SECONDS == 30
+
+
+# --------------------------------------------------------- D14: read only open
+
+
+def test_open_read_only_names_a_missing_database_rather_than_creating_one(
+    tmp_path: Path,
+) -> None:
+    """`triage compare --database /nope/typo.db` used to create the typo."""
+    missing = tmp_path / "nope" / "typo.db"
+    with pytest.raises(StoreError, match="no such database"):
+        Store.open_read_only(missing)
+    assert not missing.exists()
+    assert not missing.parent.exists(), "a read only open must not create the directory either"
+
+
+def test_open_read_only_reads_what_the_writer_wrote(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+    with Store.open_read_only(temp_database) as store:
+        assert store.read_only
+        assert store.run_ids() == ["run_a"]
+        assert len(store.load("run_a").series("train/loss")) == 250
+
+
+def test_open_read_only_refuses_a_write(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+    with Store.open_read_only(temp_database) as store:
+        with pytest.raises(StoreError, match="read only"):
+            store.upsert(make_experiment("run_b"), "hash-2")
+        with pytest.raises(StoreError, match="read only"):
+            store.delete("run_a")
+
+
+def test_open_read_only_leaves_the_database_bytes_untouched(temp_database: Path) -> None:
+    """The reason read paths stopped opening read write: they dirtied the file.
+
+    Opening read write sets `journal_mode`, which is a write into the database
+    header, so `triage compare` on an unchanged database produced a changed
+    file. A report is evidence and evidence should not modify what it reports on.
+    """
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+    before = hashlib.sha256(temp_database.read_bytes()).hexdigest()
+    for _ in range(3):
+        with Store.open_read_only(temp_database) as store:
+            store.load_all()
+    assert hashlib.sha256(temp_database.read_bytes()).hexdigest() == before
+
+
+def test_open_read_only_refuses_a_version_it_cannot_migrate(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    write_version_one_database(path)
+    with pytest.raises(StoreError, match="triage ingest"):
+        Store.open_read_only(path)
+
+
+# ------------------------------------------------------ D14: loading id lists
+
+
+def test_load_all_chunks_an_id_list_longer_than_sqlite_accepts(temp_database: Path) -> None:
+    """A 50,000 id `IN (...)` was a verified failure; the chunk size is 900."""
+    wanted = [f"run_{index:05d}" for index in range(ID_CHUNK * 3 + 7)]
+    with Store(temp_database) as store:
+        with store.connection:
+            store.connection.executemany(
+                "INSERT INTO experiments (run_id, source_path, source_format, config_json, "
+                "metadata_json, source_hash, parsed_at, ingest_root, identity_scheme) "
+                "VALUES (?, ?, 'csv', '{}', '{}', 'h', 'now', '', 'path')",
+                [(run_id, f"/logs/{run_id}") for run_id in wanted],
+            )
+        loaded = store.load_all(wanted)
+    assert [run.run_id for run in loaded] == sorted(wanted)
+
+
+def test_load_all_raises_on_an_id_that_is_not_stored(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+        with pytest.raises(StoreError, match="not_here"):
+            store.load_all(["run_a", "not_here"])
+
+
+def test_a_series_whose_point_count_disagrees_with_its_blob_is_refused(
+    temp_database: Path,
+) -> None:
+    """`n_points` was written and never checked against the blob it describes."""
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), "hash-1")
+        with store.connection:
+            store.connection.execute("UPDATE metrics SET n_points = 3 WHERE tag = 'train/loss'")
+        with pytest.raises(StoreError, match="n_points"):
+            store.load("run_a")
+
+
+# ------------------------------------------- D36: concurrency and interruption
+
+
+def test_two_writers_on_one_database_both_finish(temp_database: Path) -> None:
+    """Concurrent writers used to raise an uncaught `sqlite3.OperationalError`."""
+    # The first connection creates the file, so the two workers below never race
+    # on schema creation itself, which is not what this test is about.
+    with Store(temp_database) as store:
+        store.upsert(make_experiment("warmup"), "hash-0")
+
+    failures: list[BaseException] = []
+
+    def write(prefix: str) -> None:
+        try:
+            with Store(temp_database) as store:
+                for index in range(15):
+                    store.upsert(make_experiment(f"{prefix}_{index}", n=40), f"hash-{index}")
+        except BaseException as error:
+            failures.append(error)
+
+    threads = [threading.Thread(target=write, args=(name,)) for name in ("left", "right")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not failures, f"a concurrent writer failed: {failures}"
+    with Store(temp_database) as store:
+        assert len(store) == 31
+
+
+def test_an_interrupted_ingest_resumes_where_it_stopped(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    """Each run is committed on its own, so a kill costs the run in flight only."""
+    root = tmp_path / "sweep"
+    for name in ("run_a", "run_b", "run_c"):
+        write_run(root, name, 25)
+
+    killed_at = "run_b"
+
+    class Killer(CsvParser):
+        """A parser that dies part way through, the way a Ctrl+C does."""
+
+        def parse(self, path: Path, root: Path | None = None) -> Experiment:
+            if path.name == killed_at:
+                raise KeyboardInterrupt("stopped by the operator")
+            return super().parse(path, root)
+
+    with Store(temp_database) as store:
+        with pytest.raises(KeyboardInterrupt):
+            ingest(root, store, parsers=[Killer(), JsonlParser()], show_progress=False)
+        assert store.run_ids() == ["run_a"], "the run in flight must not be half stored"
+
+    with Store(temp_database) as store:
+        second = ingest(root, store, show_progress=False)
+    assert second.skipped == ["run_a"]
+    assert sorted(second.added) == ["run_b", "run_c"]

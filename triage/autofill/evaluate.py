@@ -314,13 +314,23 @@ def model_predict(
 
 
 def evaluate_engines(
-    records: list[FieldRecord], model: LogisticModel | None
+    records: list[FieldRecord],
+    model: LogisticModel | None,
+    extra: dict[str, ScoredEngine] | None = None,
 ) -> dict[str, ScoredEngine]:
     """Score every engine available on these rows, keyed by engine name.
 
     The heuristic is always scored, because it is the baseline every other
     engine is read against and an evaluation with nothing to compare to is a
     number rather than a result.
+
+    `extra` holds engines that were scored elsewhere, which today means the LLM
+    annotator (6.3). It is passed in already scored rather than run from here
+    for one reason: this module is pure numpy over local arrays and takes
+    milliseconds, and an engine that makes hundreds of HTTP calls to a model
+    cannot live inside a function every test calls. What it does have to do is
+    arrive in the SAME `ScoredEngine` shape, so that the LLM is one more column
+    in the same table rather than a second reporting path.
     """
     predicted, confidence, latency = heuristic_predict(records)
     scored = {
@@ -334,6 +344,14 @@ def evaluate_engines(
         scored["ngram"] = ScoredEngine(
             engine="ngram", predicted=predicted, confidence=confidence, latency_us=latency
         )
+    for name, engine in (extra or {}).items():
+        if engine.predicted.size != len(records):
+            raise ValueError(
+                f"engine {name!r} scored {engine.predicted.size} row(s) against the "
+                f"{len(records)} being evaluated; a prediction vector of a different length "
+                f"cannot be matched to the rows it is supposed to be about"
+            )
+        scored[name] = engine
     return scored
 
 
@@ -515,6 +533,7 @@ def write_evaluation(
     fit_records: list[FieldRecord] | None = None,
     reward: RewardModel | None = None,
     decision_policy: str = "per_type_threshold",
+    extra_engines: dict[str, ScoredEngine] | None = None,
 ) -> EvaluationPaths:
     """Score, calibrate, resample, and write both artifact shapes.
 
@@ -570,7 +589,7 @@ def write_evaluation(
             newline="\n",
         )
 
-    scored = evaluate_engines(rows, scoring_model)
+    scored = evaluate_engines(rows, scoring_model, extra_engines)
     truth = np.asarray([index_of(record.field_type) for record in rows], dtype=np.int64)
 
     policy_path: Path | None = None

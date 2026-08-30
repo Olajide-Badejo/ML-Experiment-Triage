@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 import numpy as np
@@ -76,6 +77,54 @@ class FakeTransport:
     def bodies(self, suffix: str) -> list[dict[str, Any]]:
         """The request bodies sent to one endpoint, in order."""
         return [body for url, body in self.calls if url.endswith(suffix) and body is not None]
+
+
+def _last_user_turn(body: dict[str, Any]) -> str:
+    """The text of the user message in a `/api/chat` request."""
+    for message in reversed(body.get("messages", [])):
+        if message.get("role") == "user":
+            return str(message.get("content", ""))
+    return ""
+
+
+#: How an example line spells its label inside a few shot prompt.
+_LABEL = re.compile(r'"field_type":\s*"([a-z0-9-]+)"')
+
+
+def fake_chat_copies_the_nearest_example() -> Any:
+    """A chat model that answers with the label of the LAST example shown.
+
+    This is a caricature of what a retrieval augmented few shot classifier is
+    supposed to do, and that is what makes it a useful fake: given a kNN prompt
+    it copies the nearest neighbour's label, and given a zero shot prompt it has
+    nothing to copy and answers `unknown`. So the ablation this package ships
+    has a measurable, deterministic difference in CI without a model anywhere.
+    """
+
+    def chat(body: dict[str, Any]) -> dict[str, Any]:
+        labels = _LABEL.findall(_last_user_turn(body))
+        answer = labels[-1] if labels else "unknown"
+        return {"message": {"content": json.dumps({"field_type": answer})}}
+
+    return chat
+
+
+def fake_chat_says(*responses: str) -> Any:
+    """A chat model that reads from a fixed script, repeating the last line.
+
+    Used for the awkward cases: prose where JSON was asked for, a fenced object,
+    a token outside the taxonomy. Repeating the last entry rather than running
+    out means a test can say "everything after this is malformed" in one word.
+    """
+    script = list(responses) or [""]
+    state = {"index": 0}
+
+    def chat(body: dict[str, Any]) -> dict[str, Any]:
+        position = min(state["index"], len(script) - 1)
+        state["index"] += 1
+        return {"message": {"content": script[position]}}
+
+    return chat
 
 
 def fake_embeddings(dimensions: int = 8) -> Any:

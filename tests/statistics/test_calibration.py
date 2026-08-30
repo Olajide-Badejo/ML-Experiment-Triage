@@ -37,6 +37,7 @@ from functools import partial
 import numpy as np
 import pytest
 
+from tests.statistics.gates import record_measurement
 from triage.analysis.comparison import (
     ComparisonConfig,
     ComparisonError,
@@ -44,6 +45,8 @@ from triage.analysis.comparison import (
     compare_window_block,
     paired_permutation,
 )
+from triage.calibration import NOMINAL_ALPHA as ALPHA
+from triage.calibration import POWER_GATE, TYPE_ONE_GATE
 from triage.synthetic import (
     CurveSpec,
     clustered_null_pair,
@@ -52,9 +55,11 @@ from triage.synthetic import (
     null_pair_designed,
 )
 
-ALPHA = 0.05
-TYPE_ONE_GATE = (0.02, 0.08)
-POWER_GATE = 0.90
+# ALPHA, TYPE_ONE_GATE and POWER_GATE are imported, not declared. They used to
+# be three literals here and three more in `triage/calibration.py`, which is the
+# module every document and the report footer render their numbers from. Two
+# copies of a gate is one gate and one claim about a gate, and the claim is the
+# one the reader sees.
 
 # Seed mode is exhaustively enumerated at five seeds a side, so it is exact and
 # cheap; the block mode samples, so it gets fewer cases and fewer resamples.
@@ -123,6 +128,7 @@ def test_seed_mode_type_one_error_is_near_nominal() -> None:
         f"(+/- {wilson_halfwidth(rate, SEED_MODE_CASES):.4f}) "
         f"over {SEED_MODE_CASES} null cases at alpha {ALPHA}"
     )
+    record_measurement("Type I error, seed replicated", rate)
     low, high = TYPE_ONE_GATE
     assert low <= rate <= high, f"type I error {rate:.4f} outside the gate {TYPE_ONE_GATE}"
 
@@ -148,6 +154,12 @@ def test_seed_mode_type_one_error_holds_as_seed_variance_grows() -> None:
         measured[seed_sigma] = rejection_rate(p_values)
         print(f"seed sigma {seed_sigma:.3f}: type I {measured[seed_sigma]:.4f}", flush=True)
 
+    # The cell furthest from nominal is the one the gate actually binds, so
+    # that is the number this arm contributes to the record.
+    record_measurement(
+        "Type I error across seed variance",
+        max(measured.values(), key=lambda rate: abs(rate - ALPHA)),
+    )
     low, high = TYPE_ONE_GATE
     for seed_sigma, rate in measured.items():
         assert low <= rate <= high, f"seed sigma {seed_sigma}: type I {rate:.4f} outside the gate"
@@ -168,6 +180,7 @@ def test_seed_mode_power_on_a_large_effect() -> None:
 
     power = rejection_rate(p_values)
     print(f"\nseed replicated mode, power: {power:.4f} over {POWER_CASES} cases")
+    record_measurement("Power, seed replicated", power)
     assert power > POWER_GATE, f"power {power:.4f} below the gate {POWER_GATE}"
 
 
@@ -353,6 +366,7 @@ def test_block_mode_type_one_error_is_near_nominal() -> None:
         f"(+/- {wilson_halfwidth(rate, len(p_values)):.4f}) "
         f"over {len(p_values)} null cases, {refused} refused as too short"
     )
+    record_measurement("Type I error, window block", rate)
     assert refused / BLOCK_MODE_CASES < 0.10, "the block precondition is refusing too often here"
     low, high = TYPE_ONE_GATE
     assert low <= rate <= high, f"type I error {rate:.4f} outside the gate {TYPE_ONE_GATE}"
@@ -377,6 +391,7 @@ def test_block_mode_power_on_a_large_effect() -> None:
 
     power = rejection_rate(p_values)
     print(f"\nwindow block mode, power: {power:.4f} over {len(p_values)} cases")
+    record_measurement("Power, window block", power)
     assert power > POWER_GATE, f"power {power:.4f} below the gate {POWER_GATE}"
 
 
@@ -520,6 +535,7 @@ def test_paired_mode_type_one_error_on_clustered_null_data() -> None:
         f"(+/- {wilson_halfwidth(rate, PAIRED_CASES):.4f}) over {PAIRED_CASES} null cases, "
         f"{PAIRED_CLUSTERS} clusters of {PAIRED_CLUSTER_SIZE} pairs"
     )
+    record_measurement("Type I error, paired clustered", rate)
     low, high = TYPE_ONE_GATE
     assert low <= rate <= high, f"type I error {rate:.4f} outside the gate {TYPE_ONE_GATE}"
 
@@ -628,10 +644,15 @@ def test_null_p_values_are_uniform_not_merely_correct_at_alpha() -> None:
             for _ in range(1500)
         ]
     )
+    worst = 0.0
     for threshold in (0.05, 0.10, 0.25, 0.50):
         rate = float((p_values < threshold).mean())
         tolerance = 3.0 * np.sqrt(threshold * (1 - threshold) / p_values.size)
         print(f"threshold {threshold:.2f}: rejection rate {rate:.4f}", flush=True)
+        # In standard errors, so the four thresholds are on one scale and the
+        # number recorded is the largest departure rather than the last one.
+        worst = max(worst, abs(rate - threshold) / (tolerance / 3.0))
         assert abs(rate - threshold) < max(tolerance, 0.02), (
             f"rejection rate {rate:.4f} at threshold {threshold} is not uniform"
         )
+    record_measurement("Null p value uniformity", worst)

@@ -13,6 +13,13 @@ report is evidence, it gets screenshotted into other documents, and it should
 look identical everywhere it is opened. Identity never rests on colour alone,
 because every series is in the legend and every number in the charts is also in
 the verdict table below them.
+
+**plotly and jinja2 are imported on first use, not at module load** (E1). They
+are about 5 MB of reporting stack, they are the `report` extra rather than the
+core install, and `triage/__init__.py` resolves `build_context` and `render`
+lazily for the same reason. Importing this module therefore costs nothing until
+something actually draws; the first attribute access on either dependency
+raises `MissingExtraError` naming the extra if it is absent.
 """
 
 from __future__ import annotations
@@ -24,13 +31,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import plotly.graph_objects as go
-from jinja2 import Environment, FileSystemLoader
-from plotly.offline import get_plotlyjs
 
+from triage._extras import LazyModule
 from triage.analysis.comparison import (
     ComparisonConfig,
     ComparisonRefusal,
@@ -41,6 +46,16 @@ from triage.analysis.regression import RegressionConfig, TriageReport
 from triage.analysis.sensitivity import SensitivityReport, SensitivityResult
 from triage.calibration import SUMMARY
 from triage.core.experiment import Experiment
+
+if TYPE_CHECKING:
+    import jinja2
+    import plotly.graph_objects as go
+    import plotly.offline as plotly_offline
+else:
+    _REPORT = "drawing the HTML report"
+    go = LazyModule("plotly.graph_objects", extra="report", purpose=_REPORT)
+    plotly_offline = LazyModule("plotly.offline", extra="report", purpose=_REPORT)
+    jinja2 = LazyModule("jinja2", extra="report", purpose=_REPORT)
 
 LOGGER = logging.getLogger("triage.report")
 
@@ -532,8 +547,8 @@ def summarise_runs(experiments: list[Experiment], config: ComparisonConfig) -> l
 
 def render(context: ReportContext, output_path: str | Path) -> Path:
     """Write the single file report and return where it landed."""
-    environment = Environment(
-        loader=FileSystemLoader(str(TEMPLATE_DIR)),
+    environment = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
         # Unconditional rather than by file extension. Every value this template
         # interpolates is either third party data or derived from it, and an
         # autoescape rule that depends on what a template file is named is a
@@ -572,7 +587,7 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
         # Fetched only when there is something for it to draw. `get_plotlyjs`
         # reads the bundle off disk, so this also keeps an empty report cheap
         # to build and not merely cheap to store.
-        plotly_js=get_plotlyjs() if figures else "",
+        plotly_js=plotly_offline.get_plotlyjs() if figures else "",
         n_runs=len(context.experiments),
     )
     output = Path(output_path)

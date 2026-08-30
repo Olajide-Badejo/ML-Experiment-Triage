@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from triage._extras import require
 from triage.core.experiment import Experiment, MetricSeries
 from triage.parsers.base import ParseError, Parser, non_finite_metadata
 
@@ -94,7 +95,15 @@ class TensorBoardParser(Parser):
         return _is_event_file(path)
 
     def parse(self, path: Path, root: Path | None = None) -> Experiment:
-        from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+        # Imported here, and through `require`, so that a core install can be
+        # offered this parser during discovery and only meets tensorboard if it
+        # actually points at an event directory (E1).
+        accumulator_module = require(
+            "tensorboard.backend.event_processing.event_accumulator",
+            extra="parsers",
+            purpose="reading TensorBoard event files",
+        )
+        event_accumulator = accumulator_module.EventAccumulator
 
         directory = path if path.is_dir() else path.parent
         event_files = [p.name for p in _event_files(directory)]
@@ -103,7 +112,7 @@ class TensorBoardParser(Parser):
                 f"no readable TensorBoard event file in {directory}; a file named "
                 f"{EVENT_FILE_PREFIX}... must begin with a valid TFRecord header"
             )
-        accumulator = EventAccumulator(str(directory), size_guidance=SIZE_GUIDANCE)
+        accumulator = event_accumulator(str(directory), size_guidance=SIZE_GUIDANCE)
         try:
             accumulator.Reload()
         except Exception as error:

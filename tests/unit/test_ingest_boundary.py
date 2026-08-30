@@ -420,13 +420,34 @@ def test_the_progress_bar_is_closed_even_when_the_consumer_raises() -> None:
             closed.append(True)
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("triage.progress.tqdm", FakeBar)
+        patch.setattr("triage.progress.tqdm_class", lambda: FakeBar)
         patch.setattr("triage.progress.is_terminal", lambda: True)
         stream = track(range(10), "ingest", enabled=True)
         next(stream)
         stream.close()
 
     assert closed == [True], "the bar must be closed by a finally, not by falling off the end"
+
+
+def test_the_progress_bar_degrades_to_plain_lines_when_tqdm_is_absent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """E1. tqdm ships in the `parsers` extra, and a core install has no bar.
+
+    `triage.progress` sits on the import path of `triage.ingest`, so a hard
+    dependency here would mean a core install could not ingest anything. A
+    missing progress bar is a missing convenience: it must not stop the work or
+    raise, and the plain line branch is already there for CI logs.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("triage.progress.tqdm_class", lambda: None)
+        patch.setattr("triage.progress.is_terminal", lambda: True)
+        consumed = list(track(range(3), "ingest", enabled=True))
+
+    captured = capsys.readouterr()
+    assert consumed == [0, 1, 2]
+    assert captured.out == ""
+    assert "ingest" in captured.err
 
 
 def test_the_cli_routes_triage_logs_to_stderr(

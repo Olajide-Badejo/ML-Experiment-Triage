@@ -32,6 +32,13 @@ duplicates. Log an integer step beside the fractional value, or scale it.
 File matching is on `suffix.lower()`, so `METRICS.CSV` is read on Linux as
 well as on Windows. Every CSV in a run directory contributes to the same
 series per tag, in sorted file order.
+
+pandas is imported on first use rather than at module load (E1). This module
+has to be importable in a core install, because `discover_runs` offers every
+parser to every path and a user with only JSONL logs must not be stopped by a
+CSV reader they will never reach. `can_parse` is pathlib alone, so that user
+never touches pandas; a user who does point at a CSV gets the message in
+`triage._extras` naming the `parsers` extra.
 """
 
 from __future__ import annotations
@@ -39,10 +46,11 @@ from __future__ import annotations
 import io
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 
+from triage._extras import LazyModule
 from triage.core.experiment import Experiment, MetricSeries
 from triage.parsers.base import (
     MAX_STEP,
@@ -53,6 +61,11 @@ from triage.parsers.base import (
     read_text,
     validate_step,
 )
+
+if TYPE_CHECKING:
+    import pandas as pd
+else:
+    pd = LazyModule("pandas", extra="parsers", purpose="reading CSV training logs")
 
 STEP_COLUMNS = ("step", "global_step", "iteration", "iter", "epoch")
 TAG_COLUMNS = ("tag", "metric", "name", "key")

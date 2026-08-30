@@ -11,14 +11,20 @@ branch used to `print` to stdout, which is the same stream the report path and
 the verdict table write their results to; piping the output of a run to a file
 interleaved progress chatter with the data, verified. Progress is diagnostics,
 results are data, and the two belong on different streams.
+
+**tqdm is optional, and its absence is not an error.** This module is on the
+import path of `triage.ingest`, which a core install has to be able to use
+(E1), and the bar is a convenience rather than a result. So a missing tqdm
+downgrades to the plain line branch instead of raising: refusing to ingest
+because the progress bar is unavailable would be a strange thing to do to
+somebody who asked for numbers.
 """
 
 from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Iterable, Iterator
-
-from tqdm import tqdm
+from typing import Any
 
 
 def is_terminal() -> bool:
@@ -26,6 +32,15 @@ def is_terminal() -> bool:
         return bool(sys.stderr.isatty())
     except (AttributeError, ValueError):
         return False
+
+
+def tqdm_class() -> type[Any] | None:
+    """The tqdm class, or None when tqdm is not installed."""
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        return None
+    return tqdm
 
 
 def track[T](
@@ -47,7 +62,8 @@ def track[T](
         except TypeError:
             total = None
 
-    if is_terminal():
+    bar_class = tqdm_class() if is_terminal() else None
+    if bar_class is not None:
         # try/finally, because this is a generator: a consumer that raises, or
         # simply stops iterating, abandons it part way and the bar's close()
         # would never run. What that leaves behind is a half drawn bar with no
@@ -55,7 +71,7 @@ def track[T](
         # next. The finally runs on garbage collection of an abandoned
         # generator as well as on a normal exit, so the terminal is restored
         # either way.
-        progress_bar = tqdm(
+        progress_bar = bar_class(
             items, desc=description, unit="run", total=total, leave=False, file=sys.stderr
         )
         try:

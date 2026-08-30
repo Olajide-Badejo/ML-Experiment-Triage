@@ -19,9 +19,11 @@ here is written out literally.
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
 import sys
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -331,3 +333,166 @@ def test_build_context_defaults_its_calibration_note() -> None:
 
     default = inspect.signature(build_context).parameters["calibration"].default
     assert default is SUMMARY
+
+
+# ----------------------------------------------- E1: the core only install
+
+#: Everything the extras carry. A core install is numpy and scipy; these five
+#: are what `parsers`, `report` and the tooling around them add.
+HEAVY = ("pandas", "plotly", "jinja2", "tensorboard", "tqdm")
+
+#: Prelude that turns the running interpreter into a core only one. The heavy
+#: packages ARE installed in the development environment, so the only way to
+#: test the install the consumer actually has is to refuse them at import time.
+#: A meta path finder is used rather than uninstalling anything, so the check
+#: costs a subprocess and not an environment.
+BLOCK_HEAVY = '''
+import sys
+
+BLOCKED = {"pandas", "plotly", "jinja2", "tensorboard", "tqdm"}
+
+
+class CoreOnly:
+    """Refuses the extras, exactly as a core install would."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in BLOCKED:
+            raise ImportError(f"No module named {name!r}")
+        return None
+
+
+sys.meta_path.insert(0, CoreOnly())
+'''
+
+
+def run_core_only(body: str) -> subprocess.CompletedProcess[str]:
+    """Run `body` in a subprocess that cannot import any of the extras."""
+    return subprocess.run(
+        [sys.executable, "-c", BLOCK_HEAVY + body],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_a_core_only_install_can_import_every_module_of_the_package() -> None:
+    """E1. Import must not be where a core install dies.
+
+    `triage.ingest` is imported eagerly by `triage/__init__.py` and pulls in
+    `triage.parsers`, which offers the CSV and TensorBoard readers to every
+    path `discover_runs` walks. If importing those modules imported pandas and
+    tensorboard, a consumer with numpy and scipy could not say `import triage`
+    at all, whatever they meant to do with it.
+    """
+    result = run_core_only(
+        "import triage, triage.cli, triage.ingest, triage.parsers, "
+        "triage.report.html_report, triage.progress, triage.demo\n"
+        "import sys\n"
+        "loaded = sorted(m for m in ('pandas', 'plotly', 'jinja2', 'tensorboard', 'tqdm')\n"
+        "                if m in sys.modules)\n"
+        "assert loaded == [], loaded\n"
+        "print('imported')\n"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "imported" in result.stdout
+
+
+def test_a_core_only_install_can_ingest_jsonl_and_run_a_comparison(tmp_path: Path) -> None:
+    """E1, the whole point of the split, end to end without the extras.
+
+    This is the consumer's runtime shape: JSONL rows in, a ranked significance
+    tested comparison out, with numpy and scipy the only third party packages
+    on the machine. It runs in a subprocess with the extras refused at import
+    time, so nothing this test proves can be an accident of the development
+    environment having pandas installed.
+    """
+    sweep = tmp_path / "sweep"
+    seeds = 5
+    for condition, offset in (("base", 0.0), ("candidate", -0.25)):
+        for seed in range(seeds):
+            directory = sweep / f"{condition}_seed{seed}"
+            directory.mkdir(parents=True)
+            # A config is what makes seed replicates group into one condition:
+            # `variant_key` reads the config, not the directory name.
+            (directory / "config.json").write_text(
+                json.dumps({"variant": condition, "seed": seed}), encoding="utf-8"
+            )
+            # Deterministic seed to seed spread, so the strong mode has
+            # something to permute and the comparison is not degenerate.
+            jitter = 0.004 * (seed - 2)
+            rows = [
+                json.dumps({"step": step, "val/loss": 1.0 + offset + jitter - 0.002 * step})
+                for step in range(60)
+            ]
+            (directory / "metrics.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    body = f"""
+import sys
+from triage import Store, compare_all, ingest
+
+sweep, database = {str(sweep)!r}, {str(tmp_path / "core.db")!r}
+with Store(database) as store:
+    outcome = ingest(sweep, store, show_progress=False)
+    assert not outcome.failed, outcome.failed
+    assert len(outcome.added) == {2 * seeds}, outcome.added
+    experiments = store.load_all()
+
+results = compare_all(experiments, baseline="base")
+assert len(results) == 1, [r.candidate for r in results]
+assert results[0].candidate == "candidate"
+assert results[0].p_value < 0.05, results[0].p_value
+loaded = sorted(m for m in {HEAVY!r} if m in sys.modules)
+assert loaded == [], loaded
+print("compared", results[0].mode)
+"""
+    result = run_core_only(body)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("compared")
+
+
+@pytest.mark.parametrize(
+    ("statement", "extra", "package"),
+    [
+        ("from triage.parsers import CsvParser; CsvParser().parse(P)", "parsers", "pandas"),
+        ("from triage.report.html_report import render; render({}, P)", "report", "jinja2"),
+    ],
+)
+def test_a_missing_extra_says_which_extra_and_what_to_type(
+    tmp_path: Path, statement: str, extra: str, package: str
+) -> None:
+    """E1. The error a core install meets has to be actionable.
+
+    Without this the failure is `ModuleNotFoundError: No module named 'plotly'`,
+    which names the package and nothing else: not what wanted it, not that it
+    is optional, not how to get it.
+    """
+    csv_run = tmp_path / "run"
+    csv_run.mkdir()
+    (csv_run / "metrics.csv").write_text("step,loss\n0,1.0\n", encoding="utf-8")
+
+    body = f"""
+from pathlib import Path
+P = Path({str(csv_run)!r})
+from triage._extras import MissingExtraError
+try:
+    {statement}
+except MissingExtraError as error:
+    message = str(error)
+else:
+    raise AssertionError("the missing extra did not raise")
+assert {package!r} in message, message
+assert 'ml-experiment-triage[{extra}]' in message, message
+print("refused")
+"""
+    result = run_core_only(body)
+
+    assert result.returncode == 0, result.stderr
+    assert "refused" in result.stdout
+
+
+def test_the_missing_extra_error_is_an_import_error() -> None:
+    """Callers already guard optional features with `except ImportError`."""
+    from triage._extras import MissingExtraError
+
+    assert issubclass(MissingExtraError, ImportError)

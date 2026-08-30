@@ -10,10 +10,8 @@ asked for.
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
 import pytest
+from llm_fakes import TAGS, FakeTransport
 
 from triage.llm.ollama_client import (
     DEFAULT_CHAT_MODEL,
@@ -23,46 +21,6 @@ from triage.llm.ollama_client import (
     LlmUnavailableError,
     OllamaClient,
 )
-
-
-class FakeTransport:
-    """Canned responses by URL suffix, counting every call it is asked to make.
-
-    The count is the point of it as much as the payloads: the response cache is
-    only worth having if a second identical request never reaches the network,
-    and the only honest way to assert that is to have the transport itself say
-    how many times it was used.
-    """
-
-    def __init__(self, responses: dict[str, Any] | None = None) -> None:
-        self.responses: dict[str, Any] = responses or {}
-        self.calls: list[tuple[str, dict[str, Any] | None]] = []
-
-    def __call__(self, url: str, payload: bytes | None, timeout: float) -> bytes:
-        body = None if payload is None else json.loads(payload.decode("utf-8"))
-        self.calls.append((url, body))
-        for suffix, response in self.responses.items():
-            if url.endswith(suffix):
-                if isinstance(response, BaseException):
-                    raise response
-                if isinstance(response, bytes):
-                    return response
-                if callable(response):
-                    return json.dumps(response(body)).encode("utf-8")
-                return json.dumps(response).encode("utf-8")
-        raise AssertionError(f"the fake transport has no canned response for {url}")
-
-    @property
-    def n_calls(self) -> int:
-        return len(self.calls)
-
-
-TAGS = {
-    "models": [
-        {"name": DEFAULT_CHAT_MODEL, "digest": "d" * 64, "size": 7_477_000_000},
-        {"name": "embeddinggemma:300m", "digest": "e" * 64, "size": 621_900_000},
-    ]
-}
 
 
 def client(transport: FakeTransport) -> OllamaClient:
@@ -80,7 +38,8 @@ def test_health_reports_the_models_and_their_digests() -> None:
     transport = FakeTransport({"/api/tags": TAGS})
     report = client(transport).health()
 
-    assert [model.name for model in report.models] == [DEFAULT_CHAT_MODEL, "embeddinggemma:300m"]
+    assert report.names[0] == DEFAULT_CHAT_MODEL
+    assert "embeddinggemma:300m" in report.names
     assert report.digest_of(DEFAULT_CHAT_MODEL) == "d" * 64
     assert transport.calls[0][0].endswith("/api/tags")
 

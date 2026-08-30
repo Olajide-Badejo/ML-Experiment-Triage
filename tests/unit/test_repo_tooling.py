@@ -9,12 +9,13 @@ to the person reading its output.
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
-from scripts import check_no_dashes
+from scripts import check_no_dashes, make_fixtures
 
 # Written as escapes so this file never contains the characters under test, and
 # so the guard passing over this file is not itself the thing being asserted.
@@ -79,3 +80,60 @@ def test_the_scripts_directory_is_importable_as_a_package() -> None:
     """Guards the import above: `scripts` is a namespace package on the path."""
     assert Path(check_no_dashes.__file__).parent.name == "scripts"
     assert "scripts.check_no_dashes" in sys.modules
+
+
+def test_the_committed_fixtures_match_what_the_generator_produces() -> None:
+    """D35f. The fixtures are committed, so nothing proved they were current.
+
+    A parser fixture is a claim about bytes. Committing the bytes and the
+    generator separately means the generator can drift from what is in the tree
+    and nobody finds out until someone regenerates and gets a diff they cannot
+    explain. This is the check that CI runs.
+    """
+    assert make_fixtures.differences(make_fixtures.FIXTURES) == []
+
+
+def test_the_fixture_check_notices_a_changed_byte(tmp_path: Path) -> None:
+    copied = tmp_path / "fixtures"
+    shutil.copytree(make_fixtures.FIXTURES, copied)
+    target = copied / "jsonl" / "jsonl_run" / "metrics.jsonl"
+    target.write_text(target.read_text(encoding="utf-8") + '{"step": 999}\n', encoding="utf-8")
+
+    differences = make_fixtures.differences(copied)
+
+    assert len(differences) == 1
+    assert "jsonl/jsonl_run/metrics.jsonl" in differences[0]
+
+
+def test_the_fixture_check_notices_a_missing_file(tmp_path: Path) -> None:
+    copied = tmp_path / "fixtures"
+    shutil.copytree(make_fixtures.FIXTURES, copied)
+    (copied / "csv_wide" / "csv_wide_run" / "metrics.csv").unlink()
+
+    differences = make_fixtures.differences(copied)
+
+    assert len(differences) == 1
+    assert "missing" in differences[0]
+
+
+def test_the_fixture_check_reads_the_event_file_rather_than_hashing_it(tmp_path: Path) -> None:
+    """The TensorBoard fixture cannot be compared byte for byte, and why.
+
+    `EventFileWriter` opens every file with a `file_version` event stamped with
+    the wall clock at the moment of writing, so two runs of the generator
+    produce different bytes from identical inputs. Hashing it would make the
+    check fail every time it ran. It is compared through this project's own
+    parser instead, which is the stronger statement anyway: the committed file
+    still decodes to the series the generator describes.
+    """
+    copied = tmp_path / "fixtures"
+    shutil.copytree(make_fixtures.FIXTURES, copied)
+    event_file = copied / "tensorboard" / "tb_run" / "events.out.tfevents.1700000000.fixture"
+    original = event_file.read_bytes()
+
+    assert make_fixtures.differences(copied) == []
+
+    truncated = copied / "jsonl" / "jsonl_run" / "metrics.jsonl"
+    truncated.write_text("", encoding="utf-8")
+    assert make_fixtures.differences(copied) != []
+    assert event_file.read_bytes() == original

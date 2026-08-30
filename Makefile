@@ -5,7 +5,7 @@
 # calibration gates, regenerates the demo sweep and database, and compiles both
 # PDFs. No step needs manual intervention.
 
-.PHONY: all help env lint fmt check-style test test-unit test-stats \
+.PHONY: all help env lint fmt check-style check-fixtures test test-unit test-stats \
         test-integration demo assets html report report-debug images \
         pdfs verify-demo clean distclean
 
@@ -26,6 +26,7 @@ help:
 	@echo "  env             create .venv and install pinned requirements"
 	@echo "  lint            ruff format check and ruff lint"
 	@echo "  check-style     dash guard over sources and compiled PDFs"
+	@echo "  check-fixtures  the committed parser fixtures match their generator"
 	@echo "  test            full suite including calibration (slowest step)"
 	@echo "  demo            regenerate the synthetic sweep, database and HTML report"
 	@echo "  assets          regenerate report figures and tables from the database"
@@ -39,6 +40,7 @@ all:
 	$(MAKE) env
 	$(MAKE) lint
 	$(MAKE) check-style
+	$(MAKE) check-fixtures
 	$(MAKE) test
 	$(MAKE) demo
 	$(MAKE) verify-demo
@@ -66,6 +68,11 @@ fmt:
 
 check-style:
 	$(PY) scripts/check_no_dashes.py .
+
+# The parser fixtures are committed bytes. This proves they are still the bytes
+# the generator produces, without writing anything.
+check-fixtures:
+	$(PY) scripts/make_fixtures.py --check
 
 test:
 	$(PY) -m pytest tests -v

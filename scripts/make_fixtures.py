@@ -8,12 +8,22 @@ below.
 
 Every fixture carries the same underlying series in a different container, so
 the unit suite can assert that all three parsers agree on the numbers.
+
+`--check` regenerates into a temporary directory and reports anything that
+differs from the committed tree without touching it, so CI can prove the two
+have not drifted apart. Everything is compared byte for byte except the
+TensorBoard event file: `EventFileWriter` writes a `file_version` record
+stamped with the wall clock at the moment of writing, so identical inputs
+produce different bytes. That one is compared through this project's own
+parser, which is the claim the fixture is there to support anyway.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +32,10 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
 SEED = 424242
 N_STEPS = 60
+
+#: Compared through the parser rather than by hash, for the reason in the module
+#: docstring. Relative to the fixture root.
+EVENT_FILE = Path("tensorboard") / "tb_run" / "events.out.tfevents.1700000000.fixture"
 
 
 def reference_series() -> dict[str, np.ndarray]:
@@ -48,11 +62,11 @@ def write_config(directory: Path) -> None:
     (directory / "config.json").write_text(json.dumps(CONFIG, indent=2) + "\n", encoding="utf-8")
 
 
-def make_tensorboard(series: dict[str, np.ndarray]) -> None:
+def make_tensorboard(series: dict[str, np.ndarray], root: Path) -> None:
     from tensorboard.compat.proto import event_pb2, summary_pb2
     from tensorboard.summary.writer.event_file_writer import EventFileWriter
 
-    directory = FIXTURES / "tensorboard" / "tb_run"
+    directory = root / "tensorboard" / "tb_run"
     if directory.exists():
         shutil.rmtree(directory)
     write_config(directory)
@@ -76,8 +90,8 @@ def make_tensorboard(series: dict[str, np.ndarray]) -> None:
     written[0].rename(directory / "events.out.tfevents.1700000000.fixture")
 
 
-def make_csv_wide(series: dict[str, np.ndarray]) -> None:
-    directory = FIXTURES / "csv_wide" / "csv_wide_run"
+def make_csv_wide(series: dict[str, np.ndarray], root: Path) -> None:
+    directory = root / "csv_wide" / "csv_wide_run"
     write_config(directory)
     lines = ["step,wall_time,train/loss,val/accuracy"]
     for index, step in enumerate(series["steps"]):
@@ -89,8 +103,8 @@ def make_csv_wide(series: dict[str, np.ndarray]) -> None:
     (directory / "metrics.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def make_csv_long(series: dict[str, np.ndarray]) -> None:
-    directory = FIXTURES / "csv_long" / "csv_long_run"
+def make_csv_long(series: dict[str, np.ndarray], root: Path) -> None:
+    directory = root / "csv_long" / "csv_long_run"
     write_config(directory)
     lines = ["step,tag,value"]
     for index, step in enumerate(series["steps"]):
@@ -99,8 +113,8 @@ def make_csv_long(series: dict[str, np.ndarray]) -> None:
     (directory / "metrics.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def make_jsonl(series: dict[str, np.ndarray]) -> None:
-    directory = FIXTURES / "jsonl" / "jsonl_run"
+def make_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
+    directory = root / "jsonl" / "jsonl_run"
     write_config(directory)
     lines = []
     for index, step in enumerate(series["steps"]):
@@ -117,9 +131,9 @@ def make_jsonl(series: dict[str, np.ndarray]) -> None:
     (directory / "metrics.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def make_truncated_jsonl(series: dict[str, np.ndarray]) -> None:
+def make_truncated_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
     """A JSONL log cut off mid line, which is what a killed job leaves behind."""
-    directory = FIXTURES / "jsonl_truncated" / "killed_run"
+    directory = root / "jsonl_truncated" / "killed_run"
     write_config(directory)
     lines = [
         json.dumps({"step": int(step), "train/loss": float(series["train/loss"][index])})
@@ -129,7 +143,7 @@ def make_truncated_jsonl(series: dict[str, np.ndarray]) -> None:
     (directory / "metrics.jsonl").write_text(text, encoding="utf-8")
 
 
-def make_tpt_jsonl(series: dict[str, np.ndarray]) -> None:
+def make_tpt_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
     """A second producer's shape: an environment header line, then step rows.
 
     The PyTorch Performance and Health Toolkit writes its schema v2 logs this
@@ -138,7 +152,7 @@ def make_tpt_jsonl(series: dict[str, np.ndarray]) -> None:
     record alone claims the file and then fails on it. Both headers must be
     skipped and counted, and the eight step rows must ingest cleanly.
     """
-    directory = FIXTURES / "tpt_jsonl" / "healthy_steps"
+    directory = root / "tpt_jsonl" / "healthy_steps"
     write_config(directory)
     header = {
         "type": "environment",
@@ -168,7 +182,7 @@ N_TEMPLATES = 6
 FIELDS_PER_TEMPLATE = 4
 
 
-def make_outcomes_jsonl() -> None:
+def make_outcomes_jsonl(root: Path) -> None:
     """`Autofill_audit`'s `run.jsonl`, in their filed schema exactly (E5).
 
     One row per classified field per engine, no step anywhere. The keys and
@@ -184,7 +198,7 @@ def make_outcomes_jsonl() -> None:
     cluster structure matters to the answer instead of being decoration.
     """
     rng = np.random.default_rng(SEED)
-    directory = FIXTURES / "outcomes" / "autofill_run"
+    directory = root / "outcomes" / "autofill_run"
     directory.mkdir(parents=True, exist_ok=True)
     rows = []
     for template in range(N_TEMPLATES):
@@ -217,7 +231,7 @@ def make_outcomes_jsonl() -> None:
     (directory / "run.jsonl").write_text(text, encoding="utf-8")
 
 
-def make_tpt_sweep_jsonl() -> None:
+def make_tpt_sweep_jsonl(root: Path) -> None:
     """TPT's `sweep_results.jsonl`: one row per configuration, no step (E6 tail).
 
     The throughput sweeper writes a row per config rather than a series, so it
@@ -229,7 +243,7 @@ def make_tpt_sweep_jsonl() -> None:
     Two runners are measured on the same configurations, joined on `config_key`.
     """
     rng = np.random.default_rng(SEED + 1)
-    directory = FIXTURES / "tpt_sweep" / "sweep_results"
+    directory = root / "tpt_sweep" / "sweep_results"
     directory.mkdir(parents=True, exist_ok=True)
     rows = []
     for batch_size in (8, 16, 32, 64):
@@ -254,21 +268,95 @@ def make_tpt_sweep_jsonl() -> None:
     (directory / "sweep_results.jsonl").write_text(text, encoding="utf-8")
 
 
-def main() -> int:
+def build(root: Path) -> None:
+    """Write the whole fixture tree under `root`, which need not exist yet."""
     series = reference_series()
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    np.save(
-        FIXTURES / "reference_series.npy", np.stack([series["train/loss"], series["val/accuracy"]])
+    root.mkdir(parents=True, exist_ok=True)
+    np.save(root / "reference_series.npy", np.stack([series["train/loss"], series["val/accuracy"]]))
+    make_tensorboard(series, root)
+    make_csv_wide(series, root)
+    make_csv_long(series, root)
+    make_jsonl(series, root)
+    make_truncated_jsonl(series, root)
+    make_tpt_jsonl(series, root)
+    make_outcomes_jsonl(root)
+    make_tpt_sweep_jsonl(root)
+
+
+def _relative_files(root: Path) -> set[Path]:
+    return {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
+
+
+def _event_file_series(directory: Path) -> dict[str, list[tuple[int, float]]]:
+    """The event file's scalars, read the way the parser under test reads them."""
+    from triage.parsers.tensorboard_parser import TensorBoardParser
+
+    experiment = TensorBoardParser().parse(directory)
+    return {
+        tag: list(zip(series.steps.tolist(), series.values.tolist(), strict=True))
+        for tag, series in experiment.metrics.items()
+    }
+
+
+def differences(committed: Path) -> list[str]:
+    """Every way `committed` differs from a fresh generation, as printable lines.
+
+    An empty list is the whole claim: the committed fixtures are what this
+    script produces today. Nothing under `committed` is written to.
+    """
+    with tempfile.TemporaryDirectory() as work:
+        fresh = Path(work) / "fixtures"
+        build(fresh)
+
+        found: list[str] = []
+        expected = _relative_files(fresh)
+        actual = _relative_files(committed)
+        for missing in sorted(expected - actual):
+            found.append(f"{missing.as_posix()}: missing from the committed fixtures")
+        for extra in sorted(actual - expected):
+            found.append(f"{extra.as_posix()}: present but no longer generated")
+
+        for name in sorted(expected & actual):
+            if name == EVENT_FILE:
+                continue
+            if (fresh / name).read_bytes() != (committed / name).read_bytes():
+                found.append(f"{name.as_posix()}: differs from what the generator writes")
+
+        if EVENT_FILE in expected & actual:
+            fresh_scalars = _event_file_series(fresh / EVENT_FILE.parent)
+            committed_scalars = _event_file_series(committed / EVENT_FILE.parent)
+            if fresh_scalars != committed_scalars:
+                found.append(
+                    f"{EVENT_FILE.as_posix()}: decodes to a different series than the "
+                    f"generator writes"
+                )
+    return found
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="report drift between the committed fixtures and the generator, writing nothing",
     )
-    make_tensorboard(series)
-    make_csv_wide(series)
-    make_csv_long(series)
-    make_jsonl(series)
-    make_truncated_jsonl(series)
-    make_tpt_jsonl(series)
-    make_outcomes_jsonl()
-    make_tpt_sweep_jsonl()
-    print(f"fixtures written under {FIXTURES.relative_to(ROOT)}")
+    args = parser.parse_args()
+
+    if args.check:
+        found = differences(FIXTURES)
+        for line in found:
+            print(line)
+        if found:
+            print(
+                f"\nFAIL: {len(found)} fixture(s) have drifted from "
+                f"{Path(__file__).name}. Rerun it without --check and commit the result."
+            )
+            return 1
+        print(f"OK: the fixtures under {FIXTURES.relative_to(ROOT).as_posix()} are current.")
+        return 0
+
+    build(FIXTURES)
+    print(f"fixtures written under {FIXTURES.relative_to(ROOT).as_posix()}")
     return 0
 
 

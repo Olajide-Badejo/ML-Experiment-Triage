@@ -154,6 +154,47 @@ def test_an_unknown_locale_is_refused_by_name() -> None:
         agentic.profile_for("fr_FR")
 
 
+# ---------------------------------------------------------- the missing extra
+
+
+def test_a_missing_driver_is_reported_as_a_missing_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one place a user meets the `agentic` extra is a message naming it."""
+    import importlib
+
+    import triage._extras as extras
+
+    def refuse(name: str) -> None:
+        raise ImportError(f"No module named {name!r}")
+
+    monkeypatch.setattr(extras.importlib, "import_module", refuse)
+    reason = agentic.why_no_browser()
+    assert reason is not None
+    assert "choreographer" in reason
+    assert 'pip install "ml-experiment-triage[agentic]"' in reason
+    assert not agentic.chrome_available()
+    # And the real one still imports, so the patch was the only reason.
+    monkeypatch.undo()
+    assert importlib.import_module("triage.autofill.agentic") is agentic
+
+
+def test_a_driver_that_finds_no_browser_points_at_the_cheap_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import triage._extras as extras
+
+    class Chromium:
+        @staticmethod
+        def find_browser(*, skip_local: bool) -> str | None:
+            return None
+
+    monkeypatch.setattr(
+        extras.importlib, "import_module", lambda name: type("m", (), {"Chromium": Chromium})
+    )
+    reason = agentic.why_no_browser()
+    assert reason is not None
+    assert "--no-browser" in reason
+
+
 # ------------------------------------------------------------- the static page
 
 

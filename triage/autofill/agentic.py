@@ -445,22 +445,39 @@ DOCUMENT_HEIGHT_JS = """
 """
 
 
-def chrome_available() -> bool:
-    """True when a Chromium the driver could drive is installed on this machine.
+def why_no_browser() -> str | None:
+    """Why a browser run cannot start here, or `None` when it can.
 
-    Used to skip the browser tests rather than fail them, which is the same
-    discipline the Ollama tests follow: a machine without the service is not a
-    machine with a defect.
+    Two different answers, because they have two different fixes and telling
+    them apart is the whole point of the extras machinery: the driver is not
+    installed (install the extra), or it is installed and found no browser
+    (install a browser, or run `--no-browser` and get the same numbers).
     """
     try:
         module = require("choreographer.browsers.chromium", EXTRA, PURPOSE)
-    except ImportError:
-        return False
+    except ImportError as error:
+        return str(error)
     try:
         found = module.Chromium.find_browser(skip_local=False)
     except Exception:  # pragma: no cover - a browser search that raises is a missing browser
-        return False
-    return bool(found)
+        found = None
+    if found:
+        return None
+    return (
+        "no Chromium to drive. Install one (choreographer ships `choreo_get_chrome`) or "
+        "run the same demo with --no-browser, which parses the pages instead and scores "
+        "them with the same code"
+    )
+
+
+def chrome_available() -> bool:
+    """True when a browser run could start here.
+
+    Used to skip the browser tests rather than fail them, which is the same
+    discipline the Ollama tests follow: a machine without the program is not a
+    machine with a defect.
+    """
+    return why_no_browser() is None
 
 
 class ChromeSession:

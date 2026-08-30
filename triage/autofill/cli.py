@@ -265,14 +265,14 @@ def run_agentic(args: argparse.Namespace) -> int:
         )
         return EXIT_USAGE
 
-    if not args.no_browser and not agentic.chrome_available():
-        print(
-            "error: no Chromium to drive. Install one (choreographer ships "
-            "`choreo_get_chrome`) or run the same demo with --no-browser, which parses "
-            "the pages instead and scores them with the same code",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+    if not args.no_browser:
+        # Two failures with two fixes: the driver is not installed, or it is and
+        # there is no browser. The message says which, because "install the
+        # agentic extra" and "install Chrome" are not the same instruction.
+        reason = agentic.why_no_browser()
+        if reason is not None:
+            print(f"error: {reason}", file=sys.stderr)
+            return EXIT_USAGE
 
     policy = always_fill()
     if args.decisions:

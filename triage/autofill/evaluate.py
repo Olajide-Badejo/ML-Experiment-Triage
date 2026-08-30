@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -623,6 +624,61 @@ def write_evaluation(
         report=report_path,
         calibration=calibration_path,
     )
+
+
+def label_codes(labels: Sequence[Any]) -> np.ndarray:
+    """Taxonomy tokens as head indices, for a statistic over label columns.
+
+    The outcomes file carries `true_label` and `pred_label` as text, because
+    they are categorical group keys rather than measurements. A statistic
+    computed over predictions needs them as numbers, and the mapping has to be
+    the taxonomy's own so that a token spelled by another repository lands in
+    the same slot.
+    """
+    return np.asarray([index_of(FieldType(str(label))) for label in labels], dtype=np.int64)
+
+
+def encode_outcome(true_labels: Sequence[Any], pred_labels: Sequence[Any]) -> np.ndarray:
+    """One integer per row carrying BOTH the truth and the prediction.
+
+    `truth * n_classes + prediction`, which is the same packing
+    `confusion_matrix` uses internally, and it is what makes macro F1 usable as a
+    `paired_permutation` statistic AT ALL.
+
+    The reason is worth stating, because getting it wrong looks like it works.
+    A statistic there has to be a pure function of the vector it is handed, and
+    `paired_permutation` hands it two different kinds of vector: the label
+    swapped ones, which keep every row in place, and the CLUSTER BOOTSTRAP
+    resamples, which draw whole clusters with replacement and therefore hand back
+    a vector of a different length in a different order. A closure holding a
+    fixed truth vector beside the predictions satisfies the first and breaks on
+    the second, loudly if the lengths differ and silently if they happen to
+    match. Packing the truth into the row travels with the row, so both work.
+    """
+    packed: np.ndarray = label_codes(true_labels) * len(FIELD_TYPES) + label_codes(pred_labels)
+    return packed
+
+
+def macro_f1_statistic() -> Callable[[np.ndarray], float]:
+    """The callable `paired_permutation` takes when the statistic is macro F1.
+
+    This is the case `paired_permutation` accepts a callable FOR (E3). Macro F1
+    is not the mean of anything: it is an unweighted average over classes of a
+    ratio of counts, so a test that assumed it could be written as a mean of per
+    row numbers would be answering a different question. What is permuted is
+    which engine's prediction sits at each row, and the statistic is recomputed
+    from scratch on every swap.
+
+    Use it with `encode_outcome` for both conditions and `template_id` as
+    `clusters`, which is exactly the comparison E5 describes.
+    """
+    n_classes = len(FIELD_TYPES)
+
+    def statistic(encoded: np.ndarray) -> float:
+        codes = np.asarray(encoded, dtype=np.int64)
+        return macro_f1(codes // n_classes, codes % n_classes, n_classes)
+
+    return statistic
 
 
 def summarise(paths: EvaluationPaths) -> dict[str, Any]:

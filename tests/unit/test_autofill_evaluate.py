@@ -24,8 +24,11 @@ from triage.autofill.evaluate import (
     OUTCOMES_SCHEMA_VERSION,
     EvaluationReport,
     HeuristicClassifier,
+    encode_outcome,
     evaluate_engines,
     heuristic_predict,
+    label_codes,
+    macro_f1_statistic,
     outcomes_rows,
     write_evaluation,
 )
@@ -251,6 +254,65 @@ def test_the_outcomes_file_round_trips_through_the_parser_and_the_test(
     assert result.mode == "paired_cluster"
     assert 0.0 <= result.p_value <= 1.0
     assert result.effect > 0
+
+
+def test_the_outcomes_file_supports_the_macro_f1_statistic_it_was_built_for(
+    fitted: dict, tmp_path: Path
+) -> None:
+    """E5's stated use: statistic macro F1, clusters template_id.
+
+    This is the case `paired_permutation` takes a CALLABLE for. Macro F1 cannot
+    be written as a mean of per row numbers, so what is permuted is which
+    engine's prediction sits at each row and the statistic is recomputed from
+    scratch on every swap. Each row carries its own truth, which is what keeps
+    the statistic a pure function of its argument under the clustered bootstrap
+    as well as under the label swap.
+    """
+    paths = write_evaluation(
+        tmp_path,
+        records=fitted["val"],
+        model=fitted["model"],
+        split="val",
+        locale="de_DE",
+        bootstrap=2,
+        seed=0,
+    )
+    outcomes = OutcomesParser().parse(paths.outcomes.parent)
+    rules, ngram = outcomes.pair_on("form_id", "engine", "rules", "ngram")
+    np.testing.assert_array_equal(
+        label_codes(ngram.group("true_label")), label_codes(rules.group("true_label"))
+    )
+
+    result = paired_permutation(
+        encode_outcome(rules.group("true_label"), rules.group("pred_label")),
+        encode_outcome(ngram.group("true_label"), ngram.group("pred_label")),
+        statistic=macro_f1_statistic(),
+        clusters=list(ngram.group("template_id")),
+        higher_is_better=True,
+    )
+    assert result.mode == "paired_cluster"
+    assert result.candidate_statistic > result.baseline_statistic + 0.05
+    assert result.p_value <= 0.05, result.p_value
+
+
+def test_the_packed_outcome_survives_a_resample_which_a_closure_would_not() -> None:
+    """The reason `encode_outcome` exists, asserted rather than described.
+
+    `paired_permutation` hands its statistic a CLUSTER BOOTSTRAP resample as
+    well as a label swap, and a resample is a different length in a different
+    order. A packed row still knows its own truth, so the statistic means the
+    same thing on it.
+    """
+    truth = ["email", "postal-code", "email", "tel", "postal-code", "tel"]
+    predicted = ["email", "postal-code", "tel", "tel", "postal-code", "tel"]
+    packed = encode_outcome(truth, predicted)
+    statistic = macro_f1_statistic()
+
+    whole = statistic(packed)
+    doubled = statistic(np.concatenate([packed, packed]))
+    assert doubled == pytest.approx(whole)
+    subset = statistic(packed[[0, 1, 3, 4]])
+    assert subset == pytest.approx(1.0)
 
 
 def test_the_outcomes_directory_is_claimed_by_the_parser_without_a_flag(

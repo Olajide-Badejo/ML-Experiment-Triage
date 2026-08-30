@@ -115,7 +115,7 @@ permutation over correlated blocks produces a null distribution narrower than
 the truth, which is exactly how a test becomes anticonservative.
 
 **What this mode can and cannot claim.** On its own terms it is calibrated: the
-measured type I error is 5.81 percent at a nominal 5, over 1928 null cases. But
+measured type I error is <!-- calibration:blocktypeone -->6.28 percent at a nominal 5, over 1989 cases<!-- /calibration:blocktypeone -->. But
 its null is "these two windows come from the same process", and that is not the
 question anyone is really asking. The question is "would another seed of this
 configuration also be better", and one run per side contains no information
@@ -124,14 +124,17 @@ about it.
 The cost is measured rather than argued. On synthetic runs with realistic seed
 variance and a true effect of exactly zero:
 
-| Seed standard deviation | Window block false positive rate |
-|---|---|
-| 0.01 | 53.2 percent |
-| 0.02 | 77.0 percent |
-| 0.04 | 87.4 percent |
+<!-- calibration:weakmodetable -->
+| Seed standard deviation | Single run mode | Seed replicated mode |
+|---|---|---|
+| 0.01 | 54.3 percent | 4.1 percent |
+| 0.02 | 76.6 percent | 3.8 percent |
+| 0.04 | 87.7 percent | 4.1 percent |
+<!-- /calibration:weakmodetable -->
 
-The seed replicated mode holds at 4.4 to 5.0 percent on the same data. This is
-why every output from the weak mode carries a label.
+The seed replicated mode holds at <!-- calibration:strongrange -->3.8 to 4.1<!-- /calibration:strongrange --> percent at the same three seed
+deviations, measured in the same arm. This is why every output from the weak
+mode carries a label.
 
 **Mode selection is never a choice.** Two or more runs on both sides selects the
 strong mode. Anything less falls back. The mode is decided by what data exists,
@@ -191,8 +194,8 @@ is tested against exactly that published example.
 
 **One family per comparison mode, and the inadmissible held out.** The family is
 the metrics compared against one baseline *within one mode*, not across modes.
-Pooling them was wrong: the single run window block mode fires on 53 to 87
-percent of comparisons under seed variance alone (measured, section 8), so its p
+Pooling them was wrong: the single run window block mode fires on
+<!-- calibration:weakrange -->54 to 88<!-- /calibration:weakrange --> percent of comparisons under seed variance alone (measured, section 8), so its p
 values sitting in a shared denominator destroy the false discovery control of
 every seed replicated result beside them. Two different claims about the world
 are two families. Separately, a comparison whose smallest attainable p value

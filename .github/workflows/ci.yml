@@ -53,6 +53,9 @@ jobs:
       - name: Dash guard over sources and committed PDFs
         run: python scripts/check_no_dashes.py .
 
+      - name: The Markdown documents match the measured calibration
+        run: python scripts/render_calibration_docs.py --check
+
       - name: Unit tests
         run: python -m pytest tests/unit -q
 

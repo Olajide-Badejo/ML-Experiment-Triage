@@ -40,7 +40,7 @@ and refusing to answer sends people back to eyeballing curves, which is worse
 than a labelled weak answer.
 
 **Rejected:** offering both without distinguishing them, which would be the worst
-of all: the weak mode fires on 53 to 87 percent of null comparisons when seed
+of all: the weak mode fires on <!-- calibration:weakrange -->54 to 88<!-- /calibration:weakrange --> percent of null comparisons when seed
 variance is present, so an unlabelled weak result is close to a random number
 generator with a p value attached.
 

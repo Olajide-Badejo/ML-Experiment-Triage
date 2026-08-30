@@ -260,8 +260,10 @@ def classify(
 
     **One family per comparison mode, and the inadmissible held out.** A single
     pooled family was wrong twice over. The single run window block mode fires on
-    53 to 87 percent of comparisons under seed variance alone, measured, so its p
-    values in a shared denominator destroy the false discovery control of every
+    most comparisons under seed variance alone, measured, with the rate published
+    in `triage.calibration.WEAK_MODE_COST` rather than restated here where it
+    would go stale; its p values in a shared denominator destroy the false
+    discovery control of every
     seed replicated result beside them: two different claims about the world do
     not belong to one family. And a comparison whose smallest attainable p value
     already exceeds alpha can never be a discovery, so counting it in the

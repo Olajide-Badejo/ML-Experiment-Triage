@@ -29,6 +29,7 @@ help:
 	@echo "  test            full suite including calibration (slowest step)"
 	@echo "  demo            regenerate the synthetic sweep, database and HTML report"
 	@echo "  assets          regenerate report figures and tables from the database"
+	@echo "  calibration-docs render the measured calibration numbers into the Markdown"
 	@echo "  pdfs            compile the main and debug reports"
 	@echo "  images          regenerate the landing page charts (needs kaleido)"
 	@echo "  all             everything above, in order"
@@ -42,6 +43,7 @@ all:
 	$(MAKE) demo
 	$(MAKE) verify-demo
 	$(MAKE) assets
+	$(MAKE) check-calibration-docs
 	$(MAKE) pdfs
 	$(MAKE) check-style
 	@echo ""
@@ -85,6 +87,14 @@ verify-demo:
 
 assets:
 	$(PY) scripts/gen_report_assets.py --database $(DEMO_DB)
+
+# The Markdown documents quote the same measured numbers as the report tables.
+# Both sides render from triage/calibration.py, so neither can be edited alone.
+calibration-docs:
+	$(PY) scripts/render_calibration_docs.py
+
+check-calibration-docs:
+	$(PY) scripts/render_calibration_docs.py --check
 
 html:
 	$(PY) -m triage.cli report --database $(DEMO_DB) --baseline $(BASELINE) \

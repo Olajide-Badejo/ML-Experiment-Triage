@@ -22,7 +22,11 @@ under the stronger assumption: measured at a nominal 5 percent, seven runs
 against three with a fivefold spread ratio rejected 17.9 percent of true nulls.
 Studentizing the permuted statistic restores the guarantee asymptotically
 (Janssen, *Statistics and Probability Letters* 36(1), 1997) and changes nothing
-at all when the two conditions hold the same number of runs. The effect and the
+at all when the two conditions hold the same number of runs. Asymptotically is
+the operative word: on that same design the studentized statistic measures 12.9
+percent, because the variance that studentizes it is itself estimated from three
+numbers, and that measurement is published beside the others rather than rounded
+towards the number one would prefer. The effect and the
 interval reported beside the p value are still on the mean difference, which is
 the quantity a reader can act on.
 
@@ -843,8 +847,10 @@ def compare_window_block(
     significant may be explained entirely by a different seed. The calibration
     suite measures that failure directly: against synthetic runs with realistic
     seed variance and a true effect of exactly zero, this mode reports a false
-    positive rate above 70 percent. Every output carries the caveat, and the
-    measured number is published rather than buried.
+    positive rate of more than half, rising with the seed variance it cannot see.
+    Every output carries the caveat, and the measured rates are published in
+    `triage.calibration.WEAK_MODE_COST` rather than buried, or restated here
+    where they would go stale.
     """
     config = config or ComparisonConfig()
     if higher_is_better is None:

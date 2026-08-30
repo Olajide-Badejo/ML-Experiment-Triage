@@ -11,7 +11,9 @@
     <img alt="CI" src="https://github.com/Olajide-Badejo/ML-Experiment-Triage/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.13" src="https://img.shields.io/badge/python-3.13-2a78d6">
   <img alt="Tests 122" src="https://img.shields.io/badge/tests-122%20passing-1baf7a">
+<!-- calibration:badge -->
   <img alt="Type I error 4.53 percent" src="https://img.shields.io/badge/measured%20type%20I-4.53%25%20vs%205%25%20nominal-1baf7a">
+<!-- /calibration:badge -->
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-52514e"></a>
 </p>
 
@@ -40,7 +42,9 @@ The only difference between the two is whether the comparison had seed replicate
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/images/weak-mode-cost-dark.png">
-  <img alt="False positive rate against seed variance. Comparing single runs fires on 53 to 87 percent of comparisons where the true effect is zero, while the seed replicated comparison stays at 4.4 to 5.0 percent, on the nominal 5 percent line." src="assets/images/weak-mode-cost-light.png">
+<!-- calibration:weakmodefigure -->
+  <img alt="False positive rate against seed variance. Comparing single runs fires on 54 to 88 percent of comparisons where the true effect is zero, while the seed replicated comparison stays at 3.8 to 4.1 percent, on the nominal 5 percent line." src="assets/images/weak-mode-cost-light.png">
+<!-- /calibration:weakmodefigure -->
 </picture>
 
 **Comparing one run against one run, on data where nothing is different, calls it a significant
@@ -56,19 +60,48 @@ result from it as a weaker claim, in the terminal, in the HTML report and in the
 ## Calibration
 
 A tool that produces p values is worth nothing unless its p values mean what they say. The
-calibration suite generates about 13,000 synthetic comparisons whose true effect is set in
+calibration suite generates about <!-- calibration:comparisons -->23,900<!-- /calibration:comparisons --> synthetic comparisons whose true effect is set in
 advance, runs the real comparison over them, and counts how often it is wrong.
 
+<!-- calibration:headline -->
 | Measurement | Result | Gate |
 |---|---|---|
-| Type I error, seed replicated mode | **4.53%** (+/- 0.74), 3000 null cases | inside [2, 8] at a nominal 5 |
-| Type I error, across seed variance 0.005 to 0.05 | 4.40%, 4.70%, 5.00% | inside [2, 8] |
-| Power, seed replicated mode, large effect | **96.25%**, 800 cases | above 90% |
-| Type I error, single run window block mode | **5.81%** (+/- 1.04), 1928 cases | inside [2, 8] |
-| Power, single run mode, large effect | 100%, 291 cases | above 90% |
-| Null p values uniform at 0.05 / 0.10 / 0.25 / 0.50 | 0.058 / 0.099 / 0.241 / 0.485 | within 3 standard errors |
+| Type I error, seed replicated | 4.53 percent (+/- 0.74), 3000 null cases | [2, 8] percent |
+| Type I error across seed variance | 4.40, 4.70, 5.00 percent, sigma 0.005 to 0.05 | [2, 8] percent |
+| Power, seed replicated | 96.25 percent, 800 cases | above 90 percent |
+| Type I error, window block | 6.28 percent (+/- 1.07), 1989 cases, 11 refused | [2, 8] percent |
+| Power, window block | 100 percent, 300 cases | above 90 percent |
+| Type I error, paired clustered | 4.90 percent (+/- 1.34), 1000 cases, 10 clusters of 4 pairs | [2, 8] percent |
+| Null p value uniformity | 0.0580, 0.0993, 0.2407, 0.4847, 1500 cases | within 3 standard errors |
+<!-- /calibration:headline -->
 
-Reproduce all of it with `make test-stats`, in about a minute. It is deterministic.
+Reproduce all of it with `make test-stats`, in <!-- calibration:statsclock -->110 s<!-- /calibration:statsclock --> on the machine
+below. It is deterministic.
+
+### The designs the test is not exact in
+
+Those gates measure the design a permutation test is exact in: the same number of runs on both
+sides, drawn with the same spread. Real sweeps are neither. The setting that was already trusted
+has usually been run the most times and moves the least, and comparing seven of it against three
+of something noisier is where a permutation test built on a raw mean difference quietly falls
+apart. Every cell below has a true effect of exactly zero, so every rejection is a false positive.
+
+<!-- calibration:designs -->
+| Design | Type I error at a nominal 5 | Gate |
+|---|---|---|
+| Unequal spread, 5 narrow against 5 wide | 7.83 percent (+/- 1.52), 1200 null cases, sigma 0.01 against 0.05 | [2, 10] percent |
+| Unequal spread, 3 narrow against 7 wide | 2.08 percent (+/- 0.81), 1200 null cases, sigma 0.01 against 0.05 | [1, 15] percent |
+| Unequal spread, 7 narrow against 3 wide | 12.92 percent (+/- 1.90), 1200 null cases, sigma 0.01 against 0.05 | [1, 15] percent |
+| Unequal counts only, 7 against 3 | 4.25 percent (+/- 1.14), 1200 null cases, one spread | [2, 8] percent |
+| Heavy tailed noise, Student t at 3 df | 5.00 percent (+/- 1.23), 1200 null cases, 5 runs a side | [2, 8] percent |
+| Paired clustered, macro F1 | 2.00 percent (+/- 1.23), 500 null cases, a discrete statistic | at most 8 percent |
+| Paired, clustering ignored | 12.10 percent, 1000 null cases, the same clustered data | measured, not gated |
+<!-- /calibration:designs -->
+
+The statistic permuted is the Welch t rather than the difference of means, which is what keeps
+those cells near nominal (Janssen 1997). It is not magic: with three runs on the wider side the
+variance that studentizes the statistic is itself estimated from three numbers, and the measured
+12.92 percent is published rather than smoothed over. The tool warns on exactly that design.
 
 That last row matters more than it looks. Checking only that the error rate is right at 0.05 can
 be passed by a test that is wrong in two compensating directions, so the suite checks the shape
@@ -198,7 +231,7 @@ flowchart LR
         PDF[LaTeX PDFs]
     end
 
-    CAL[Calibration suite<br/>13,000 synthetic comparisons] -.certifies.-> CMP
+    CAL[Calibration suite<br/>23,900 synthetic comparisons] -.certifies.-> CMP
 ```
 
 **Ingest is the only stage that touches log files.** Everything after it reads SQLite, so a
@@ -337,7 +370,7 @@ not used at any point.
 
 | Step | Time |
 |---|---|
-| `make test-stats`, the calibration suite, about 13,000 synthetic comparisons | 60 s |
+| `make test-stats`, the calibration suite, about <!-- calibration:comparisons -->23,900<!-- /calibration:comparisons --> synthetic comparisons | 60 s |
 | `make test`, the full suite, 122 tests | 77 s |
 | `make demo`, synthesise 31 runs, ingest, compare, report | 17 s |
 | `make all` from a clean tree | 137 s |

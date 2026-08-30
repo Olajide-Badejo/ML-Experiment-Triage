@@ -25,7 +25,13 @@ from triage.analysis.comparison import ComparisonConfig, ComparisonRefusal, comp
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.core.experiment import Experiment, MetricSeries
-from triage.report.html_report import RAGGED_NOTE, _variant_curve, build_context, render
+from triage.report.html_report import (
+    MAX_PLOTTED_CONDITIONS,
+    RAGGED_NOTE,
+    _variant_curve,
+    build_context,
+    render,
+)
 
 #: The proof of concept payload from the specification. It closes the `id`
 #: attribute the tag was interpolated into and opens an image element whose
@@ -375,3 +381,35 @@ def test_condition_nine_is_not_pixel_identical_to_condition_one(tmp_path: Path) 
     styles = LINE_STYLE.findall(html)
     assert len(styles) == 12, "one line per condition, baseline included"
     assert len(set(styles)) == 12, "no two conditions may share a colour and a dash"
+
+
+def test_only_the_most_severe_conditions_are_drawn_individually(tmp_path: Path) -> None:
+    """D25: at 500 runs the page was 14.5 MB of curves nobody can read.
+
+    A chart with fifty overlaid lines is not a chart. The conditions that carry
+    the findings are drawn, the rest are folded into one envelope that still
+    shows where they went, and the count of what was folded is on the legend so
+    the reader knows the chart is not the whole sweep.
+    """
+    total = MAX_PLOTTED_CONDITIONS + 4  # baseline plus three more than fit
+    html = render_html(tmp_path, many_conditions(total, seeds=5), "base")
+
+    styles = LINE_STYLE.findall(html)
+    assert len(styles) == MAX_PLOTTED_CONDITIONS + 1, "the cap, plus the baseline"
+    assert len(set(styles)) == len(styles)
+
+    folded = total - 1 - MAX_PLOTTED_CONDITIONS
+    assert f"{folded} further conditions" in html
+
+    worst = f"c{total - 1:02d}"
+    mildest = "c01"
+    assert f'"name":"{worst},' in html, "the largest effect must be one of the drawn lines"
+    assert f'"name":"{mildest},' not in html, "the mildest condition is the one folded away"
+
+
+def test_the_baseline_is_always_drawn_however_many_conditions_there_are(
+    tmp_path: Path,
+) -> None:
+    """The baseline is the reference every other line is read against."""
+    html = render_html(tmp_path, many_conditions(MAX_PLOTTED_CONDITIONS + 6, seeds=3), "base")
+    assert '"name":"base (baseline),' in html

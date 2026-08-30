@@ -67,6 +67,15 @@ AXIS = "#c3c2b7"
 
 MAX_PLOT_POINTS = 1200
 
+#: How many candidate conditions are drawn as their own line, over and above the
+#: baseline. A 500 run sweep produced a 14.5 MB page carrying fifty overlaid
+#: curves, which is not a chart and is not readable however the colours are
+#: chosen. Twelve is two full turns of the eight slot palette minus a little
+#: headroom, and it is the point past which a legend stops fitting on one line.
+#: The conditions that do not fit are not dropped: they are drawn as one
+#: envelope, and the legend says how many went into it.
+MAX_PLOTTED_CONDITIONS = 12
+
 #: How far seed lengths inside one condition may differ before the figure says
 #: so. Runs never stop on exactly the same step, so a tolerance of nothing would
 #: print the caveat on every honest sweep and teach the reader to ignore it.
@@ -187,12 +196,76 @@ def _is_ragged(runs: list[Experiment], tag: str) -> bool:
     return min(lengths) < (1.0 - RAGGED_TOLERANCE) * max(lengths)
 
 
+def _prominence(triage: TriageReport | None, tag: str) -> dict[str, tuple[float, float]]:
+    """How loudly each condition speaks on this metric, for choosing what to draw.
+
+    Severity first, because it is the ranking the verdict table already uses and
+    the thing a reader came for. Size of the effect second, because severity is
+    defined as zero for everything that is not a regression, and a page that
+    drew twelve arbitrary conditions out of fifty whenever the sweep contained
+    no regression would be choosing by accident.
+    """
+    if triage is None:
+        return {}
+    scores: dict[str, tuple[float, float]] = {}
+    for finding in triage.findings:
+        if finding.result.tag != tag:
+            continue
+        candidate = finding.result.candidate
+        score = (finding.severity, abs(finding.result.relative_effect_pct))
+        scores[candidate] = max(scores.get(candidate, (0.0, 0.0)), score)
+    return scores
+
+
+def _plotted_conditions(
+    variants: dict[str, list[Experiment]],
+    tag: str,
+    baseline_key: str,
+    triage: TriageReport | None,
+) -> tuple[list[str], list[str]]:
+    """Split the conditions into the ones drawn as lines and the ones folded in.
+
+    The baseline is never folded: it is the reference every other line is read
+    against. Ties break on the condition name so that two runs over one database
+    choose the same twelve.
+    """
+    present = [key for key, runs in variants.items() if any(run.has(tag) for run in runs)]
+    candidates = [key for key in present if key != baseline_key]
+    scores = _prominence(triage, tag)
+    ranked = sorted(
+        candidates, key=lambda key: (*(-value for value in scores.get(key, (0.0, 0.0))), key)
+    )
+    drawn = ranked[:MAX_PLOTTED_CONDITIONS]
+    folded = ranked[MAX_PLOTTED_CONDITIONS:]
+    ordered = ([baseline_key] if baseline_key in present else []) + [
+        key for key in present if key != baseline_key and key in set(drawn)
+    ]
+    return ordered, sorted(folded)
+
+
+def _folded_envelope(
+    variants: dict[str, list[Experiment]],
+    folded: list[str],
+    tag: str,
+    config: ComparisonConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The min and max across every condition that is not drawn individually."""
+    curves = [_variant_curve(variants[key], tag, config) for key in folded]
+    grid = max((curve[0] for curve in curves), key=len)
+    lows, highs = [], []
+    for own_grid, _mean, low, high in curves:
+        lows.append(np.interp(grid, own_grid, low, left=np.nan, right=np.nan))
+        highs.append(np.interp(grid, own_grid, high, left=np.nan, right=np.nan))
+    return grid, np.nanmin(np.vstack(lows), axis=0), np.nanmax(np.vstack(highs), axis=0)
+
+
 def build_metric_figure(
     experiments: list[Experiment],
     tag: str,
     baseline_key: str,
     config: ComparisonConfig,
     index: int = 0,
+    triage: TriageReport | None = None,
 ) -> str:
     """Overlaid smoothed curves per condition, with the seed spread as a band.
 
@@ -200,12 +273,17 @@ def build_metric_figure(
     so that two tags whose slugs collide, `val/loss` and `val loss` for
     instance, still get distinct ids without the id having to carry any
     character from the tag that an HTML attribute cannot hold.
+
+    `triage` supplies the severity ranking that decides which conditions are
+    drawn as their own line when a sweep carries more of them than a chart can
+    hold. Without it the choice falls back to the size of the effect, and with
+    no findings at all to the condition name.
     """
     variants = group_by_variant(experiments)
     figure = go.Figure()
     safe_tag = _plotly_text(tag)
 
-    ordered = [baseline_key] + [key for key in variants if key != baseline_key]
+    ordered, folded = _plotted_conditions(variants, tag, baseline_key, triage)
     colour_index = 0
     ragged = False
     for variant_key in ordered:
@@ -252,6 +330,27 @@ def build_metric_figure(
                 hovertemplate=(
                     f"<b>{label}</b><br>step %{{x:,.0f}}<br>{safe_tag} %{{y:.4f}}<extra></extra>"
                 ),
+            )
+        )
+
+    # Everything that did not fit, as one envelope. Dropping these conditions
+    # would make the chart disagree with the table below it about how many
+    # conditions the sweep has, so they are shown, in ink that does not compete
+    # with the lines, with their count on the legend.
+    if folded:
+        grid, low, high = _folded_envelope(variants, folded, tag, config)
+        band_x, band_low = _downsample(grid, low)
+        _, band_high = _downsample(grid, high)
+        figure.add_trace(
+            go.Scatter(
+                x=np.concatenate([band_x, band_x[::-1]]),
+                y=np.concatenate([band_high, band_low[::-1]]),
+                fill="toself",
+                fillcolor=_rgba(MUTED_INK, 0.10),
+                line={"width": 0},
+                hoverinfo="skip",
+                showlegend=True,
+                name=f"{len(folded)} further conditions, range",
             )
         )
 
@@ -388,7 +487,12 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
     compared = {finding.result.tag for finding in context.triage.findings}
     figures = {
         tag: build_metric_figure(
-            context.experiments, tag, context.baseline, context.comparison_config, index
+            context.experiments,
+            tag,
+            context.baseline,
+            context.comparison_config,
+            index,
+            context.triage,
         )
         for index, tag in enumerate(tags)
     }

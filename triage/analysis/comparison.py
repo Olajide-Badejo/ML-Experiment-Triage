@@ -1001,6 +1001,21 @@ def paired_permutation(
     written as an average of per item numbers, and a test that assumed it could
     would be answering a different question.
 
+    **`statistic` must be a pure function of the vector it is handed**, and this
+    is the one precondition here that fails quietly rather than loudly. Two
+    different kinds of vector reach it. The permutation loop passes label
+    swapped vectors, which keep every row in its place, so the length and the
+    order are the caller's; the interval below is a CLUSTER BOOTSTRAP, which
+    draws whole clusters with replacement and therefore passes a vector of a
+    different length in a different order. A closure holding a fixed truth array
+    beside the predictions and indexing it positionally satisfies the first and
+    breaks on the second: with an error if the lengths differ, and with a
+    silently wrong interval if they happen to match. Anything the statistic
+    needs has to travel inside the row. `triage.autofill.evaluate.encode_outcome`
+    is the pattern: it packs the truth into the row as
+    `truth * n_classes + prediction` and `macro_f1_statistic` unpacks it, so the
+    same callable is correct under both.
+
     `clusters` is not optional detail. Fields on one form template share their
     markup, their locale and their author, so treating them as independent units
     counts evidence that is not there. When they are clustered, whole clusters

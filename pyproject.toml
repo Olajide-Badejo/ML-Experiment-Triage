@@ -58,6 +58,19 @@ include = ["triage*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# `ruff format` reformats Python code blocks inside Markdown as well as Python
+# files. That is wanted for the documents this project writes and wrong for the
+# ones it is written FROM: reformatting a specification to this project's line
+# length changes the document the work is being checked against. `private/` is
+# already covered by .gitignore, which ruff respects; these are named because
+# they sit in the checkout unignored.
+extend-exclude = [
+    "ML_Experiment_Triage_V2.md",
+    "*_Alignment.md",
+    "CLAUDE*.md",
+    "BOARD.md",
+    "tasks/",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]

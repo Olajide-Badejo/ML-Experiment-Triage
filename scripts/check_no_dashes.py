@@ -56,10 +56,15 @@ EXCLUDED_DIRS = {
     ".venv",
     ".ruff_cache",
     ".pytest_cache",
+    ".mypy_cache",
     "__pycache__",
     "node_modules",
     "build",
+    "dist",
     "_minted",
+    # Local working material. git already hides it, so this only matters on the
+    # fallback walk used when the guard is run outside a checkout.
+    "private",
 }
 
 # Prose and the source that carries prose: docstrings, comments, templates,

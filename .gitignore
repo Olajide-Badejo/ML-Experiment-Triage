@@ -5,6 +5,24 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+
+# Build and packaging output. `python -m build` writes both, and a wheel left
+# in the tree is the kind of thing that gets committed once and then installed
+# by somebody a year later.
+build/
+dist/
+*.whl
+
+# Coverage output.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Per machine tool settings, which are a local preference rather than a project
+# decision and differ between contributors.
+.claude/settings.local.json
 
 # Generated demo run directories and any ad hoc database.
 # The demo sweep is deterministic, so the raw logs are rebuilt rather than stored.
@@ -34,9 +52,7 @@ report_debug/build/
 *.fdb_latexmk
 *.synctex.gz
 
-# Personal working material, kept locally and deliberately not published.
-# The build specification this repository was written from is an input to the
-# work rather than part of the shipped project, and report_for_me is a private
-# archival document.
-05_ML_Experiment_Triage_README.md
-report_for_me/
+# Local working material. One pattern rather than a list of file names: an
+# ignore rule is published with the repository, so naming the private files
+# tells every reader what they are called and that they exist.
+/private/

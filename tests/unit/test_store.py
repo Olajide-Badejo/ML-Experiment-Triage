@@ -509,3 +509,92 @@ def test_an_interrupted_ingest_resumes_where_it_stopped(
         second = ingest(root, store, show_progress=False)
     assert second.skipped == ["run_a"]
     assert sorted(second.added) == ["run_b", "run_c"]
+
+
+# --------------------------------------------------------- local model caches
+#
+# The embedding and response caches are two ordinary tables in the same
+# database, added without a schema version bump because they are additive. What
+# has to be true of them is what has to be true of the series blobs: a vector
+# comes back exactly as it went in, and a key that includes the model DIGEST
+# keeps two builds of one model tag from serving each other's vectors.
+
+
+def test_an_embedding_round_trips_bit_for_bit(temp_database: Path) -> None:
+    vector = np.linspace(-1.0, 1.0, 768, dtype=np.float32)
+    with Store(temp_database) as store:
+        store.put_embeddings("embeddinggemma:300m", "d" * 64, {"abc": vector})
+        back = store.get_embeddings("embeddinggemma:300m", "d" * 64, ["abc"])
+
+    assert np.array_equal(back["abc"], vector)
+    assert back["abc"].dtype == np.float32
+
+
+def test_the_cache_key_includes_the_model_digest(temp_database: Path) -> None:
+    """The same tag, repulled, is a different model and must miss the cache."""
+    vector = np.ones(4, dtype=np.float32)
+    with Store(temp_database) as store:
+        store.put_embeddings("embeddinggemma:300m", "old-digest", {"abc": vector})
+
+        assert store.get_embeddings("embeddinggemma:300m", "new-digest", ["abc"]) == {}
+        assert store.get_embeddings("other-model", "old-digest", ["abc"]) == {}
+        assert "abc" in store.get_embeddings("embeddinggemma:300m", "old-digest", ["abc"])
+
+
+def test_a_cache_read_returns_only_the_hits(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.put_embeddings("m", "d", {"one": np.ones(3, dtype=np.float32)})
+        found = store.get_embeddings("m", "d", ["one", "two", "three"])
+
+    assert sorted(found) == ["one"]
+
+
+def test_more_hashes_than_sqlite_takes_as_parameters_are_read_in_chunks(
+    temp_database: Path,
+) -> None:
+    hashes = [f"{index:064x}" for index in range(ID_CHUNK * 2 + 5)]
+    vectors = {digest: np.full(2, index, dtype=np.float32) for index, digest in enumerate(hashes)}
+    with Store(temp_database) as store:
+        store.put_embeddings("m", "d", vectors)
+        found = store.get_embeddings("m", "d", hashes)
+
+    assert len(found) == len(hashes)
+    assert np.array_equal(found[hashes[-1]], np.full(2, len(hashes) - 1, dtype=np.float32))
+
+
+def test_a_damaged_embedding_row_is_refused_rather_than_returned(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.put_embeddings("m", "d", {"abc": np.ones(8, dtype=np.float32)})
+        store.connection.execute("UPDATE embeddings SET dimensions = 99")
+        store.connection.commit()
+        with pytest.raises(StoreError, match="damaged"):
+            store.get_embeddings("m", "d", ["abc"])
+
+
+def test_a_response_round_trips_and_a_miss_is_none(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        assert store.get_response("nothing here") is None
+        store.put_response("key", "model", "digest", '{"field_type": "email"}')
+        assert store.get_response("key") == '{"field_type": "email"}'
+
+
+def test_the_caches_refuse_a_read_only_connection(temp_database: Path) -> None:
+    with Store(temp_database) as store:
+        store.upsert(make_experiment(), source_hash="h")
+
+    with Store.open_read_only(temp_database) as store:
+        with pytest.raises(StoreError, match="read only"):
+            store.put_embeddings("m", "d", {"abc": np.ones(2, dtype=np.float32)})
+        with pytest.raises(StoreError, match="read only"):
+            store.put_response("key", "m", "d", "text")
+        # Reading through the same connection is fine, and is what a report does.
+        assert store.get_response("key") is None
+
+
+def test_the_cache_tables_do_not_move_the_schema_version(temp_database: Path) -> None:
+    """They are additive, so an older database opens and gains them in place."""
+    with Store(temp_database) as store:
+        store.put_embeddings("m", "d", {"abc": np.ones(2, dtype=np.float32)})
+        store.put_response("key", "m", "d", "text")
+        assert store.schema_version == SCHEMA_VERSION
+        assert store.cache_counts() == {"embeddings": 1, "responses": 1}

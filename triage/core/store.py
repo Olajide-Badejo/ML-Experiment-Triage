@@ -55,6 +55,14 @@ LOGGER = logging.getLogger("triage.store")
 #: the ingest root rather than its directory basename, so the ids in a version
 #: 1 database do not mean what the ids in a version 2 one mean, plus the two
 #: columns that record which of the two a row was written under.
+#:
+#: A NEW TABLE does not move this number, and the outcomes tables set that
+#: precedent before the two local model caches followed it. The version answers
+#: one question, "does a row in this database still mean what this build thinks
+#: it means", and a table an older build never reads cannot change the answer:
+#: `CREATE TABLE IF NOT EXISTS` adds it on the next write and an older build
+#: goes on ignoring it. Bumping for an additive table would make every older
+#: database unreadable to buy nothing.
 SCHEMA_VERSION = 2
 
 #: How long a writer waits for another writer's lock before giving up. Without
@@ -128,6 +136,23 @@ CREATE TABLE IF NOT EXISTS outcome_columns (
     values_blob BLOB NOT NULL,
     PRIMARY KEY (run_id, name),
     FOREIGN KEY (run_id) REFERENCES outcomes(run_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS embeddings (
+    model_name   TEXT NOT NULL,
+    model_digest TEXT NOT NULL,
+    text_sha256  TEXT NOT NULL,
+    dimensions   INTEGER NOT NULL,
+    vector_blob  BLOB NOT NULL,
+    PRIMARY KEY (model_name, model_digest, text_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS llm_responses (
+    cache_key    TEXT PRIMARY KEY,
+    model_name   TEXT NOT NULL,
+    model_digest TEXT NOT NULL,
+    response     TEXT NOT NULL,
+    created_at   TEXT NOT NULL
 );
 """
 
@@ -792,6 +817,131 @@ class Store:
             metrics=metrics,
             metadata=json.loads(row["metadata_json"]),
         )
+
+    # ---------------------------------------------------- local model caches
+
+    def put_embeddings(
+        self, model_name: str, model_digest: str, vectors: dict[str, np.ndarray]
+    ) -> None:
+        """Store vectors for one model build, keyed by the hash of their text.
+
+        The key is `(model_name, model_digest, text_sha256)` and all three parts
+        are load bearing. An embedding is deterministic for one model at one
+        quantisation, and is NOT deterministic across Ollama versions, driver
+        versions or a repull of the same tag, so a cache keyed on the name alone
+        would serve vectors from one model build to a query embedded by another,
+        and the only symptom would be retrieval quietly getting worse.
+
+        The blob is raw little endian float32 rather than a compressed buffer.
+        A normalised embedding is high entropy by construction: zlib on 768
+        float32s saves nothing measurable and costs a compress and a decompress
+        on a path whose entire reason to exist is being faster than the network.
+        """
+        self._refuse_a_write("put_embeddings")
+        if not vectors:
+            return
+        rows = [
+            (
+                model_name,
+                model_digest,
+                text_sha256,
+                int(vector.size),
+                np.ascontiguousarray(vector, dtype="<f4").tobytes(),
+            )
+            for text_sha256, vector in sorted(vectors.items())
+        ]
+        with (
+            self._wrapping(f"caching {len(rows)} embedding(s) for {model_name!r}"),
+            self.connection,
+        ):
+            self.connection.executemany(
+                """
+                INSERT OR REPLACE INTO embeddings
+                    (model_name, model_digest, text_sha256, dimensions, vector_blob)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def get_embeddings(
+        self, model_name: str, model_digest: str, hashes: Iterable[str]
+    ) -> dict[str, np.ndarray]:
+        """The cached vectors among `hashes`, by hash. A miss is simply absent.
+
+        Read in chunks of `ID_CHUNK` for the same reason `load_all` is: SQLite
+        caps host parameters, and a corpus of a few thousand fields is well past
+        a comfortable single `IN (...)`.
+        """
+        wanted = list(dict.fromkeys(hashes))
+        found: dict[str, np.ndarray] = {}
+        if not wanted:
+            return found
+        with self._wrapping(f"reading cached embeddings for {model_name!r}"):
+            for start in range(0, len(wanted), ID_CHUNK):
+                chunk = wanted[start : start + ID_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self.connection.execute(
+                    f"SELECT text_sha256, dimensions, vector_blob FROM embeddings "
+                    f"WHERE model_name = ? AND model_digest = ? "
+                    f"AND text_sha256 IN ({placeholders})",
+                    (model_name, model_digest, *chunk),
+                ).fetchall()
+                for row in rows:
+                    vector = np.frombuffer(row["vector_blob"], dtype="<f4")
+                    expected = int(row["dimensions"])
+                    if vector.size != expected:
+                        raise StoreError(
+                            f"cached embedding {str(row['text_sha256'])[:12]} for {model_name!r} "
+                            f"records {expected} dimension(s) and holds {vector.size}; the row "
+                            f"is damaged. Delete it and embed the corpus again"
+                        )
+                    found[str(row["text_sha256"])] = vector
+        return found
+
+    def put_response(
+        self, cache_key: str, model_name: str, model_digest: str, response: str
+    ) -> None:
+        """Record one generated response against the key that identifies it.
+
+        The key is computed by the caller, over the model, its digest and the
+        exact prompt, because only the caller knows what its prompt was. What
+        this guarantees is the half that belongs to a database: writing it is a
+        transaction, so an interrupted annotation loses the request in flight
+        and nothing else.
+        """
+        self._refuse_a_write("put_response")
+        with self._wrapping(f"caching a response for {model_name!r}"), self.connection:
+            self.connection.execute(
+                """
+                INSERT OR REPLACE INTO llm_responses
+                    (cache_key, model_name, model_digest, response, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    cache_key,
+                    model_name,
+                    model_digest,
+                    response,
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                ),
+            )
+
+    def get_response(self, cache_key: str) -> str | None:
+        """The recorded response for a key, or `None` when there is none."""
+        with self._wrapping("reading a cached response"):
+            row = self.connection.execute(
+                "SELECT response FROM llm_responses WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+        return None if row is None else str(row["response"])
+
+    def cache_counts(self) -> dict[str, int]:
+        """How many vectors and responses are cached, for a status line."""
+        with self._wrapping("counting the local model caches"):
+            embeddings = self.connection.execute("SELECT COUNT(*) AS n FROM embeddings").fetchone()
+            responses = self.connection.execute(
+                "SELECT COUNT(*) AS n FROM llm_responses"
+            ).fetchone()
+        return {"embeddings": int(embeddings["n"]), "responses": int(responses["n"])}
 
     # --------------------------------------------------------------- reporting
 

@@ -44,6 +44,11 @@ DECISIONS = ROOT / "docs" / "DESIGN_DECISIONS.md"
 
 BADGE_COLOUR = "1baf7a"
 
+#: PyPI serves the README from its own domain, with no repository underneath it,
+#: so a relative image source 404s for everybody arriving from `pip` (D29). The
+#: rest of the document uses this prefix and so does the figure written here.
+RAW_CONTENT = "https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/"
+
 
 def headline_type_one() -> str:
     """The number the badge and the abstract lead with, from the first gate."""
@@ -104,7 +109,7 @@ def weak_mode_figure() -> str:
         f'  <img alt="False positive rate against seed variance. Comparing single runs fires on '
         f"{weak_mode_range()} percent of comparisons where the true effect is zero, while the "
         f"seed replicated comparison stays at {strong_mode_range()} percent, on the nominal 5 "
-        f'percent line." src="assets/images/weak-mode-cost-light.png">'
+        f'percent line." src="{RAW_CONTENT}assets/images/weak-mode-cost-light.png">'
     )
 
 

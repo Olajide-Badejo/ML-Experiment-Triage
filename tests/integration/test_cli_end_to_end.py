@@ -20,7 +20,7 @@ import pytest
 
 from examples.make_synthetic_runs import BASELINE, CONDITIONS, KNOWN_BEST, generate
 from triage.analysis.comparison import MODE_SEED_REPLICATE, MODE_WINDOW_BLOCK, ComparisonConfig
-from triage.analysis.regression import RegressionConfig, TriageReport, classify
+from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.cli import main
 from triage.core.store import Store
@@ -51,7 +51,9 @@ def report(database: Path) -> TriageReport:
     from triage.analysis.comparison import compare_all
 
     results = compare_all(experiments, BASELINE, config=ComparisonConfig())
-    findings = classify(results, RegressionConfig())
+    # `classify` hands back findings in input order (E4a); severity order is what
+    # `rank` is for, and calling it here is exactly what the CLI does.
+    findings = rank(classify(results, RegressionConfig()))
     return TriageReport(findings=findings, config=RegressionConfig(), baseline=BASELINE)
 
 
@@ -162,6 +164,11 @@ def test_compare_prints_a_ranked_table(database: Path, capsys: pytest.CaptureFix
     assert WORST_CONDITION in printed
     assert "permutation seed" in printed
     assert "[weak]" in printed, "the weaker mode must be marked in the terminal output too"
+
+    # E4a moved severity order out of `classify` and into `rank`. The terminal
+    # table is the reader's first look, so it has to keep calling it.
+    rows = [line for line in printed.splitlines() if line.split()[1:2] and "val/" in line]
+    assert rows[0].startswith(WORST_CONDITION), "the worst condition must still lead the table"
 
 
 def _verdict_for(printed: str, candidate: str, tag: str) -> str:

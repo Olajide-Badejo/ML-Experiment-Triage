@@ -23,7 +23,7 @@ from pathlib import Path
 
 from examples.make_synthetic_runs import BASELINE, KNOWN_BEST, generate
 from triage.analysis.comparison import ComparisonConfig, compare_all
-from triage.analysis.regression import RegressionConfig, TriageReport, classify
+from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.cli import CALIBRATION_NOTE
 from triage.core.store import Store
@@ -70,7 +70,7 @@ def build(show_progress: bool = True) -> tuple[TriageReport, list, list, float]:
     comparison_config = ComparisonConfig()
     regression_config = RegressionConfig()
     results = compare_all(experiments, BASELINE, config=comparison_config)
-    findings = classify(results, regression_config)
+    findings = rank(classify(results, regression_config))
     report = TriageReport(findings=findings, config=regression_config, baseline=BASELINE)
     sensitivity = analyse(experiments, config=comparison_config)
     print(f"   {report.summary()}")

@@ -152,13 +152,21 @@ def severity_of(result: ComparisonResult, adjusted_p: float) -> float:
 def classify(
     results: list[ComparisonResult], config: RegressionConfig | None = None
 ) -> list[Finding]:
-    """Apply both gates with a false discovery correction, ranked by severity.
+    """Apply both gates with a false discovery correction, in input order.
 
     The correction is applied across the metrics compared against one baseline,
     which is the family a reader actually looks at together. Correcting across
     every comparison in a large sweep at once would be defensible too, and would
     be far more conservative; the family chosen here is stated in the reports so
     nobody has to infer it.
+
+    Findings come back **in the order the results went in**, one per result, so
+    that `zip(results, classify(results))` is a valid join. This function used to
+    end `return rank(findings)`, which reordered the list against its own input:
+    since `Finding.tag` is not unique once one metric is compared across several
+    conditions, a caller rejoining findings to results was left with object
+    identity as its only key. Severity order is what `rank` is for, and the CLI
+    and the report both call it.
     """
     config = config or RegressionConfig()
     if not results:
@@ -198,11 +206,16 @@ def classify(
             )
         )
 
-    return rank(findings)
+    return findings
 
 
 def rank(findings: list[Finding]) -> list[Finding]:
-    """Regressions first by severity, then improvements by size, then the rest."""
+    """Regressions first by severity, then improvements by size, then the rest.
+
+    Public and stable: this is the ordering every output of this tool presents,
+    and a caller that wants it asks for it here rather than getting it as a side
+    effect of `classify`.
+    """
 
     def key(finding: Finding) -> tuple[int, float, float, str, str]:
         if finding.is_regression:

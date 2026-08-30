@@ -25,6 +25,7 @@ from triage.analysis.regression import (
     TriageReport,
     benjamini_hochberg,
     classify,
+    rank,
 )
 
 
@@ -212,7 +213,26 @@ def test_the_explanation_names_both_gates() -> None:
 # -------------------------------------------------------------- the ranking
 
 
-def test_regressions_lead_then_improvements_then_the_rest() -> None:
+def test_classify_returns_findings_in_input_order() -> None:
+    """E4a: the join a caller makes is positional, so the order has to be theirs.
+
+    `classify` used to end `return rank(findings)`, which silently reordered the
+    list against the results that went in. `Finding.tag` is not unique once one
+    metric is compared across several conditions, so a consumer rejoining
+    findings to results had no key left but `id(finding.result)`. Input order
+    plus `ComparisonResult.key` retires that workaround.
+    """
+    results = [
+        result(candidate="quiet", tag="a", p_value=0.8, relative_pct=+0.1),
+        result(candidate="worse", tag="b", p_value=0.001, relative_pct=+20.0),
+        result(candidate="better", tag="c", p_value=0.001, relative_pct=-15.0),
+    ]
+    findings = classify(results, RegressionConfig())
+    assert [finding.candidate for finding in findings] == ["quiet", "worse", "better"]
+    assert [finding.result for finding in findings] == results
+
+
+def test_rank_is_how_a_caller_asks_for_severity_order() -> None:
     findings = classify(
         [
             result(candidate="quiet", p_value=0.8, relative_pct=+0.1),
@@ -221,29 +241,47 @@ def test_regressions_lead_then_improvements_then_the_rest() -> None:
         ],
         RegressionConfig(),
     )
+    assert [finding.candidate for finding in rank(findings)] == ["worse", "better", "quiet"]
+
+
+def test_regressions_lead_then_improvements_then_the_rest() -> None:
+    findings = rank(
+        classify(
+            [
+                result(candidate="quiet", p_value=0.8, relative_pct=+0.1),
+                result(candidate="better", p_value=0.001, relative_pct=-15.0),
+                result(candidate="worse", p_value=0.001, relative_pct=+20.0),
+            ],
+            RegressionConfig(),
+        )
+    )
     assert [finding.candidate for finding in findings] == ["worse", "better", "quiet"]
 
 
 def test_bigger_regressions_outrank_smaller_ones() -> None:
-    findings = classify(
-        [
-            result(candidate="small", tag="a", p_value=0.001, relative_pct=+5.0),
-            result(candidate="large", tag="b", p_value=0.001, relative_pct=+40.0),
-        ],
-        RegressionConfig(),
+    findings = rank(
+        classify(
+            [
+                result(candidate="small", tag="a", p_value=0.001, relative_pct=+5.0),
+                result(candidate="large", tag="b", p_value=0.001, relative_pct=+40.0),
+            ],
+            RegressionConfig(),
+        )
     )
     assert [finding.candidate for finding in findings] == ["large", "small"]
 
 
 def test_a_weak_mode_finding_does_not_outrank_an_equal_strong_one() -> None:
     """A weaker claim about the world should not lead the table over a stronger one."""
-    findings = classify(
-        [
-            result(candidate="single_run", tag="a", p_value=0.001, relative_pct=+20.0,
-                   mode=MODE_WINDOW_BLOCK),
-            result(candidate="replicated", tag="b", p_value=0.001, relative_pct=+20.0),
-        ],
-        RegressionConfig(),
+    findings = rank(
+        classify(
+            [
+                result(candidate="single_run", tag="a", p_value=0.001, relative_pct=+20.0,
+                       mode=MODE_WINDOW_BLOCK),
+                result(candidate="replicated", tag="b", p_value=0.001, relative_pct=+20.0),
+            ],
+            RegressionConfig(),
+        )
     )  # fmt: skip
     assert [finding.candidate for finding in findings] == ["replicated", "single_run"]
 

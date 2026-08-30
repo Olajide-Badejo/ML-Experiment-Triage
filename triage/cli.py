@@ -22,7 +22,7 @@ from triage.analysis.comparison import (
     ComparisonRefusal,
     compare_all,
 )
-from triage.analysis.regression import RegressionConfig, TriageReport, classify
+from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.calibration import SUMMARY
 from triage.core.store import Store
@@ -272,7 +272,10 @@ def analyse_database(
         raise ComparisonError(f"{args.database} holds no runs; run `triage ingest` first")
 
     results = compare_all(experiments, args.baseline, args.tags, comparison_config)
-    findings = classify(results, regression_config)
+    # `classify` judges in input order so a caller can join its own results to
+    # the findings positionally; severity order, which is what a reader wants
+    # to see first, is asked for here.
+    findings = rank(classify(results, regression_config))
     sensitivity = analyse(experiments, args.tags, comparison_config)
     report = TriageReport(findings=findings, config=regression_config, baseline=args.baseline)
     return report, sensitivity, experiments, results.refusals

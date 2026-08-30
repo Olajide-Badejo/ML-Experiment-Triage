@@ -24,7 +24,7 @@ from triage.analysis.comparison import (
     group_by_variant,
     window_statistic,
 )
-from triage.analysis.regression import RegressionConfig, TriageReport, classify
+from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.calibration import GATES, UNIFORMITY, WEAK_MODE_COST
 from triage.core.store import Store
@@ -300,7 +300,7 @@ def main() -> int:
 
     results = compare_all(experiments, args.baseline, config=comparison_config)
     report = TriageReport(
-        findings=classify(results, regression_config),
+        findings=rank(classify(results, regression_config)),
         config=regression_config,
         baseline=args.baseline,
     )

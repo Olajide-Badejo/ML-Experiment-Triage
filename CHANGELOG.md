@@ -24,6 +24,15 @@ Changelog; versions follow semantic versioning.
   and `describe()` both now say what it does.
 * `benjamini_hochberg`'s inert `false_discovery_rate` argument defaults to 0.05
   to match. It never changed the returned adjusted values and still does not.
+* **`classify()` now returns findings in input order, not severity order.**
+  *Addressed to consumers rejoining findings to results:* one `Finding` comes
+  back per `ComparisonResult`, positionally, so `zip(results, classify(results))`
+  is a valid join and the `id(finding.result)` workaround can be retired.
+  `ComparisonResult.key` (`"variant|tag"`, set by `compare_all`) is the other
+  half of that: `Finding.tag` was never unique once a metric was compared across
+  several conditions. Callers wanting the old order call the already public
+  `rank(findings)`, which is what `triage compare` and the HTML report now do,
+  so no output of this tool changed.
 
 ## [1.0.0] 2026-08-05
 

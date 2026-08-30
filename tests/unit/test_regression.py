@@ -27,6 +27,7 @@ from triage.analysis.regression import (
     benjamini_hochberg,
     classify,
     rank,
+    severity_of,
 )
 
 
@@ -359,6 +360,36 @@ def test_a_weak_mode_finding_does_not_outrank_an_equal_strong_one() -> None:
     assert [finding.candidate for finding in findings] == ["replicated", "single_run"]
 
 
+def test_a_big_regression_at_a_modest_p_outranks_a_tiny_certain_one() -> None:
+    """D19: the "tie breaker" was not a tie breaker, it was the ranking.
+
+    The confidence factor spanned 1 to 13, so it could overwhelm the harm term it
+    was meant to order within. Measured before the cap: a 3 percent regression at
+    p = 1e-12 scored 39.00 against 23.98 for a 10 percent regression at p = 0.04,
+    which is the docstring's stated intent exactly inverted. Both here clear the
+    gate; the question is only which one a reader is pointed at first.
+    """
+    findings = rank(
+        classify(
+            [
+                result(candidate="ten_percent", tag="a", p_value=0.04, relative_pct=+10.0),
+                result(candidate="three_percent", tag="b", p_value=1e-12, relative_pct=+3.0),
+            ],
+            RegressionConfig(),
+        )
+    )
+    assert [finding.verdict for finding in findings] == [VERDICT_REGRESSION] * 2
+    assert [finding.candidate for finding in findings] == ["ten_percent", "three_percent"]
+
+
+def test_the_confidence_factor_never_doubles_the_harm() -> None:
+    """Certainty can break a tie between similar harms. It cannot outrank harm."""
+    harmful = result(relative_pct=+10.0)
+    assert severity_of(harmful, 1e-12) == pytest.approx(20.0)
+    assert severity_of(harmful, 0.001) == pytest.approx(20.0)
+    assert severity_of(harmful, 0.5) < 20.0
+
+
 # ----------------------------------------------------------------- the report
 
 
@@ -376,6 +407,41 @@ def test_the_report_summarises_and_names_the_best_candidate() -> None:
     assert len(report.regressions) == 1
     assert len(report.improvements) == 2
     assert "1 regressions, 2 improvements" in report.summary()
+
+
+def test_the_best_candidate_prefers_a_seed_replicated_improvement() -> None:
+    """D19: `best_candidate` could crown a claim the tool labels as weaker.
+
+    A single run improvement is not comparable to a seed replicated one of any
+    size, so the strong claims are considered first and the weaker ones only when
+    there are no strong ones to name.
+    """
+    findings = classify(
+        [
+            result(candidate="weak_big", tag="a", p_value=0.001, relative_pct=-30.0,
+                   mode=MODE_WINDOW_BLOCK),
+            result(candidate="strong_small", tag="b", p_value=0.001, relative_pct=-10.0),
+        ],
+        RegressionConfig(),
+    )  # fmt: skip
+    report = TriageReport(findings=findings, baseline="baseline")
+    assert report.best_candidate == "strong_small"
+    assert report.best_finding is not None
+    assert not report.best_finding.result.is_weak_mode
+
+
+def test_the_best_candidate_falls_back_to_the_weaker_mode_and_stays_labelled() -> None:
+    findings = classify(
+        [
+            result(candidate="only_weak", p_value=0.001, relative_pct=-30.0,
+                   mode=MODE_WINDOW_BLOCK),
+        ],
+        RegressionConfig(),
+    )  # fmt: skip
+    report = TriageReport(findings=findings, baseline="baseline")
+    assert report.best_candidate == "only_weak"
+    assert report.best_finding is not None
+    assert report.best_finding.result.is_weak_mode
 
 
 def test_a_report_with_no_findings_names_no_best_candidate() -> None:

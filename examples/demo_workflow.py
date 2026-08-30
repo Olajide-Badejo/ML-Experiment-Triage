@@ -194,7 +194,11 @@ def main() -> int:
     print(f"   {output.relative_to(ROOT)} ({output.stat().st_size / 1024:.0f} KB, self contained)")
 
     print_table(report)
-    print(f"\nbest condition found: {report.best_candidate} (ground truth: {KNOWN_BEST})")
+    # A weaker mode answer is still an answer, but it is never presented as if it
+    # were a seed replicated one.
+    best = report.best_finding
+    mode = " [weaker mode]" if best is not None and best.result.is_weak_mode else ""
+    print(f"\nbest condition found: {report.best_candidate}{mode} (ground truth: {KNOWN_BEST})")
     print(f"demo workflow completed in {elapsed:.1f} s")
     measured = CALIBRATION_NOTE["Measured type I error, strong mode"]
     print(f"calibration behind these p values: {measured}")

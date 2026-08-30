@@ -35,6 +35,13 @@ Changelog; versions follow semantic versioning.
   `.family_note()` report the held out group, and `triage compare` prints the
   family sizes. Adjusted p values on mixed mode sweeps move as a result; verdicts
   on the demo sweep did not.
+* **The severity confidence factor is capped at 2.0, so harm leads the ranking.**
+  Its docstring called it a tie breaker while it spanned 1 to 13, which let a 3
+  percent regression at p = 1e-12 (39.00) outrank a 10 percent regression at
+  p = 0.04 (23.98) and put the smaller problem at the top of the table.
+  `TriageReport.best_candidate` now prefers a seed replicated improvement over a
+  single run one of any size, and the new `best_finding` returns the finding so
+  callers can label the mode when only the weaker one exists.
 * **`classify()` now returns findings in input order, not severity order.**
   *Addressed to consumers rejoining findings to results:* one `Finding` comes
   back per `ComparisonResult`, positionally, so `zip(results, classify(results))`

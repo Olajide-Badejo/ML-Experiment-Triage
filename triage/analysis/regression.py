@@ -146,18 +146,28 @@ def benjamini_hochberg(p_values: list[float], false_discovery_rate: float = 0.05
     return adjusted
 
 
+#: The most the confidence term may multiply the harm by. A tie breaker that can
+#: reorder the thing it is breaking ties within is not a tie breaker: uncapped,
+#: `1 + -log10(p)` spans 1 to 13, and a 3 percent regression at p = 1e-12 scored
+#: 39.00 against 23.98 for a 10 percent regression at p = 0.04. At 2.0 the
+#: confidence term can at most double a harm, so it separates regressions of
+#: similar size and never overturns a difference in size of more than two times.
+MAX_CONFIDENCE_FACTOR = 2.0
+
+
 def severity_of(result: ComparisonResult, adjusted_p: float) -> float:
     """How loudly this finding should shout, for ranking the verdict table.
 
-    Size of the harm first, confidence second. The magnitude of the relative
-    regression sets the scale, and a factor that grows as the adjusted p falls
-    breaks ties between regressions of similar size. A result from the weaker
-    single run mode is halved, because it is a weaker claim about the world and
-    should not outrank a seed replicated finding of the same size.
+    Size of the harm first, confidence second, and second means second. The
+    magnitude of the relative regression sets the scale; a factor that grows as
+    the adjusted p falls breaks ties between regressions of similar size, capped
+    at `MAX_CONFIDENCE_FACTOR` so that it can never do more than that. A result
+    from the weaker single run mode is halved, because it is a weaker claim about
+    the world and should not outrank a seed replicated finding of the same size.
     """
     harm = max(0.0, -result.signed_improvement_pct)
     confidence = float(-np.log10(max(adjusted_p, 1e-12)))
-    severity = harm * (1.0 + confidence)
+    severity = harm * min(1.0 + confidence, MAX_CONFIDENCE_FACTOR)
     return severity * 0.5 if result.is_weak_mode else severity
 
 
@@ -332,12 +342,28 @@ class TriageReport:
         )
 
     @property
-    def best_candidate(self) -> str | None:
-        """The run or variant with the largest significant improvement, if any."""
+    def best_finding(self) -> Finding | None:
+        """The largest significant improvement, preferring the stronger claim.
+
+        A single run window block improvement is not comparable to a seed
+        replicated one of any size: it cannot see seed to seed variance, which is
+        exactly the variance that decides whether an improvement is real. So the
+        seed replicated improvements are considered first, and a weaker mode
+        finding is only ever crowned when there is no stronger one to crown. The
+        finding is returned rather than the name so that a caller can see, and
+        label, which mode the answer came from.
+        """
         improvements = self.improvements
         if not improvements:
             return None
-        return max(improvements, key=lambda f: f.result.signed_improvement_pct).candidate
+        strong = [finding for finding in improvements if not finding.result.is_weak_mode]
+        return max(strong or improvements, key=lambda f: f.result.signed_improvement_pct)
+
+    @property
+    def best_candidate(self) -> str | None:
+        """The run or variant with the largest significant improvement, if any."""
+        best = self.best_finding
+        return None if best is None else best.candidate
 
     def summary(self) -> str:
         return (

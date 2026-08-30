@@ -197,7 +197,14 @@ prints the family sizes above the table.
 
 Findings are ranked by severity: the size of the relative harm, scaled by
 confidence, and halved for the weaker mode so that a weaker claim never outranks
-a stronger claim of the same size.
+a stronger claim of the same size. The confidence term is capped at a factor of
+two. Uncapped it spanned 1 to 13, which made it the ranking rather than the tie
+breaker it is documented as: a 3 percent regression at p = 1e-12 scored 39.00
+against 23.98 for a 10 percent regression at p = 0.04, and the bigger problem was
+pointed at second. Confidence now separates regressions of similar size and never
+overturns a difference in size of more than two times. For the same reason
+`best_candidate` prefers a seed replicated improvement over a single run one of
+any size, and names the mode when only the weaker one exists.
 
 ## 7. What calibration testing changed
 

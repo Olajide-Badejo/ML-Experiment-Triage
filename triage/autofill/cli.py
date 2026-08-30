@@ -118,8 +118,16 @@ def run_evaluate(args: argparse.Namespace) -> int:
         )
         return EXIT_USAGE
 
+    from triage.autofill.policy import RewardModel
+
     records = load_split(args.data, args.split)
     model = LogisticModel.load(args.weights) if args.policy == "model" else None
+    # 5.3 learns the decision thresholds on the validation split. When that IS
+    # the split being scored there is nothing to load and the comparison is
+    # labelled in sample; when it is not, the thresholds come from val and the
+    # reported numbers are the ones that cost something.
+    fit_records = None if args.split == "val" else load_split(args.data, "val")
+    reward = RewardModel.parse(args.penalties) if args.penalties else RewardModel()
     paths = write_evaluation(
         args.out,
         records=records,
@@ -128,6 +136,9 @@ def run_evaluate(args: argparse.Namespace) -> int:
         locale=args.locale,
         bootstrap=args.bootstrap,
         seed=args.seed,
+        fit_records=fit_records,
+        reward=reward,
+        decision_policy=args.decision_policy,
     )
     report = summarise(paths)
     for name, engine in sorted(report["engines"].items()):
@@ -144,11 +155,43 @@ def run_evaluate(args: argparse.Namespace) -> int:
             f"{metrics['val/ece_post']:.4f} after, at temperature "
             f"{metrics['val/temperature']:.3f}"
         )
+    if paths.policy is not None:
+        _print_policies(paths.policy)
     print(
         f"outcomes: {paths.outcomes} ({len(paths.runs)} run directories under "
         f"{paths.root / 'runs'})"
     )
     return EXIT_OK
+
+
+def _print_policies(path: Path) -> None:
+    """The contextual bandit comparison, read back from what was written.
+
+    Read back rather than kept in memory, so that what the terminal says is what
+    the artifact says and the two cannot drift.
+    """
+    from triage.autofill.policy import load_policy
+
+    comparison = load_policy(path)
+    fitted = "in sample" if comparison.in_sample else f"fitted on {comparison.fit_split}"
+    print(f"decision policy (contextual bandit, {fitted}): {comparison.reward.describe()}")
+    print(f"{'policy':>19}  {'fill rate':>9}  {'reward':>8}  {'correction cost':>15}")
+    for outcome in comparison.outcomes:
+        marker = " *" if outcome.name == comparison.chosen else "  "
+        print(
+            f"{outcome.name:>19}  {outcome.fill_rate:>9.4f}  {outcome.expected_reward:>8.4f}  "
+            f"{outcome.correction_cost:>15.4f}{marker}"
+        )
+    thompson = comparison.thompson
+    print(
+        f"{'thompson':>19}  {thompson.n_filled / thompson.n_rows:>9.4f}  "
+        f"{thompson.expected_reward:>8.4f}  {thompson.correction_cost:>15.4f}"
+    )
+    print(
+        f"regret of the Thompson run against {thompson.best_fixed}: "
+        f"{thompson.cumulative_regret:.2f} over {thompson.n_rows} decisions "
+        f"({thompson.regret_per_decision:.4f} each); policy exported to {path}"
+    )
 
 
 HANDLERS = {

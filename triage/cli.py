@@ -561,6 +561,29 @@ def add_autofill(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]
         "--locale", default="all", choices=["all", "en_US", "de_DE"], help="restrict to one locale"
     )
     evaluate.add_argument("--seed", type=bounded_int(low=0), default=0, help="resampling seed")
+    evaluate.add_argument(
+        "--decision-policy",
+        default="per_type_threshold",
+        choices=["always_fill", "never_fill", "global_threshold", "per_type_threshold"],
+        help=(
+            "which fill or skip policy is EXPORTED for the agentic demo (default: "
+            "per_type_threshold). Every policy is compared and reported whatever this "
+            "says; this only names the one written out as chosen. The Thompson sampling "
+            "run is a simulation of online learning rather than an export target: its "
+            "decisions are a function of the stream it saw, and a demo needs a policy "
+            "that is the same on every run"
+        ),
+    )
+    evaluate.add_argument(
+        "--penalties",
+        metavar="SPEC",
+        default=None,
+        help=(
+            "what a wrong fill costs, by cost tier, as `payment=4,identity=4,address=2,"
+            "other=1` (the defaults). Tiers left out keep their default. The unit is one "
+            "correct fill, so these are ratios rather than currency"
+        ),
+    )
     add_common(evaluate)
 
 

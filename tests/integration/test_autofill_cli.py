@@ -300,6 +300,164 @@ def test_evaluate_compares_the_two_engines_seed_replicated(corpus: Path, tmp_pat
     assert finding.adjusted_p <= 0.05, finding.adjusted_p
 
 
+@pytest.fixture(scope="module")
+def trained_weights(corpus: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    runs = tmp_path_factory.mktemp("weights")
+    assert (
+        main(["autofill", "train", "--data", str(corpus), "--out", str(runs), "--epochs", "4"])
+        == EXIT_OK
+    )
+    return next(runs.glob("*/weights.npz"))
+
+
+def test_evaluate_reports_the_contextual_bandit_and_exports_the_chosen_policy(
+    corpus: Path, trained_weights: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """5.3 (b) and (c), driven through the command line."""
+    out = tmp_path / "eval"
+    assert (
+        main(
+            [
+                "autofill",
+                "evaluate",
+                "--data",
+                str(corpus),
+                "--weights",
+                str(trained_weights),
+                "--bootstrap",
+                "2",
+                "--out",
+                str(out),
+            ]
+        )
+        == EXIT_OK
+    )
+    printed = capsys.readouterr().out
+    assert "contextual bandit" in printed
+    assert "per_type_threshold" in printed
+    assert "regret of the Thompson run against" in printed
+
+    payload = json.loads((out / "policy.json").read_text(encoding="utf-8"))
+    assert payload["chosen"] == "per_type_threshold"
+    assert payload["context"] == ["predicted_type", "calibrated_confidence", "locale"]
+    assert "importance sampling" in payload["method"]
+    rows = {row["name"]: row for row in payload["policies"]}
+    assert rows["per_type_threshold"]["expected_reward"] > rows["always_fill"]["expected_reward"]
+    assert rows["never_fill"]["expected_reward"] == 0.0
+
+
+def test_the_exported_policy_is_the_same_bytes_on_a_second_run(
+    corpus: Path, trained_weights: Path, tmp_path: Path
+) -> None:
+    """The Thompson simulation included: seeded means seeded."""
+    written = []
+    for name in ("first", "second"):
+        out = tmp_path / name
+        assert (
+            main(
+                [
+                    "autofill",
+                    "evaluate",
+                    "--data",
+                    str(corpus),
+                    "--weights",
+                    str(trained_weights),
+                    "--bootstrap",
+                    "2",
+                    "--out",
+                    str(out),
+                ]
+            )
+            == EXIT_OK
+        )
+        written.append((out / "policy.json").read_bytes())
+    assert written[0] == written[1]
+
+
+def test_a_held_out_split_fits_its_thresholds_on_the_validation_split(
+    corpus: Path, trained_weights: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "held-out"
+    assert (
+        main(
+            [
+                "autofill",
+                "evaluate",
+                "--data",
+                str(corpus),
+                "--weights",
+                str(trained_weights),
+                "--bootstrap",
+                "2",
+                "--split",
+                "test",
+                "--out",
+                str(out),
+            ]
+        )
+        == EXIT_OK
+    )
+    payload = json.loads((out / "policy.json").read_text(encoding="utf-8"))
+    assert payload["fit_split"] == "val"
+    assert payload["eval_split"] == "test"
+    assert payload["in_sample"] is False
+
+
+def test_the_penalties_flag_moves_the_thresholds(
+    corpus: Path, trained_weights: Path, tmp_path: Path
+) -> None:
+    """Configurable per 5.3: a costlier mistake buys a more cautious policy."""
+    fill_rates = []
+    for name, penalties in (("cheap", "payment=1,identity=1"), ("dear", "payment=40,identity=40")):
+        out = tmp_path / name
+        assert (
+            main(
+                [
+                    "autofill",
+                    "evaluate",
+                    "--data",
+                    str(corpus),
+                    "--weights",
+                    str(trained_weights),
+                    "--bootstrap",
+                    "2",
+                    "--penalties",
+                    penalties,
+                    "--out",
+                    str(out),
+                ]
+            )
+            == EXIT_OK
+        )
+        payload = json.loads((out / "policy.json").read_text(encoding="utf-8"))
+        rows = {row["name"]: row for row in payload["policies"]}
+        fill_rates.append(rows["per_type_threshold"]["fill_rate"])
+    assert fill_rates[0] > fill_rates[1]
+
+
+def test_an_unparsable_penalty_is_a_usage_error_not_a_traceback(
+    corpus: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        [
+            "autofill",
+            "evaluate",
+            "--data",
+            str(corpus),
+            "--policy",
+            "heuristic",
+            "--bootstrap",
+            "2",
+            "--penalties",
+            "payments=4",
+            "--out",
+            str(tmp_path / "bad"),
+        ]
+    )
+    assert code == EXIT_USAGE
+    assert "not a cost tier" in capsys.readouterr().err
+
+
 def test_the_llm_policy_says_it_is_not_here_yet_rather_than_pretending(
     corpus: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

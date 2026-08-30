@@ -270,3 +270,102 @@ later cannot shift the numbers of the conditions before it.
 
 **Verification.** `make verify-demo` rebuilds the sweep from its seeds and checks
 all twelve verdicts against the committed record to four decimal places.
+
+---
+
+## 2026-08-30: the published calibration was measuring one design out of six
+
+**Symptom.** None visible, which is the point. Every gate was green and every
+number in the README, the report and the HTML footer was reproducible. The suite
+was measuring five seeds a side, one spread, Gaussian noise: the one design a
+permutation test is exact in, and therefore the design least able to notice that
+the statistic underneath it had just changed.
+
+**Root cause.** Two of them, and they compound. The arms had been chosen when the
+raw mean difference was the permuted statistic and balanced designs were all that
+was tested, so nothing in the suite could see the failure that motivated
+studentizing (D12). Separately, the block length multiplier of three had been
+fixed by measurement against an autocorrelation time that part 03 then corrected:
+tau had been estimated on the smoothed window, where a nine point moving average
+leaves white noise looking correlated over nine points. Correcting tau left the
+multiplier attached to nothing.
+
+**Options.** (a) Publish the new statistics against the old arms. Rejected: it
+would have meant claiming a calibration for designs never measured. (b) Add the
+arms and gate them all at [2, 8] percent. Rejected after measuring: three runs of
+a wide condition against seven of a narrow one measures 12.92 percent, and a gate
+it cannot meet is either a permanently red build or, worse, an invitation to
+widen the gate quietly later. (c) Add the arms, gate each regime at what its own
+measurement supports, and publish every rate whether or not it flatters. Taken.
+
+**Fix and why.** Six new arms, 1200 null cases per design cell, 1000 paired and
+500 on macro F1, all deterministic. Before is the number published in v1.0.0 or,
+where the arm is new, the rate the unstudentized statistic measured in the same
+cell as recorded in the defect register.
+
+| Arm | Before | After |
+|---|---|---|
+| Type I, seed replicated, 5v5 | 4.53 percent | 4.53 percent |
+| Type I across seed sigma 0.005 to 0.05 | 4.40, 4.70, 5.00 | 4.40, 4.70, 5.00 |
+| Power, seed replicated | 96.25 percent | 96.25 percent |
+| Type I, window block | 5.81 percent, 1928 cases, 72 refused | 6.28 percent, 1989 cases, 11 refused |
+| Power, window block | 100 percent, 291 cases | 100 percent, 300 cases |
+| Null p uniformity at 0.05/0.10/0.25/0.50 | 0.058, 0.099, 0.241, 0.485 | 0.0580, 0.0993, 0.2407, 0.4847 |
+| Weak mode cost at seed sigma 0.01/0.02/0.04 | 53.2, 77.0, 87.4 percent | 54.3, 76.6, 87.7 percent |
+| Seed replicated on the same seed variance | 4.4, 4.7, 5.0 (a different arm) | 4.1, 3.8, 4.1 percent |
+| Unequal spread, 5 narrow against 5 wide | 8.25 percent, unstudentized | 7.83 percent |
+| Unequal spread, 3 narrow against 7 wide | 1.08 percent, unstudentized | 2.08 percent |
+| Unequal spread, 7 narrow against 3 wide | 17.92 percent, unstudentized | 12.92 percent |
+| Unequal counts only, 7 against 3 | not measured | 4.25 percent |
+| Heavy tailed noise, Student t at 3 df | not measured | 5.00 percent |
+| Paired clustered, 10 clusters of 4 | not measured | 4.90 percent |
+| The same data, clustering ignored | not measured | 12.10 percent |
+| Paired clustered on macro F1 | not measured | 2.00 percent |
+
+Three gates, because the three regimes differ and one gate would have had to be
+either dishonest about the worst cell or useless on the best. Equal spreads and
+heavy tails keep [2, 8] percent. Unequal spreads with five or more runs a side
+get [2, 10]: studentizing is asymptotic in the number of runs and five a side
+lands near nominal rather than on it. Unequal spreads with fewer than five runs
+on one side get [1, 15], set so the defect it exists to catch fails it, since the
+raw mean difference measured 17.92 percent there. The macro F1 arm gates on its
+upper bound alone: a statistic that discrete cannot produce a uniform p value, so
+it is conservative, and conservative is the safe direction.
+
+The two numbers in the weak mode cost table were measured at different seed
+deviations from each other until now. The strong column was borrowed from the
+seed variance sweep, at 0.005, 0.02 and 0.05, and printed against rows labelled
+0.01, 0.02 and 0.04. The numbers were close and the mislabelling was invisible,
+which is exactly the kind of thing this suite exists to stop; both columns now
+come out of one arm at one set of deviations.
+
+**The block length multiplier, re-derived.** Swept over 2000 null cases a point
+with the corrected tau estimate, against the refusal rate on runs of a realistic
+length at rho 0.8:
+
+| Multiplier | Type I | Refused of 2000 | Refused at 4000 steps |
+|---|---|---|---|
+| 2 tau | 8.85 percent | 1 | 0 percent |
+| 3 tau | 7.02 percent | 5 | 6 percent |
+| 4 tau | 6.28 percent | 11 | 20 percent |
+| 5 tau | 6.09 percent | 46 | 40 percent |
+| 6 tau | 6.03 percent | 108 | 78 percent |
+
+The error rate is asymptotic at about 6 percent, so four tau takes three quarters
+of the correction that is available at all and every longer block takes almost
+nothing while refusing far more comparisons. Two tau is outside the gate
+altogether. Four is what the mode now uses. It is the one constant here that
+should be expected to move again if the window statistic changes.
+
+**Verification.** `pytest tests/statistics -q -s`, 17 passed in 110 s on the
+machine in the README, every gate green on its own measurement. The full suite is
+297 passing. Every published number is rendered from `triage/calibration.py`:
+the LaTeX tables through `scripts/gen_report_assets.py` and the Markdown through
+`scripts/render_calibration_docs.py`, whose `--check` mode runs in CI so the two
+sides cannot drift apart again.
+
+**A defect found on the way.** The dash guard failed on the rebuilt main report.
+`RegressionConfig.describe()` prints the flag `--fdr`, and TeX sets two hyphens
+as an en dash, so the abstract of the PDF carried a banned character and, worse,
+the wrong flag. `escape()` in the asset generator now breaks the ligature. The
+guard caught it in the compiled PDF, which is the reason it reads PDFs at all.

@@ -389,8 +389,20 @@ def test_block_mode_is_anticonservative_when_seed_variance_is_present() -> None:
     exactly zero, so every rejection is still a false positive. The rate this
     records is the honest reason the single run mode is labelled weaker in every
     output this tool produces.
+
+    The seed replicated mode is measured at the same three seed deviations, in
+    the same loop, because the two rates are published side by side as the
+    headline result of the whole project. They were not measured at the same
+    deviations before: the strong column was borrowed from the sweep above, at
+    0.005, 0.02 and 0.05, and printed against rows labelled 0.01, 0.02 and 0.04.
+    The numbers were close and the mislabelling was invisible, which is the kind
+    of thing this suite exists to stop. What the two arms cannot share is the run
+    length, because the block mode needs a window long enough to hold eight
+    blocks and the seed mode does not care; the seed deviation is the axis the
+    table is indexed by, and it is the same in both.
     """
     measured: dict[float, float] = {}
+    strong: dict[float, float] = {}
     for seed_sigma in (0.01, 0.02, 0.04):
         spec = CurveSpec(seed_sigma=seed_sigma, n_steps=BLOCK_MODE_STEPS)
         rng = np.random.default_rng(41)
@@ -406,16 +418,32 @@ def test_block_mode_is_anticonservative_when_seed_variance_is_present() -> None:
             except ComparisonError:
                 continue
         measured[seed_sigma] = rejection_rate(p_values)
+
+        seed_rng = np.random.default_rng(42)
+        strong[seed_sigma] = rejection_rate(
+            [
+                compare_seed_replicated(
+                    *null_pair(CurveSpec(seed_sigma=seed_sigma), n_seeds=5, rng=seed_rng),
+                    "val/loss",
+                    CALIBRATION_CONFIG,
+                ).p_value
+                for _ in range(800)
+            ]
+        )
         print(
             f"seed sigma {seed_sigma:.3f}: window block false positive rate "
-            f"{measured[seed_sigma]:.4f}",
+            f"{measured[seed_sigma]:.4f}, seed replicated {strong[seed_sigma]:.4f}",
             flush=True,
         )
 
     # The claim is not a precise number, it is that the failure is severe and
-    # grows with the seed variance the mode cannot see.
+    # grows with the seed variance the mode cannot see, while the mode that can
+    # see it does not move.
     assert measured[0.01] > 0.30, "expected the weak mode to fail badly under seed variance"
     assert measured[0.04] > measured[0.01], "the failure should worsen as seed variance grows"
+    low, high = TYPE_ONE_GATE
+    for seed_sigma, rate in strong.items():
+        assert low <= rate <= high, f"seed sigma {seed_sigma}: type I {rate:.4f} outside the gate"
 
 
 def test_block_mode_refuses_a_window_it_cannot_calibrate() -> None:

@@ -1,13 +1,16 @@
 """The measured calibration results, in one place.
 
 These numbers are produced by `tests/statistics/test_calibration.py` and are
-quoted in five places: the README, the HTML report footer, the main report, the
-figures, and the command line output. Holding them as data here means those five
-cannot drift apart, and that updating them after a change to the statistics is a
-single edit rather than a search.
+quoted in seven places: the README, the HTML report footer, the main report, the
+debug report, the figures, the methodology and the command line output. Holding
+them as data here means those seven cannot drift apart, and that updating them
+after a change to the statistics is a single edit rather than a search. Nothing
+downstream may hold a calibration number of its own: the LaTeX tables come
+through `scripts/gen_report_assets.py` and the Markdown ones through
+`scripts/render_calibration_docs.py`, both of which read this module.
 
 Every value is a measurement from a deterministic, seeded run. Reproduce them
-with `make test-stats`, which takes about a minute.
+with `make test-stats`, which takes about two minutes.
 """
 
 from __future__ import annotations
@@ -53,49 +56,153 @@ GATES: tuple[Gate, ...] = (
     ),
     Gate(
         "Type I error, window block",
-        "5.81 percent (+/- 1.04)",
-        "1928 cases, 72 refused",
+        "6.28 percent (+/- 1.07)",
+        "1989 cases, 11 refused",
         "[2, 8] percent",
     ),
     Gate(
         "Power, window block",
         "100 percent",
-        "291 cases",
+        "300 cases",
         "above 90 percent",
     ),
     Gate(
+        "Type I error, paired clustered",
+        "4.90 percent (+/- 1.34)",
+        "1000 cases, 10 clusters of 4 pairs",
+        "[2, 8] percent",
+    ),
+    Gate(
         "Null p value uniformity",
-        "0.058, 0.099, 0.241, 0.485",
+        "0.0580, 0.0993, 0.2407, 0.4847",
         "1500 cases",
         "within 3 standard errors",
     ),
 )
 
+# The designs that break plain exchangeability, measured cell by cell rather
+# than assumed away. Three gates rather than one, because the three regimes
+# differ: equal spreads and heavy tails are exact and keep [2, 8]; unequal
+# spreads with five or more runs a side are asymptotically right and get
+# [2, 10]; unequal spreads with fewer than five runs on one side get [1, 15],
+# set to catch the defect rather than to assert an exactness the design cannot
+# deliver, since permuting the raw mean difference measured 17.92 percent in
+# that cell. The tool warns on exactly that design.
+DESIGN_ARMS: tuple[Gate, ...] = (
+    Gate(
+        "Unequal spread, 5 narrow against 5 wide",
+        "7.83 percent (+/- 1.52)",
+        "1200 null cases, sigma 0.01 against 0.05",
+        "[2, 10] percent",
+    ),
+    Gate(
+        "Unequal spread, 3 narrow against 7 wide",
+        "2.08 percent (+/- 0.81)",
+        "1200 null cases, sigma 0.01 against 0.05",
+        "[1, 15] percent",
+    ),
+    Gate(
+        "Unequal spread, 7 narrow against 3 wide",
+        "12.92 percent (+/- 1.90)",
+        "1200 null cases, sigma 0.01 against 0.05",
+        "[1, 15] percent",
+    ),
+    Gate(
+        "Unequal counts only, 7 against 3",
+        "4.25 percent (+/- 1.14)",
+        "1200 null cases, one spread",
+        "[2, 8] percent",
+    ),
+    Gate(
+        "Heavy tailed noise, Student t at 3 df",
+        "5.00 percent (+/- 1.23)",
+        "1200 null cases, 5 runs a side",
+        "[2, 8] percent",
+    ),
+    Gate(
+        "Paired clustered, macro F1",
+        "2.00 percent (+/- 1.23)",
+        "500 null cases, a discrete statistic",
+        "at most 8 percent",
+    ),
+    Gate(
+        "Paired, clustering ignored",
+        "12.10 percent",
+        "1000 null cases, the same clustered data",
+        "measured, not gated",
+    ),
+)
+
+# The rate at which the raw mean difference, permuted, rejected true nulls in
+# the same three heteroscedastic cells before the statistic was studentized.
+# Kept beside the measurements above because a fix is only worth what it
+# changed, and because the middle cell shows how little it changed there.
+UNSTUDENTIZED_DESIGN_ARMS: tuple[tuple[str, float, float], ...] = (
+    ("5 narrow against 5 wide", 0.0825, 0.0783),
+    ("3 narrow against 7 wide", 0.0108, 0.0208),
+    ("7 narrow against 3 wide", 0.1792, 0.1292),
+)
+
 # False positive rates when the true effect is exactly zero and the runs carry
 # seed to seed variance. This is the measurement that justifies labelling the
-# single run mode as a weaker claim everywhere it appears.
+# single run mode as a weaker claim everywhere it appears. Both columns come out
+# of one arm at the same three seed deviations, so the two modes are compared on
+# the axis the table is indexed by.
 # (seed standard deviation, single run mode, seed replicated mode), as fractions.
 WEAK_MODE_COST: tuple[tuple[float, float, float], ...] = (
-    (0.01, 0.532, 0.044),
-    (0.02, 0.770, 0.047),
-    (0.04, 0.874, 0.050),
+    (0.01, 0.5427, 0.0413),
+    (0.02, 0.7663, 0.0375),
+    (0.04, 0.8769, 0.0413),
 )
 
 # Rejection rate under the null at each nominal threshold, as fractions.
 UNIFORMITY: tuple[tuple[float, float], ...] = (
-    (0.05, 0.058),
-    (0.10, 0.099),
-    (0.25, 0.241),
-    (0.50, 0.485),
+    (0.05, 0.0580),
+    (0.10, 0.0993),
+    (0.25, 0.2407),
+    (0.50, 0.4847),
 )
+
+#: What one full `make test-stats` costs and covers. The count is the sum of the
+#: case counts named in the tables above; the wall clock is measured on the
+#: machine recorded in the README.
+SUITE: dict[str, int] = {
+    "comparisons": 23900,
+    "seconds": 110,
+}
+
+
+def _percent(fraction: float) -> str:
+    return f"{fraction * 100:.0f}"
+
+
+def weak_mode_range() -> str:
+    """`54 to 88`: the span of the single run mode's false positive rate."""
+    rates = [weak for _, weak, _ in WEAK_MODE_COST]
+    return f"{_percent(min(rates))} to {_percent(max(rates))}"
+
+
+def strong_mode_range() -> str:
+    """The same span for the seed replicated mode, on the same data."""
+    rates = [strong for _, _, strong in WEAK_MODE_COST]
+    low, high = min(rates), max(rates)
+    if f"{low * 100:.1f}" == f"{high * 100:.1f}":
+        return f"{low * 100:.1f}"
+    return f"{low * 100:.1f} to {high * 100:.1f}"
+
 
 #: Short lines for the HTML report footer and the command line.
 SUMMARY: dict[str, str] = {
     "Measured type I error, strong mode": "4.53 percent at a nominal 5, over 3000 null cases",
     "Measured power, strong mode": "96.25 percent on a large effect, over 800 cases",
-    "Measured type I error, weak mode": "5.81 percent at a nominal 5, over 1928 null cases",
+    "Measured type I error, weak mode": "6.28 percent at a nominal 5, over 1989 null cases",
     "Cost of the weak mode": (
-        "on runs with realistic seed variance and a true effect of zero, the single run mode "
-        "fires on 53 to 87 percent of comparisons; the seed replicated mode stays at 4.4 to 5.0"
+        f"on runs with realistic seed variance and a true effect of zero, the single run mode "
+        f"fires on {weak_mode_range()} percent of comparisons; the seed replicated mode stays at "
+        f"{strong_mode_range()} on the same seed variance"
+    ),
+    "Measured type I error, unequal spreads": (
+        "7.83 percent at five runs a side, 12.92 percent at three runs of the wider condition "
+        "against seven of the narrower, where the tool warns"
     ),
 }

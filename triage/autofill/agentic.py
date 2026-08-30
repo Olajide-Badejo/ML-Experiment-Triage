@@ -515,6 +515,11 @@ class ChromeSession:
         page.prepare()
         return page
 
+    def close_tab(self, tab: Any) -> None:
+        """Close one tab. Six is nothing; a corpus of six hundred pages is not."""
+        if self._browser is not None:
+            self._run(self._browser.close_tab(tab))
+
     def command(self, tab: Any, method: str, params: Mapping[str, Any] | None = None) -> Any:
         """One DevTools command, with both failure shapes turned into one error."""
         response = self._run(tab.send_command(method, params=dict(params or {})))
@@ -592,6 +597,10 @@ class ChromePage:
             str(key): str(value)
             for key, value in json.loads(self._session.evaluate(self._tab, VALUES_JS)).items()
         }
+
+    def close(self) -> None:
+        """Close the tab this page is in."""
+        self._session.close_tab(self._tab)
 
     def screenshot(self, path: Path) -> Path:
         """Capture the page at scale 1 and write it, recompressed if that is possible.
@@ -986,6 +995,7 @@ def run_demo(
             results.append(run_page(page, classify, policy, reward, config.engine))
             if config.screenshot is not None and shot is None and _is_shot_page(path, config):
                 shot = page.screenshot(config.screenshot)
+            page.close()
     return DemoResult(
         pages=tuple(results),
         engine=config.engine,

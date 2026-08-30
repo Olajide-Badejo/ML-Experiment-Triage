@@ -243,11 +243,15 @@ work, and an interrupted ingest loses at most the run in flight.
 ## Quick start
 
 ```bash
-make env      # Python 3.13 venv, pinned dependencies
-make demo     # synthesise 31 runs, ingest, compare, write the HTML report
-make test     # the full suite, including the calibration gates
-make all      # everything from a clean tree, including both PDFs
+make env       # Python 3.13 venv, pinned dependencies
+make demo      # synthesise 31 runs, ingest, compare, write the HTML report
+make test-unit # the inner loop: pytest -m "not slow", everything but the gates
+make test      # the full suite, including the calibration gates
+make all       # everything from a clean tree, including both PDFs
 ```
+
+The recipes live in `noxfile.py` and the Makefile forwards to it, so `nox -l`
+lists the same work and runs it without Make on any platform.
 
 Against your own runs, one directory per run with an optional `config.json`:
 

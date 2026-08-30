@@ -359,7 +359,7 @@ should be expected to move again if the window statistic changes.
 
 **Verification.** `pytest tests/statistics -q -s`, 17 passed in 110 s on the
 machine in the README, every gate green on its own measurement. The full suite is
-297 passing. Every published number is rendered from `triage/calibration.py`:
+303 passing in 130 seconds. Every published number is rendered from `triage/calibration.py`:
 the LaTeX tables through `scripts/gen_report_assets.py` and the Markdown through
 `scripts/render_calibration_docs.py`, whose `--check` mode runs in CI so the two
 sides cannot drift apart again.

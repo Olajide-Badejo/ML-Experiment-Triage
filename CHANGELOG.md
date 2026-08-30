@@ -7,6 +7,28 @@ Changelog; versions follow semantic versioning.
 
 ### Added
 
+* **Six new calibration arms, covering the designs a permutation test is not
+  exact in.** Unequal spreads at 5v5, 3v7 and 7v3 (7.83, 2.08 and 12.92 percent
+  type I at a nominal 5, against 8.25, 1.08 and 17.92 for the raw mean
+  difference the studentized statistic replaced); unequal counts at one spread
+  (4.25); heavy tailed Student t noise at three degrees of freedom (5.00); the
+  paired clustered mode on a clustered null (4.90) and on macro F1 (2.00), with
+  the same clustered data scored ignoring the clustering (12.10) as the
+  measurement that justifies the `clusters` argument. Three gates rather than
+  one, each set to what its regime supports and each stated with its reason in
+  `docs/ENGINEERING_LOG.md`. Every rate is published in `triage/calibration.py`
+  whether or not it flatters.
+* `triage.synthetic.null_pair_designed` for a null whose two sides differ in
+  spread or in count, `CurveSpec.tail_df` for Student t noise rescaled to the
+  spread it replaces, and `clustered_null_pair` for paired scores whose
+  differences are correlated inside a cluster. The Gaussian path draws in
+  exactly the order it did before, asserted by a test.
+* `scripts/render_calibration_docs.py`, which renders the measured numbers into
+  the README, the methodology and the design decisions from
+  `triage/calibration.py`, the same single source the LaTeX tables already came
+  from. `--check` runs in CI, so no published number can be edited in one place
+  and left in another.
+
 * **`RegressionConfig.practical_threshold_absolute`, a practical gate in the
   metric's own units** (`--practical-threshold-absolute` on the command line).
   Exactly one of `practical_threshold_pct` and `practical_threshold_absolute`
@@ -21,6 +43,16 @@ Changelog; versions follow semantic versioning.
 
 ### Changed
 
+* **The window block mode's block length is four autocorrelation times, not
+  three.** *Addressed to anyone comparing single runs:* p values from the weak
+  mode move slightly and short runs are refused more often. The multiplier had
+  been fixed by measurement against a tau estimated on the smoothed window,
+  which this release corrected; re-swept against the corrected estimate over
+  2000 null cases a point, type I error runs 8.85, 7.02, 6.28, 6.09 and 6.03
+  percent at two through six tau, and the refusal rate on 4000 step runs runs 0,
+  6, 20, 40 and 78 percent. Four is the knee of both curves. Measured type I for
+  the mode moves from 5.81 percent to **6.28**, and the demo's two weak mode
+  rows move by about a hundredth of a percentage point.
 * **`RegressionConfig.false_discovery_rate` went from inert to operative, with
   no change in default behaviour.** The statistical gate now reads
   `adjusted_p <= config.false_discovery_rate`, which is the Benjamini Hochberg
@@ -56,7 +88,7 @@ Changelog; versions follow semantic versioning.
   that cannot reach alpha are excluded from the denominator.** Weak mode (single
   run window block) p values were pooled with seed replicated ones, which
   destroys the false discovery control of the whole family given the weak mode's
-  measured 53 to 87 percent false positive rate under seed variance; and
+  measured 54 to 88 percent false positive rate under seed variance; and
   comparisons whose `min_attainable_p` already exceeds alpha inflated the
   denominator while never being able to be discoveries. Each `Finding` now
   carries the `family` it was corrected in, `TriageReport.inadmissible` and
@@ -79,6 +111,23 @@ Changelog; versions follow semantic versioning.
   several conditions. Callers wanting the old order call the already public
   `rank(findings)`, which is what `triage compare` and the HTML report now do,
   so no output of this tool changed.
+
+### Fixed
+
+* **The reproducibility gate could pass by accident.** The test comparing two
+  HTML reports byte for byte dropped every line containing "Generated" before
+  comparing, but the template writes "generated" in lower case, so the
+  timestamps were compared too and the test passed only while both reports
+  landed in the same minute. It now masks the timestamp wherever it appears.
+* **`--fdr` reached the compiled report as an en dash.** TeX sets two hyphens as
+  a ligature, so the flag printed by `RegressionConfig.describe()` was typeset
+  as a dash followed by `fdr` in the abstract of the PDF, which is both a banned
+  character and the wrong flag. The asset generator's `escape()` now breaks the
+  ligature.
+* The weak mode cost table compared its two modes at different seed deviations:
+  the seed replicated column was borrowed from another arm, at 0.005, 0.02 and
+  0.05, under rows labelled 0.01, 0.02 and 0.04. Both columns now come from one
+  arm at one set of deviations.
 
 ## [1.0.0] 2026-08-05
 

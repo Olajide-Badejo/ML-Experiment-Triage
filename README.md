@@ -10,7 +10,7 @@
   <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/Olajide-Badejo/ML-Experiment-Triage/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.13" src="https://img.shields.io/badge/python-3.13-2a78d6">
-  <img alt="Tests 122" src="https://img.shields.io/badge/tests-122%20passing-1baf7a">
+  <img alt="Tests 303" src="https://img.shields.io/badge/tests-303%20passing-1baf7a">
 <!-- calibration:badge -->
   <img alt="Type I error 4.53 percent" src="https://img.shields.io/badge/measured%20type%20I-4.53%25%20vs%205%25%20nominal-1baf7a">
 <!-- /calibration:badge -->
@@ -371,10 +371,10 @@ not used at any point.
 | Step | Time |
 |---|---|
 | `make test-stats`, the calibration suite, about <!-- calibration:comparisons -->23,900<!-- /calibration:comparisons --> synthetic comparisons | 60 s |
-| `make test`, the full suite, 122 tests | 77 s |
-| `make demo`, synthesise 31 runs, ingest, compare, report | 17 s |
-| `make all` from a clean tree | 137 s |
-| `make all` from a fresh clone, including creating the environment | 205 s |
+| `make test`, the full suite, 303 tests | 130 s |
+| `make demo`, synthesise 31 runs, ingest, compare, report | 18 s |
+| `make all` from a clean tree | 137 s, measured at 1.0.0 and due a re-measure at release |
+| `make all` from a fresh clone, including creating the environment | 205 s, measured at 1.0.0 |
 
 Measured, not estimated. The last row is the one that matters: `git clone` followed by
 `make all` produces every artifact in this repository, including both PDFs, with no manual step.

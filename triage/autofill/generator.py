@@ -425,25 +425,39 @@ class GeneratorConfig:
     setting: turned down, a keyword table scores near perfectly and there is
     nothing to compare; turned up, nothing is learnable and the comparison is
     between two kinds of noise.
+
+    **How these values were arrived at**, since a difficulty setting chosen to
+    produce a result is worth nothing unless the choosing is written down. They
+    were swept, with acceptance criterion 2 as the target: a de_DE validation
+    margin that is real and not trivial, over a baseline that is still a serious
+    one. At the first defaults tried (label dropout 0.18, generic attributes
+    0.22, placeholders dropped 0.35, autocomplete present 0.35 and correct 0.80)
+    the model reached 0.994 macro F1 on de_DE against the heuristic's 0.754: a
+    real margin, but over a corpus so clean that the model was at its ceiling and
+    the sweep had nothing left to rank. At the settings below, the model reaches
+    about 0.96 and the heuristic about 0.72, both visibly imperfect, and the
+    learning rate still moves the result. Turning them up further (dropout 0.50)
+    takes the heuristic to 0.60 and starts measuring how much signal was removed
+    rather than what a classifier is worth.
     """
 
     n_fields: int = 4000
     locales: tuple[str, ...] = LOCALES
     #: How often a field has no visible label at all, so the classifier has only
     #: the attributes and the neighbours to go on.
-    label_dropout: float = 0.18
+    label_dropout: float = 0.35
     #: How often a present label is the abbreviated form (`PLZ`, `CVC`, `Str.`).
-    abbreviation_prob: float = 0.30
+    abbreviation_prob: float = 0.35
     #: How often `name` and `id` collapse to `input_7`, which is what a form
     #: built by a drag and drop editor looks like.
-    generic_attribute_prob: float = 0.22
+    generic_attribute_prob: float = 0.45
     #: How often the placeholder is absent.
-    placeholder_dropout: float = 0.35
+    placeholder_dropout: float = 0.50
     #: How often the `autocomplete` attribute is present at all, and how often
     #: it is right when it is. A wrong token is worse than a missing one, which
     #: is the case the heuristic baseline is most exposed to.
-    p_autocomplete: float = 0.35
-    p_autocomplete_correct: float = 0.80
+    p_autocomplete: float = 0.28
+    p_autocomplete_correct: float = 0.72
     #: How often an adversarial field of no known type follows a real one.
     distractor_prob: float = 0.08
     n_markup_variants: int = len(MARKUP_VARIANTS)

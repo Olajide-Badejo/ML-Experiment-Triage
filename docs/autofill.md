@@ -1,10 +1,5 @@
 # The autofill vertical
 
-> Skeleton. Part 13 owns the finished prose, the taxonomy provenance section in
-> full, and `docs/ecosystem.md` beside it. What is here is the method and every
-> number this repository has actually measured, so that the prose is written
-> against measurements rather than the other way round.
-
 Browser form field classification is this repository's reference workload: the
 machine learning problem behind autofill, which is deciding that an input is a
 given name, a postal code or a card security code, across locales whose address
@@ -14,27 +9,49 @@ advertises at once: a dataset with a definition, a sweep with seeds, two
 conditions to compare, calibrated probabilities to check, and a cross sectional
 evaluation output that is not a time series.
 
-It is **not** a competitor to `Autofill_audit`, which is the production grade
-auditor (a 392 rule engine over nine locale vocabularies, a calibrated ONNX
-model, a Playwright driver), and it is not a competitor to the PyTorch
-Performance Toolkit's transformer field classifier, which is the production
-grade trainer. It is pure numpy, it trains in under a second, and its job is to
-be a workload this repository can be honest about end to end.
+!!! note "This is a demo workload, not a product"
+
+    It is **not** a competitor to `Autofill_audit`, which is the production
+    grade auditor (a 392 rule engine over nine locale vocabularies, a calibrated
+    ONNX model, a Playwright driver), and it is not a competitor to the PyTorch
+    Performance Toolkit's transformer field classifier, which is the production
+    grade trainer. It is pure numpy, it trains in under a second, and its job is
+    to be a workload this repository can be honest about end to end. See
+    [Ecosystem](ecosystem.md) for who does what.
 
 ## The taxonomy
+
+### Where the spelling comes from
 
 `FieldType` is a `StrEnum` whose VALUES are WHATWG autocomplete tokens, taken
 verbatim for every token included: eighteen tokens plus `unknown`. The value
 space is `autofill_audit.taxonomy.Label`'s, so a label written here means the
 same thing there, and `from_tpt_label()` maps the PyTorch Performance Toolkit's
-seventeen snake_case labels onto it. Three projects that disagree about how to
-spell a postal code cannot exchange a single evaluation file; adopting the
-standard's spelling rather than inventing a fourth makes the strings
-interoperate by construction (E7b).
+seventeen snake_case labels onto it.
 
-`unknown` is a real class rather than a null: a form holds newsletter
-checkboxes, comment boxes and honeypots, and a head that cannot say "none of
-these" has to spend probability mass on a wrong answer instead.
+Three projects that disagree about how to spell a postal code cannot exchange a
+single evaluation file. Adopting the standard's spelling rather than inventing a
+fourth makes the strings interoperate by construction (E7b), and because the
+enum is a `StrEnum` a member *is* its token: it serialises to JSON as
+`"postal-code"` and compares equal to the string a sibling repository wrote,
+with no `.value` at any boundary.
+
+This taxonomy is a strict SUBSET of `Autofill_audit`'s thirty seven tokens,
+chosen to cover the identity, address and payment groups a checkout or
+registration form actually contains, which is what the generator below
+produces. A label the mapping does not recognise raises rather than becoming
+`unknown`, because mapping it would turn a taxonomy mismatch into an accuracy
+figure that quietly counts the wrong class as a correct refusal.
+
+### `unknown` is a real class, not a null
+
+A form holds newsletter checkboxes, comment boxes and honeypots, and a head that
+cannot say "none of these" has to spend probability mass on a wrong answer
+instead. It is the last index by convention, so a caller that only fills the
+tokens it recognises can slice the head down to a prefix.
+
+The declaration order is the model head order, and therefore part of the on disk
+format of a saved `.npz` of weights: tokens are appended, never reordered.
 
 ## The generator, and the knobs the numbers were measured at
 
@@ -66,14 +83,17 @@ below was produced at:
 
 **How they were chosen.** They were swept against acceptance criterion 2: a
 de_DE margin that is real and not trivial, over a baseline that is still a
-serious one. At the first values tried (dropout 0.18, generic 0.22, placeholders
-0.35, autocomplete present 0.35 and correct 0.80) the model reached 0.994 macro
-F1 on de_DE against the heuristic's 0.754: a real margin, but over a corpus so
-clean that the model sat at its ceiling and the sweep had nothing left to rank.
-At the values above the model reaches about 0.96 and the heuristic about 0.72,
-both visibly imperfect, and the learning rate still moves the result. Turning
-them further up (dropout 0.50) takes the heuristic to 0.60 and starts measuring
-how much signal was removed rather than what a classifier is worth.
+serious one. Three settings were tried, and the middle one is what is published:
+
+* **too easy** (dropout 0.18, generic 0.22, placeholders 0.35, autocomplete
+  present 0.35 and correct 0.80): the model reached 0.994 macro F1 on de_DE
+  against the heuristic's 0.754. A real margin, but over a corpus so clean that
+  the model sat at its ceiling and the sweep had nothing left to rank;
+* **the values above**: the model reaches about 0.96 and the heuristic about
+  0.72, both visibly imperfect, and the learning rate still moves the result;
+* **too hard** (dropout 0.50): the heuristic falls to 0.60, and what is being
+  measured is how much signal was removed rather than what a classifier is
+  worth.
 
 Every corpus writes these values into `meta.json` beside it, because a
 difficulty setting nobody wrote down makes every number downstream
@@ -81,21 +101,32 @@ unreproducible.
 
 ## Features and model
 
+### The features
+
 Hashed character n grams, n in 3 to 5, over six namespaced signals (`label:`,
 `name:`, `ph:`, `ac:`, `type:`, `ctx:`), folded into 2^16 slots with
-`zlib.crc32`. Never `hash()`: Python randomises string hashing per process, so a
-model trained in one process would score differently in the next and nothing
-would say so. An absent signal emits an explicit `<absent>` marker, because a
-missing label is evidence rather than the absence of evidence, and a constant
-`bias:1` token gives the model its intercept without a dense column.
+`zlib.crc32`.
 
-The model is multinomial logistic regression in pure numpy: softmax cross
-entropy, minibatch SGD with momentum, L2, seeded reshuffling per epoch. L2 and
-momentum are applied to the rows a batch TOUCHES rather than to the whole
+Never `hash()`: Python randomises string hashing per process, so a model trained
+in one process would score differently in the next and nothing would say so.
+
+Two details do work that is easy to miss:
+
+* an absent signal emits an explicit `<absent>` marker, because a missing label
+  is evidence rather than the absence of evidence;
+* a constant `bias:1` token gives the model its intercept without a dense
+  column.
+
+### The model
+
+Multinomial logistic regression in pure numpy: softmax cross entropy, minibatch
+SGD with momentum, L2, seeded reshuffling per epoch.
+
+L2 and momentum are applied to the rows a batch TOUCHES rather than to the whole
 65,536 by 19 matrix, which is the standard sparse linear update and is what
-makes the sweep fit in the time budget; the consequence, that a weight's
-momentum decays in its own step count, is written down in the module rather
-than left to be found in the numbers.
+makes the sweep fit in the time budget. The consequence, that a weight's
+momentum decays in its own step count, is written down in the module rather than
+left to be found in the numbers.
 
 ## The measured results
 
@@ -326,16 +357,20 @@ and a simulation that updated on skips would be reporting numbers from full
 feedback while calling itself a bandit.
 
 The arms are `(locale, cost tier, equal mass confidence bucket)`, which is 2 x 4
-x 5 = **40 cells**. Pooling the nineteen predicted types down to their four cost
-tiers is deliberate: the arms have to be learnable from one pass over a few
-hundred decisions, and `2 x 19 x 5` arms would leave most of them with three
-observations and turn the simulation into a demonstration of the prior. The
-fitted threshold policy uses all nineteen types because it is fitted offline on
-the whole split at once, where support is not the binding constraint. Bucket
-edges are equal MASS, the same choice the calibration bins make and for the same
-reason. Arm indices are computed arithmetically from integer codes rather than
-from a dictionary keyed by tuples, and every draw comes from one `SeedSequence`,
-so the whole simulation is byte reproducible under its seed.
+x 5 = **40 cells**. Four choices went into that:
+
+* **the nineteen predicted types are pooled down to their four cost tiers.** The
+  arms have to be learnable from one pass over a few hundred decisions, and
+  `2 x 19 x 5` arms would leave most of them with three observations and turn
+  the simulation into a demonstration of the prior;
+* **the fitted threshold policy still uses all nineteen types**, because it is
+  fitted offline on the whole split at once, where support is not the binding
+  constraint;
+* **bucket edges are equal MASS**, the same choice the calibration bins make and
+  for the same reason;
+* **arm indices are computed arithmetically** from integer codes rather than
+  from a dictionary keyed by tuples, and every draw comes from one
+  `SeedSequence`, so the whole simulation is byte reproducible under its seed.
 
 Over 287 decisions it gave up **42.00 of reward against the best fixed policy**,
 which is 0.1463 per decision. That gap is the price of learning the policy
@@ -359,14 +394,19 @@ On the held out test split the same thresholds do NOT beat always filling:
 
 341 rows, thresholds fitted on val and scored here, so this is the version of
 the claim that costs something. The head is 0.9853 accurate on this split
-against 0.9547 on validation, and that is the whole explanation: **the value of
-a skip policy scales with the error rate.** When the classifier is wrong three
-times in two hundred, the fills a threshold gives up are worth more than the
-mistakes it prevents. There is a second effect underneath it, worth naming
-because it is the reason the per type policy also loses to the single global
-cut here: nineteen thresholds fitted on 287 rows generalise worse than one, and
-the support floor of twenty shrinks most types onto the global cut but not all
-of them.
+against 0.9547 on validation, and that is the whole explanation:
+
+!!! warning "The value of a skip policy scales with the error rate"
+
+    When the classifier is wrong three times in two hundred, the fills a
+    threshold gives up are worth more than the mistakes it prevents. A near
+    perfect classifier does not need a decision layer, and this table is what
+    that looks like when it is measured rather than assumed.
+
+There is a second effect underneath it, worth naming because it is the reason
+the per type policy also loses to the single global cut here: nineteen
+thresholds fitted on 287 rows generalise worse than one, and the support floor
+of twenty shrinks most types onto the global cut but not all of them.
 
 The online row moves with it: the best fixed policy here is always filling, and
 the Thompson run gave up 37.00 of reward against it over 341 decisions, 0.1085

@@ -31,37 +31,60 @@ theme:
   name: material
   features:
     - content.code.copy
+    # Top level sections become tabs, so the five areas of the site are visible
+    # at once instead of as one long list a reader has to scroll to understand.
+    - navigation.tabs
     - navigation.sections
     - navigation.top
+    - navigation.tracking
     - search.highlight
+    - search.suggest
     - toc.follow
+  font:
+    # Material injects these as web fonts and its own stack keeps a real system
+    # fallback behind them (`-apple-system`, Helvetica, Arial, sans-serif), so a
+    # reader with no network gets a clean sans rather than a serif default.
+    text: Inter
+    code: JetBrains Mono
   palette:
     # The report itself commits to one light theme on purpose (it gets
     # screenshotted into other documents). A documentation site is read rather
-    # than pasted, so this one follows the reader.
+    # than pasted, so this one follows the reader, and the accent in both
+    # schemes is the report's own blue rather than a theme default.
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
 
+extra_css:
+  - stylesheets/extra.css
+
 nav:
   - Home: index.md
-  - Install: install.md
-  - Quickstart: quickstart.md
-  - Library tutorial: library.md
-  - Methodology: methodology.md
-  - The autofill vertical: autofill.md
-  - The local LLM layer: llm.md
-  - Ecosystem: ecosystem.md
-  - Design decisions: DESIGN_DECISIONS.md
-  - Engineering log: ENGINEERING_LOG.md
-  - API reference: api.md
+  - Getting started:
+      - Install: install.md
+      - Quickstart: quickstart.md
+      - Library tutorial: library.md
+  - The method:
+      - Methodology: methodology.md
+      - Design decisions: DESIGN_DECISIONS.md
+  - In practice:
+      - The autofill vertical: autofill.md
+      - The local LLM layer: llm.md
+      - Ecosystem: ecosystem.md
+  - Reference:
+      - API reference: api.md
+      - Engineering log: ENGINEERING_LOG.md
 
 plugins:
   - search

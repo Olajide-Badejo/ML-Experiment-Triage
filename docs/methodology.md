@@ -83,14 +83,17 @@ replicates. No distributional form, no equal variances, no independence between
 points within a run, because points within a run are never treated as separate
 observations.
 
-**The design limit, reported rather than hidden.** With three seeds a side there
-are twenty distinct label assignments, so the smallest attainable two sided p
-value is 0.1. No result from that design can ever clear alpha 0.05. The tool
-computes this bound, warns when it exceeds alpha, and classifies such findings as
-`inconclusive: the design cannot reach alpha` rather than as "no change". A
-verdict of "no significant difference" from a design that could not have found
-one is not a finding, and calling it one is the most common way this kind of
-analysis misleads.
+!!! warning "The design limit, reported rather than hidden"
+
+    With three seeds a side there are twenty distinct label assignments, so the
+    smallest attainable two sided p value is 0.1. No result from that design can
+    ever clear alpha 0.05.
+
+    The tool computes this bound, warns when it exceeds alpha, and classifies
+    such findings as `inconclusive: the design cannot reach alpha` rather than
+    as "no change". A verdict of "no significant difference" from a design that
+    could not have found one is not a finding, and calling it one is the most
+    common way this kind of analysis misleads.
 
 ## 4. Mode two: single run window block. The weaker claim
 
@@ -117,11 +120,14 @@ the block to fit. A shortened block leaves the block means correlated, and a
 permutation over correlated blocks produces a null distribution narrower than
 the truth, which is exactly how a test becomes anticonservative.
 
-**What this mode can and cannot claim.** On its own terms it is calibrated: the
-measured type I error is <!-- calibration:blocktypeone -->6.28 percent at a nominal 5, over 1989 cases<!-- /calibration:blocktypeone -->. But
-its null is "these two windows come from the same process", and that is not the
-question anyone is really asking. The question is "would another seed of this
-configuration also be better", and one run per side contains no information
+### What this mode can and cannot claim
+
+On its own terms it is calibrated: the measured type I error is
+<!-- calibration:blocktypeone -->6.28 percent at a nominal 5, over 1989 cases<!-- /calibration:blocktypeone -->.
+
+But its null is "these two windows come from the same process", and that is not
+the question anyone is really asking. The question is "would another seed of
+this configuration also be better", and one run per side contains no information
 about it.
 
 The cost is measured rather than argued. On synthetic runs with realistic seed
@@ -179,45 +185,61 @@ A finding is a regression only if **both** hold:
 The direction is inferred from the tag name (a `loss` falls to improve, an
 `accuracy` rises) and can be overridden.
 
-`alpha` is a separate thing and does not gate significance: it bounds
-*admissibility*, so a design whose smallest attainable p value exceeds it is
-reported as inconclusive rather than as no change. Through v1.0.0 the gate read
-`adjusted_p < alpha` while the rate the reports named was passed to a procedure
-that ignores it, which meant the rate stated was not the rate applied. The
-default rate is 5 percent precisely so that making the field operative changed
-no verdict at defaults.
+### What `alpha` does, now that it does not gate significance
 
-The correction controls the false discovery rate across the
-metrics compared against one baseline, which is the family a reader looks at
-together. Bonferroni was rejected because training metrics are strongly
-correlated and Bonferroni assumes the worst case dependence: on the fifteen p
-values in the original Benjamini and Hochberg paper it rejects three where the
-step up procedure rejects four, and that lost power is real. The implementation
-is tested against exactly that published example.
+`alpha` bounds *admissibility*: a design whose smallest attainable p value
+exceeds it is reported as inconclusive rather than as no change.
 
-**One family per comparison mode, and the inadmissible held out.** The family is
-the metrics compared against one baseline *within one mode*, not across modes.
-Pooling them was wrong: the single run window block mode fires on
-<!-- calibration:weakrange -->54 to 88<!-- /calibration:weakrange --> percent of comparisons under seed variance alone (measured, section 8), so its p
-values sitting in a shared denominator destroy the false discovery control of
-every seed replicated result beside them. Two different claims about the world
-are two families. Separately, a comparison whose smallest attainable p value
-already exceeds alpha can never be a discovery, so counting it in the denominator
-only costs the admissible comparisons power; it is excluded and reported as its
-own group. Every finding records the family it was corrected in, because an
-adjusted p value read without its family means nothing, and `triage compare`
-prints the family sizes above the table.
+Through v1.0.0 the gate read `adjusted_p < alpha` while the rate the reports
+named was passed to a procedure that ignores it, which meant the rate stated was
+not the rate applied. The default rate is 5 percent precisely so that making the
+field operative changed no verdict at defaults.
 
-Findings are ranked by severity: the size of the relative harm, scaled by
-confidence, and halved for the weaker mode so that a weaker claim never outranks
-a stronger claim of the same size. The confidence term is capped at a factor of
-two. Uncapped it spanned 1 to 13, which made it the ranking rather than the tie
-breaker it is documented as: a 3 percent regression at p = 1e-12 scored 39.00
-against 23.98 for a 10 percent regression at p = 0.04, and the bigger problem was
-pointed at second. Confidence now separates regressions of similar size and never
-overturns a difference in size of more than two times. For the same reason
-`best_candidate` prefers a seed replicated improvement over a single run one of
-any size, and names the mode when only the weaker one exists.
+### Why Benjamini Hochberg and not Bonferroni
+
+The correction controls the false discovery rate across the metrics compared
+against one baseline, which is the family a reader looks at together.
+
+Bonferroni was rejected because training metrics are strongly correlated and
+Bonferroni assumes the worst case dependence: on the fifteen p values in the
+original Benjamini and Hochberg paper it rejects three where the step up
+procedure rejects four, and that lost power is real. The implementation is
+tested against exactly that published example.
+
+### One family per comparison mode, and the inadmissible held out
+
+The family is the metrics compared against one baseline *within one mode*, not
+across modes. Pooling them was wrong for two separate reasons:
+
+* the single run window block mode fires on <!-- calibration:weakrange -->54 to 88<!-- /calibration:weakrange --> percent of comparisons
+  under seed variance alone (measured, section 8), so its p values sitting in a
+  shared denominator destroy the false discovery control of every seed
+  replicated result beside them. Two different claims about the world are two
+  families;
+* a comparison whose smallest attainable p value already exceeds alpha can never
+  be a discovery, so counting it in the denominator only costs the admissible
+  comparisons power. It is excluded and reported as its own group.
+
+Every finding records the family it was corrected in, because an adjusted p
+value read without its family means nothing, and `triage compare` prints the
+family sizes above the table.
+
+### Severity ranking
+
+Findings are ranked by the size of the relative harm, scaled by confidence, and
+halved for the weaker mode so that a weaker claim never outranks a stronger
+claim of the same size.
+
+The confidence term is capped at a factor of two. Uncapped it spanned 1 to 13,
+which made it the ranking rather than the tie breaker it is documented as: a 3
+percent regression at p = 1e-12 scored 39.00 against 23.98 for a 10 percent
+regression at p = 0.04, and the bigger problem was pointed at second. Confidence
+now separates regressions of similar size and never overturns a difference in
+size of more than two times.
+
+For the same reason `best_candidate` prefers a seed replicated improvement over
+a single run one of any size, and names the mode when only the weaker one
+exists.
 
 ## 7. What calibration testing changed
 
@@ -284,14 +306,16 @@ corrected with Benjamini Hochberg at 5 percent, and the table is ordered by what
 survives the correction before it is ordered by the size of rho. Ordering by
 magnitude alone put a four point artefact above a corrected finding.
 
-**The limitation, stated plainly.** Rank correlation sees monotone relationships
-and nothing else. A hyperparameter with an optimum in the middle of its swept
-range, which is the normal shape for a learning rate, gives a U shaped
-relationship, and the rank correlation of a U shape is near zero however large
-the effect. The demo sweep in this repository has exactly that shape: learning
-rate drives the largest effects in the sweep and shows the weaker correlation,
-while batch size, swept monotonically, shows the stronger one. A near zero
-correlation here means "not monotone", never "no effect".
+!!! warning "A near zero correlation means not monotone, never no effect"
+
+    Rank correlation sees monotone relationships and nothing else. A
+    hyperparameter with an optimum in the middle of its swept range, which is
+    the normal shape for a learning rate, gives a U shaped relationship, and the
+    rank correlation of a U shape is near zero however large the effect.
+
+    The demo sweep in this repository has exactly that shape: learning rate
+    drives the largest effects in the sweep and shows the weaker correlation,
+    while batch size, swept monotonically, shows the stronger one.
 
 **Sensitivity is association, not causation.** These are correlations across a
 sweep as it was actually run. A parameter only ever varied alongside another

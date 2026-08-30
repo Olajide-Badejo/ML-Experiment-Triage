@@ -120,8 +120,22 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--practical-threshold",
         type=float,
-        default=RegressionConfig.practical_threshold_pct,
-        help="practical gate, as a relative percent",
+        default=None,
+        help=(
+            "practical gate, as a relative percent (default: "
+            f"{RegressionConfig.practical_threshold_pct:g})"
+        ),
+    )
+    parser.add_argument(
+        "--practical-threshold-absolute",
+        type=float,
+        default=None,
+        help=(
+            "practical gate in the metric's own units instead of as a percentage, "
+            "which is the right gate for a metric whose baseline can be zero: a "
+            "relative gate divides by the baseline and quietly downgrades a real "
+            "regression to nothing when it cannot"
+        ),
     )
     parser.add_argument(
         "--fdr",
@@ -175,7 +189,28 @@ def directions_from(args: argparse.Namespace) -> dict[str, bool]:
     return dict.fromkeys(higher, True) | dict.fromkeys(lower, False)
 
 
+def practical_gate_from(args: argparse.Namespace) -> tuple[float | None, float | None]:
+    """The one practical threshold in force, as `(percent, absolute)`.
+
+    `RegressionConfig` requires exactly one of the two, and will not guess which
+    one a caller meant. The command line is where the guessing is legitimate:
+    naming the absolute gate is an unambiguous request for it, so the percentage
+    default steps aside. Naming both is not a request for anything.
+    """
+    percent = getattr(args, "practical_threshold", None)
+    absolute = getattr(args, "practical_threshold_absolute", None)
+    if percent is not None and absolute is not None:
+        raise ComparisonError(
+            "--practical-threshold and --practical-threshold-absolute set two "
+            "different practical gates; a finding clears one gate, so name one"
+        )
+    if absolute is not None:
+        return None, absolute
+    return (RegressionConfig.practical_threshold_pct if percent is None else percent), None
+
+
 def configs_from(args: argparse.Namespace) -> tuple[ComparisonConfig, RegressionConfig]:
+    percent, absolute = practical_gate_from(args)
     return (
         ComparisonConfig(
             window_fraction=args.window_fraction,
@@ -187,7 +222,8 @@ def configs_from(args: argparse.Namespace) -> tuple[ComparisonConfig, Regression
         ),
         RegressionConfig(
             alpha=args.alpha,
-            practical_threshold_pct=args.practical_threshold,
+            practical_threshold_pct=percent,
+            practical_threshold_absolute=absolute,
             false_discovery_rate=args.fdr,
         ),
     )

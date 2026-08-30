@@ -39,16 +39,19 @@ def result(
     higher_is_better: bool = False,
     mode: str = MODE_SEED_REPLICATE,
     min_attainable_p: float = 0.002,
+    baseline_statistic: float = 1.0,
+    effect: float | None = None,
 ) -> ComparisonResult:
+    effect = relative_pct / 100.0 if effect is None else effect
     return ComparisonResult(
         tag=tag,
         baseline="baseline",
         candidate=candidate,
         mode=mode,
         test_name="two sided permutation test on the final window mean",
-        baseline_statistic=1.0,
-        candidate_statistic=1.0 + relative_pct / 100.0,
-        effect=relative_pct / 100.0,
+        baseline_statistic=baseline_statistic,
+        candidate_statistic=baseline_statistic + effect,
+        effect=effect,
         relative_effect_pct=relative_pct,
         effect_size=1.5,
         effect_size_name="Cohen's d",
@@ -254,6 +257,65 @@ def test_the_practical_threshold_is_configurable() -> None:
     )
     assert strict[0].verdict == VERDICT_REGRESSION
     assert lenient[0].verdict == VERDICT_BELOW_THRESHOLD
+
+
+# ------------------------------------------------- the practical gate, E2/D18
+
+
+def test_exactly_one_practical_threshold_may_be_set() -> None:
+    """E2, as the consumer filed it: one gate, stated once, never inferred."""
+    with pytest.raises(ValueError, match="exactly one"):
+        RegressionConfig(practical_threshold_pct=2.0, practical_threshold_absolute=0.5)
+    with pytest.raises(ValueError, match="exactly one"):
+        RegressionConfig(practical_threshold_pct=None, practical_threshold_absolute=None)
+
+    relative = RegressionConfig()
+    absolute = RegressionConfig(practical_threshold_pct=None, practical_threshold_absolute=0.5)
+    assert relative.practical_threshold_pct == 2.0
+    assert absolute.practical_threshold_absolute == 0.5
+
+
+def test_describe_prints_the_threshold_in_force() -> None:
+    assert "2 percent" in RegressionConfig().describe()
+    absolute = RegressionConfig(practical_threshold_pct=None, practical_threshold_absolute=0.5)
+    assert "0.5" in absolute.describe()
+    assert "percent" not in absolute.describe().split("relative")[-1]
+
+
+def test_an_absolute_threshold_saves_a_regression_on_a_zero_baseline() -> None:
+    """D18: a relative gate divides by the baseline, and a baseline can be zero.
+
+    `_relative` returns 0.0 rather than an infinity when the baseline mean is
+    zero or non finite, which is the right thing for the arithmetic and the wrong
+    thing for the verdict: a real half unit regression on a metric that crosses
+    zero was silently downgraded to "below the practical threshold". Stated in
+    the metric's own units it is a regression, which is what it is.
+    """
+    zero_crossing = result(p_value=0.001, relative_pct=0.0, baseline_statistic=0.0, effect=+0.5)
+    downgraded = classify([zero_crossing], RegressionConfig())
+    assert downgraded[0].verdict == VERDICT_BELOW_THRESHOLD
+
+    judged = classify(
+        [zero_crossing],
+        RegressionConfig(practical_threshold_pct=None, practical_threshold_absolute=0.1),
+    )
+    assert judged[0].verdict == VERDICT_REGRESSION
+    assert judged[0].passes_practical_gate
+
+    below = classify(
+        [zero_crossing],
+        RegressionConfig(practical_threshold_pct=None, practical_threshold_absolute=2.0),
+    )
+    assert below[0].verdict == VERDICT_BELOW_THRESHOLD
+
+
+def test_the_old_practical_threshold_keyword_still_works_and_warns() -> None:
+    """One minor version of grace for the keyword the CLI flag is spelled after."""
+    with pytest.warns(DeprecationWarning, match="practical_threshold_pct"):
+        config = RegressionConfig(practical_threshold=10.0)
+    assert config.practical_threshold_pct == 10.0
+    assert config.practical_threshold_absolute is None
+    assert "10 percent" in config.describe()
 
 
 def test_direction_decides_regression_from_improvement() -> None:

@@ -235,6 +235,44 @@ def test_the_fdr_flag_changes_at_least_one_verdict(
     assert tightened != default
 
 
+def test_the_absolute_practical_gate_is_reachable_and_states_itself(
+    database: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E2/D18: the gate in the metric's own units, from the command line.
+
+    The demo's val/loss moves by well under one unit, so an absolute gate of one
+    unit silences every practical verdict while the percentage gate does not.
+    """
+    argv = ["compare", "--database", str(database), "--baseline", BASELINE, "--quiet"]
+    assert main([*argv, "--practical-threshold-absolute", "1.0"]) == 0
+    printed = capsys.readouterr().out
+    assert "an absolute effect of at least 1 in the units of the metric" in printed
+    verdicts = set(_verdicts_from(printed).values())
+    assert "regression" not in verdicts
+    assert "improvement" not in verdicts
+
+
+def test_naming_both_practical_gates_is_a_usage_error(
+    database: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        [
+            "compare",
+            "--database",
+            str(database),
+            "--baseline",
+            BASELINE,
+            "--quiet",
+            "--practical-threshold",
+            "2.0",
+            "--practical-threshold-absolute",
+            "1.0",
+        ]
+    )
+    assert code == 2
+    assert "a finding clears one gate, so name one" in capsys.readouterr().err
+
+
 def test_a_tag_named_in_both_direction_flags_is_a_usage_error(
     database: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

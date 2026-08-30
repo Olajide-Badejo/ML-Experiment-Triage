@@ -161,7 +161,14 @@ A finding is a regression only if **both** hold:
    discovery rate: Benjamini Hochberg at FDR 5 percent by default, configurable
    with `--fdr`.
 2. **Practical.** The relative effect is at least 2 percent, in the harmful
-   direction for that metric.
+   direction for that metric; or, when the gate is set in the metric's own units
+   with `practical_threshold_absolute` (`--practical-threshold-absolute`), the
+   absolute effect is at least that. Exactly one of the two is ever in force, and
+   `describe()` prints the one that is. The absolute form exists because a
+   relative gate divides by the baseline and a baseline can be zero: a metric
+   that crosses zero had genuine regressions silently downgraded to "below the
+   practical threshold", since the relative effect of anything against a zero
+   baseline is reported as 0.0 rather than as an infinity.
 
 The direction is inferred from the tag name (a `loss` falls to improve, an
 `accuracy` rises) and can be overridden.

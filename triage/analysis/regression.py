@@ -5,9 +5,11 @@ pull in opposite directions.
 
 **Too many alerts.** With enough data every difference becomes statistically
 significant, including a 0.05 percent change nobody would act on. So a finding
-must clear a *practical* gate as well as a statistical one: a relative effect of
-at least `practical_threshold_pct`, which is a visible, configurable constant
-rather than a number buried in the code.
+must clear a *practical* gate as well as a statistical one, which is a visible,
+configurable constant rather than a number buried in the code: a relative effect
+of at least `practical_threshold_pct`, or, for a metric whose baseline can be
+zero or whose units mean something on their own, an absolute effect of at least
+`practical_threshold_absolute`. Exactly one of the two is ever in force.
 
 **Too many false alerts.** Testing eight metrics against a baseline at alpha
 0.05 gives roughly a one in three chance of at least one false alarm even when
@@ -24,6 +26,7 @@ severity, so the top of the table is the thing to look at first.
 
 from __future__ import annotations
 
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -58,21 +61,76 @@ class RegressionConfig:
     #: narrowed, because a consumer constructs this dataclass and removing a
     #: field is a break.
     alpha: float = 0.05
-    practical_threshold_pct: float = 2.0
+    #: The practical gate as a percentage of the baseline. Set this or
+    #: `practical_threshold_absolute`, never both and never neither.
+    practical_threshold_pct: float | None = 2.0
+    #: The practical gate in the metric's own units. A relative gate divides by
+    #: the baseline, and a baseline can be zero: `_relative` then returns 0.0,
+    #: which is right for the arithmetic and wrong for the verdict, silently
+    #: downgrading real regressions on metrics that cross zero to "below the
+    #: practical threshold". A metric that carries a unit (a latency in
+    #: microseconds, a reward, a signed delta) belongs on this gate instead.
+    practical_threshold_absolute: float | None = None
     #: The operative statistical gate: a finding is significant when its
     #: Benjamini Hochberg adjusted p value is at or below this rate. Five percent
     #: by default, which is the decision the old alpha gate happened to make, so
     #: making the field operative does not shift anybody's verdicts at defaults.
     false_discovery_rate: float = 0.05
     correct_across: str = "metric"
+    #: DEPRECATED spelling of `practical_threshold_pct`, accepted for one minor
+    #: version and removed in 1.2.0. It is the name the `--practical-threshold`
+    #: flag is spelled after, so it is the one a caller is most likely to have
+    #: written by hand. Passing it sets `practical_threshold_pct` and warns.
+    practical_threshold: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.practical_threshold is not None:
+            warnings.warn(
+                "RegressionConfig(practical_threshold=...) is deprecated and will be "
+                "removed in 1.2.0; pass practical_threshold_pct instead, or "
+                "practical_threshold_absolute for a gate in the metric's own units",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            object.__setattr__(self, "practical_threshold_pct", self.practical_threshold)
+            object.__setattr__(self, "practical_threshold", None)
+
+        relative = self.practical_threshold_pct is not None
+        absolute = self.practical_threshold_absolute is not None
+        if relative == absolute:
+            both_or_neither = "both are set" if relative else "neither is set"
+            raise ValueError(
+                "exactly one of practical_threshold_pct and "
+                f"practical_threshold_absolute must be set, and {both_or_neither}. "
+                "A finding cannot clear two practical gates at once, and a report "
+                "that named one while the code applied the other would be the "
+                "defect this rule exists to prevent. To gate in the metric's own "
+                "units, pass practical_threshold_pct=None alongside "
+                "practical_threshold_absolute"
+            )
+
+    def describe_practical_gate(self) -> str:
+        """The practical gate actually in force, in the terms it is applied in."""
+        if self.practical_threshold_absolute is not None:
+            return (
+                f"an absolute effect of at least {self.practical_threshold_absolute:g} "
+                f"in the units of the metric"
+            )
+        return f"a relative effect of at least {self.practical_threshold_pct:g} percent"
 
     def describe(self) -> str:
         return (
             f"two gates: Benjamini Hochberg at FDR {self.false_discovery_rate:.0%} "
             f"(adjusted p at or below {self.false_discovery_rate:g}, configurable with --fdr), "
-            f"and a relative effect of at least {self.practical_threshold_pct:g} percent; "
+            f"and {self.describe_practical_gate()}; "
             f"alpha {self.alpha:g} bounds admissibility only"
         )
+
+    def clears_practical_gate(self, result: ComparisonResult) -> bool:
+        """Whether this comparison's effect is large enough to be worth acting on."""
+        if self.practical_threshold_absolute is not None:
+            return bool(abs(result.effect) >= self.practical_threshold_absolute)
+        return bool(abs(result.relative_effect_pct) >= self.practical_threshold_pct)
 
 
 @dataclass(frozen=True)
@@ -114,7 +172,8 @@ class Finding:
         return (
             f"{self.verdict}: statistical gate {statistical} "
             f"(adjusted p = {self.adjusted_p:.4f}), practical gate {practical} "
-            f"(|{self.result.relative_effect_pct:+.2f} percent| against a threshold)"
+            f"({self.result.relative_effect_pct:+.2f} percent, "
+            f"{self.result.effect:+.4g} absolute, against the threshold in force)"
         )
 
 
@@ -249,7 +308,7 @@ def classify(
         # inadmissible comparison never faces the gate at all.
         statistical = bool(adjusted_p <= config.false_discovery_rate)
         statistical = statistical and family != FAMILY_INADMISSIBLE
-        practical = bool(abs(result.relative_effect_pct) >= config.practical_threshold_pct)
+        practical = config.clears_practical_gate(result)
 
         if family == FAMILY_INADMISSIBLE:
             verdict = VERDICT_UNDERPOWERED

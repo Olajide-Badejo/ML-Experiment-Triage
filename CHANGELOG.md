@@ -5,6 +5,20 @@ Changelog; versions follow semantic versioning.
 
 ## [Unreleased]
 
+### Added
+
+* **`RegressionConfig.practical_threshold_absolute`, a practical gate in the
+  metric's own units** (`--practical-threshold-absolute` on the command line).
+  Exactly one of `practical_threshold_pct` and `practical_threshold_absolute`
+  may be set, `ValueError` when both or neither, and `describe()` prints the one
+  in force. A relative gate divides by the baseline and a baseline can be zero,
+  in which case the relative effect is reported as 0.0 rather than as an
+  infinity and a genuine regression on a zero crossing metric was silently
+  downgraded to "significant but below the practical threshold". Both fields are
+  now `float | None`. The `practical_threshold` constructor keyword is accepted
+  as a deprecated alias of `practical_threshold_pct` with a `DeprecationWarning`
+  and is removed in 1.2.0.
+
 ### Changed
 
 * **`RegressionConfig.false_discovery_rate` went from inert to operative, with

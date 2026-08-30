@@ -490,3 +490,66 @@ is in `docs/llm.md` in one line.
 heuristic evaluation: under a second. LLM annotation of 90 fields on a cold
 cache: 459.1 s (5.1 s a field), and 0.0 s on a warm one. The whole
 `make demo-autofill` chain: 460.5 s with the LLM step, 16.5 s without it.
+
+---
+
+## 2026-08-30: the agentic demo, in a real browser
+
+Section 5.4 asks for the demo to be run on a real machine and the wall clock
+recorded here rather than only in the docs. Machine: Windows 11, Chrome
+151.0.7922.174 found by choreographer 1.3.0, headless, one browser process for
+all six pages; Ollama 0.32.14 with `mistral-nemo:12b-instruct-2407-q4_K_M` for
+the third arm.
+
+**What was run.** A 4,000 field corpus at seed 0 (six pages, three templates in
+two locales, 71 inputs between them), the thirty run sweep, one evaluation over
+both locales to export `policy.json`, then `triage autofill agentic` three
+times into one output directory, once per engine, filling under the exported
+`per_type_threshold` policy.
+
+| Step | Wall clock |
+|---|---|
+| `autofill generate` (4,000 fields) plus `autofill sweep` (30 runs) | 21 s |
+| `autofill evaluate --locale all --bootstrap 5` | 1 s |
+| `autofill agentic --policy heuristic` (6 pages, browser) | 0.7 s |
+| `autofill agentic --policy model` (6 pages, browser, plus the screenshot) | 0.8 s |
+| `autofill agentic --policy llm` (6 pages, browser, cold cache) | 434.1 s |
+| The same LLM arm on a warm cache | 0.9 s |
+| `ingest` 90 run directories plus `compare` | under 2 s |
+
+**The result table**, 71 fields over six pages, scored against `data-truth`
+read back out of the DOM:
+
+| Engine | Filled | Fill accuracy | Reward per field | Correction cost |
+|---|---:|---:|---:|---:|
+| Keyword rules | 30 | 0.8667 | 0.2394 | 0.0563 |
+| n gram model | 64 | 1.0000 | 0.9014 | 0.0000 |
+| Local LLM, kNN k = 8 | 42 | 0.9286 | 0.4789 | 0.0423 |
+
+Handed to `triage compare` with no autofill specific flag, baseline `rules`:
+`ngram` +151.40% on `task/reward` (p 0.0001, adjusted 0.0002) and +28.19% on
+`task/fill_accuracy` (adjusted 0.0002); `llm` +62.07% and +18.44% (adjusted
+0.0033 and 0.0195). Both learned engines beat the keyword baseline on the task
+metric, and the pure numpy model beats the 12B model at six orders of magnitude
+less wall clock a field, which is the same ordering the validation split gave.
+
+**Two things the browser found that a dictionary would not have.** The first
+run refused every page with "relative path can't be expressed as a file URI",
+because a `file://` URI is absolute by definition and `--pages
+experiments/results/.../pages` is not; the fix is one `resolve()` and there is
+now a test that opens a page by a relative path. The second was cosmetic and
+still worth having: the capture was the emulated 1000 by 900 window rather than
+the page, so a third of the committed PNG was white. The capture now crops to
+the body's box, which is D35a's argument applied to a screenshot nobody had
+taken yet.
+
+**The screenshot.** `assets/images/agentic-demo.png`, the en_US checkout page
+after the model filled it: 1000 pixels wide at device scale factor 1 (D35a),
+recompressed at zlib level 9, **21.8 KB**. For comparison, the same capture at
+the full window height before the crop was 23.5 KB and at scale 2 would have
+been about four times that.
+
+**Cache round trip.** The LLM arm was run twice. The second pass served 71 of 71
+answers from `llm_responses`, made zero HTTP requests, took 0.9 s against
+434.1 s, and wrote a byte identical summary. That is the reproducibility
+property of 6.3 holding for a browser driven run as well as for a split.

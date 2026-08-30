@@ -1,13 +1,19 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 is the floor for PEP 639: the SPDX `license` string and `license-files`
+# below are errors on anything older, and the table and classifier spellings
+# they replace are deprecated with a removal date of 2027-02-18.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ml-experiment-triage"
-version = "1.0.0"
+# Read from `triage/_version.py`, so the number is written once. See
+# [tool.setuptools.dynamic] below.
+dynamic = ["version"]
 description = "Ranked, significance tested comparison of machine learning training runs."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Olajide Badejo" }]
 requires-python = ">=3.12"
 keywords = [
@@ -18,10 +24,23 @@ keywords = [
     "hypothesis-testing",
     "tensorboard",
 ]
+# No `License :: OSI Approved` classifier: with a PEP 639 `license` string
+# above, setuptools>=77 rejects the pair rather than reconciling them.
 classifiers = [
-    "License :: OSI Approved :: MIT License",
+    # Published API, one downstream consumer, and no PyPI release yet. Stable
+    # is a claim about how this has behaved in other people's hands, and this
+    # has not been in other people's hands.
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    # Ships py.typed. The consumer's mypy configuration carries an
+    # `ignore_missing_imports` override for `triage.*` that exists only because
+    # this was missing, and which they can now delete (E1).
+    "Typing :: Typed",
 ]
 # Core is numpy and scipy, and nothing else (E1). The one downstream project
 # that depends on this one uses the statistics layer over JSONL rows: pandas,
@@ -78,11 +97,22 @@ Homepage = "https://github.com/Olajide-Badejo/ML-Experiment-Triage"
 Repository = "https://github.com/Olajide-Badejo/ML-Experiment-Triage"
 Issues = "https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues"
 
+[tool.setuptools.dynamic]
+# `triage._version` is a literal and imports nothing, so setuptools reads it
+# with the AST and never has to import the package. Pointing this at
+# `triage.__version__` would: that value is computed, so setuptools would fall
+# back to importing `triage/__init__.py` inside the isolated build environment,
+# where numpy and scipy are not installed.
+version = { attr = "triage._version.VERSION" }
+
 [tool.setuptools.packages.find]
 include = ["triage*"]
 
 [tool.setuptools.package-data]
 "triage.report" = ["templates/*.html"]
+# PEP 561. Without this the marker is in the source tree and not in the wheel,
+# which is the same as not having it.
+"triage" = ["py.typed"]
 
 [tool.ruff]
 line-length = 100

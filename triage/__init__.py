@@ -35,11 +35,34 @@ order is not a contract, so this one is resolved here, once, deterministically.
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 from typing import TYPE_CHECKING, Any
 
+from triage._version import VERSION
 from triage.ingest import IngestResult, ingest
 
-__version__ = "1.0.0"
+#: The distribution name, which is not the import name. `pip install` and
+#: `importlib.metadata` both want this spelling.
+DISTRIBUTION = "ml-experiment-triage"
+
+
+def _resolve_version() -> str:
+    """What is installed, or what is written in the source when nothing is.
+
+    The installed metadata comes first because it is the version pip resolved
+    and the version another package's requirement was checked against, and
+    because a wheel built from this tree carries `VERSION` in that metadata:
+    for a real install the two are the same string by construction. The
+    fallback is for a plain checkout with nothing installed, where the source
+    is the only version there is.
+    """
+    try:
+        return importlib.metadata.version(DISTRIBUTION)
+    except importlib.metadata.PackageNotFoundError:
+        return VERSION
+
+
+__version__ = _resolve_version()
 __author__ = "Olajide Badejo"
 
 #: `name -> the module that defines it`. The deep path is the contract and this

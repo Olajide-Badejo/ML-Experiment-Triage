@@ -18,6 +18,7 @@ here is written out literally.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import json
 import re
@@ -545,3 +546,113 @@ def test_the_declared_floors_are_the_versions_the_results_were_measured_on() -> 
     assert declared["scipy"] == "1.18"
     assert declared["pandas"] == "3.0"
     assert "plotly>=6.9,<7" in table["optional-dependencies"]["report"]
+
+
+# ---------------------------------------------------- D29: packaging metadata
+
+
+def test_the_version_is_written_in_exactly_one_place() -> None:
+    """D29. pyproject held one literal and triage/__init__.py held another.
+
+    Nothing kept them in step, so a release could ship a wheel whose metadata
+    said one version and whose `__version__` said the other, which is the kind
+    of disagreement a consumer pinning a range discovers late.
+    """
+    root = Path(__file__).resolve().parents[2]
+    with (root / "pyproject.toml").open("rb") as handle:
+        pyproject = tomllib.load(handle)
+
+    assert pyproject["project"]["dynamic"] == ["version"]
+    assert "version" not in pyproject["project"]
+    assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {
+        "attr": "triage._version.VERSION"
+    }
+
+    # And the module setuptools reads must stay importable without the runtime
+    # dependencies, because the build environment does not have them.
+    source = (root / "triage" / "_version.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    assignments = [node for node in tree.body if isinstance(node, ast.Assign)]
+    assert len(assignments) == 1
+    assert [target.id for node in assignments for target in node.targets] == ["VERSION"]  # type: ignore[attr-defined]
+    imports = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        and not (isinstance(node, ast.ImportFrom) and node.module == "__future__")
+    ]
+    assert imports == []
+
+
+def test_the_reported_version_is_the_installed_one() -> None:
+    import triage
+    from triage._version import VERSION
+
+    assert triage.__version__ == importlib.metadata.version(triage.DISTRIBUTION)
+    assert re.fullmatch(r"\d+\.\d+\.\d+", VERSION), VERSION
+
+
+def test_the_version_falls_back_to_the_source_outside_an_install() -> None:
+    """A checkout with nothing installed still has a version to report."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib.metadata as m, triage\n"
+            "m.version = lambda name: (_ for _ in ()).throw(m.PackageNotFoundError(name))\n"
+            "from triage._version import VERSION\n"
+            "assert triage._resolve_version() == VERSION\n"
+            "print('fell back')\n",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "fell back" in result.stdout
+
+
+def test_the_package_ships_its_typing_marker() -> None:
+    """E1. Their mypy override for `triage.*` exists only because this is absent."""
+    root = Path(__file__).resolve().parents[2]
+    assert (root / "triage" / "py.typed").is_file()
+
+    with (root / "pyproject.toml").open("rb") as handle:
+        pyproject = tomllib.load(handle)
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+    assert package_data["triage"] == ["py.typed"]
+    assert "Typing :: Typed" in pyproject["project"]["classifiers"]
+
+
+def test_the_license_is_declared_the_way_setuptools_77_wants_it() -> None:
+    """D29. The table form and the classifier are deprecated together."""
+    root = Path(__file__).resolve().parents[2]
+    with (root / "pyproject.toml").open("rb") as handle:
+        pyproject = tomllib.load(handle)
+
+    assert pyproject["project"]["license"] == "MIT"
+    assert pyproject["project"]["license-files"] == ["LICENSE"]
+    classifiers = pyproject["project"]["classifiers"]
+    assert not any(classifier.startswith("License ::") for classifier in classifiers)
+    assert "setuptools>=77" in pyproject["build-system"]["requires"]
+
+
+def test_the_readme_has_no_relative_links_left_to_break_on_pypi() -> None:
+    """D29. PyPI serves the README from its own domain, with no repository under it.
+
+    Every relative image and document link 404s there, which is what the
+    project's front page looked like to anybody arriving from `pip`.
+    """
+    root = Path(__file__).resolve().parents[2]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    targets = [match.group(2) for match in re.finditer(r'(src|href)="([^"]+)"', readme)]
+    targets += re.findall(r"\]\(([^)]+)\)", readme)
+
+    relative = sorted(
+        {
+            target
+            for target in targets
+            if not target.startswith(("https://", "http://", "#", "mailto:"))
+        }
+    )
+    assert relative == [], relative

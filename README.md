@@ -14,7 +14,7 @@
 <!-- calibration:badge -->
   <img alt="Type I error 4.53 percent" src="https://img.shields.io/badge/measured%20type%20I-4.53%25%20vs%205%25%20nominal-1baf7a">
 <!-- /calibration:badge -->
-  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-52514e"></a>
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-52514e"></a>
 </p>
 
 ---
@@ -43,7 +43,7 @@ The only difference between the two is whether the comparison had seed replicate
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/images/weak-mode-cost-dark.png">
 <!-- calibration:weakmodefigure -->
-  <img alt="False positive rate against seed variance. Comparing single runs fires on 54 to 88 percent of comparisons where the true effect is zero, while the seed replicated comparison stays at 3.8 to 4.1 percent, on the nominal 5 percent line." src="assets/images/weak-mode-cost-light.png">
+  <img alt="False positive rate against seed variance. Comparing single runs fires on 54 to 88 percent of comparisons where the true effect is zero, while the seed replicated comparison stays at 3.8 to 4.1 percent, on the nominal 5 percent line." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/weak-mode-cost-light.png">
 <!-- /calibration:weakmodefigure -->
 </picture>
 
@@ -110,7 +110,7 @@ of the whole null distribution.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/images/calibration-uniformity-dark.png">
-    <img width="620" alt="Measured rejection rate plotted against nominal threshold at 0.05, 0.10, 0.25 and 0.50. All four points sit on the perfect calibration diagonal." src="assets/images/calibration-uniformity-light.png">
+    <img width="620" alt="Measured rejection rate plotted against nominal threshold at 0.05, 0.10, 0.25 and 0.50. All four points sit on the perfect calibration diagonal." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/calibration-uniformity-light.png">
   </picture>
 </p>
 
@@ -123,7 +123,7 @@ formats, ingests them, compares every condition against the baseline, and writes
 contained HTML file.
 
 <p align="center">
-  <img width="820" alt="The generated HTML report, showing the summary tiles, the verdict table ranked by severity with mode badges and confidence intervals, the attached caveats, and the overlaid metric curves." src="assets/images/html-report.png">
+  <img width="820" alt="The generated HTML report, showing the summary tiles, the verdict table ranked by severity with mode badges and confidence intervals, the attached caveats, and the overlaid metric curves." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/html-report.png">
 </p>
 
 ### The verdict table
@@ -160,7 +160,7 @@ above, appearing in the demo itself. It is why the row carries a label.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/images/val-loss-curves-dark.png">
-  <img alt="Validation loss for seven conditions in their converged region. Each line is the mean across seeds and each band is the full range across seeds. The two regressions sit clearly apart from the baseline, while the negligible condition overlaps it almost entirely." src="assets/images/val-loss-curves-light.png">
+  <img alt="Validation loss for seven conditions in their converged region. Each line is the mean across seeds and each band is the full range across seeds. The two regressions sit clearly apart from the baseline, while the negligible condition overlaps it almost entirely." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/val-loss-curves-light.png">
 </picture>
 
 Each line is the mean across seeds; each band is the **full range across seeds** of that
@@ -179,7 +179,7 @@ account for. With the band drawn you can see it directly:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/images/val-accuracy-curves-dark.png">
-  <img alt="Validation accuracy for the same seven conditions, showing the same ordering with the sign reversed." src="assets/images/val-accuracy-curves-light.png">
+  <img alt="Validation accuracy for the same seven conditions, showing the same ordering with the sign reversed." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/val-accuracy-curves-light.png">
 </picture>
 
 </details>
@@ -193,12 +193,12 @@ spread rather than within run measurement noise. The statistic itself uses a nin
 
 | Document | What is in it |
 |---|---|
-| **[Main report (PDF, 17 pages)](report/main.pdf)** | Background, exact methodology for both modes, implementation, measured results, discussion and limitations |
-| **[Debug report (PDF, 6 pages)](report_debug/debug_report.pdf)** | Nine problems hit during the build, each with symptom, root cause, the options considered, the fix and its verification |
-| [Methodology](docs/methodology.md) | The statistics written out for a sceptical reader |
-| [Design decisions](docs/DESIGN_DECISIONS.md) | What was chosen, what was rejected, and what would change my mind |
-| [Engineering log](docs/ENGINEERING_LOG.md) | Dated entries behind the debug report |
-| [Build record](PROGRESS.md) | Phase by phase, with the checks run at each gate |
+| **[Main report (PDF, 17 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report/main.pdf)** | Background, exact methodology for both modes, implementation, measured results, discussion and limitations |
+| **[Debug report (PDF, 6 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf)** | Nine problems hit during the build, each with symptom, root cause, the options considered, the fix and its verification |
+| [Methodology](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/methodology.md) | The statistics written out for a sceptical reader |
+| [Design decisions](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/DESIGN_DECISIONS.md) | What was chosen, what was rejected, and what would change my mind |
+| [Engineering log](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/ENGINEERING_LOG.md) | Dated entries behind the debug report |
+| [Build record](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/PROGRESS.md) | Phase by phase, with the checks run at each gate |
 
 ---
 
@@ -355,7 +355,7 @@ Documented, tested, and printed next to the results rather than buried.
 
 ## Engineering notes
 
-A few things worth pulling out of the [debug report](report_debug/debug_report.pdf).
+A few things worth pulling out of the [debug report](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf).
 
 **The calibration suite paid for itself on its first run.** It measured the window block mode at
 a 12% type I error against a nominal 5, in code that looked correct and passed every mechanics
@@ -424,4 +424,4 @@ needed only to rebuild the PDFs, which are committed. Everything runs on CPU.
 
 ## Licence
 
-[MIT](LICENSE). Sole author, Olajide Badejo.
+[MIT](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/LICENSE). Sole author, Olajide Badejo.

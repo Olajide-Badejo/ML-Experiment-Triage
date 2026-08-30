@@ -301,8 +301,14 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
     return output
 
 
-def _format_p(value: float) -> str:
-    """Small p values as a bound rather than a fake precision."""
+def _format_p(value: float | None) -> str:
+    """Small p values as a bound rather than a fake precision.
+
+    `None` is a p value the tool declined to compute, which is a different thing
+    from a large one and is printed as a refusal rather than as a number.
+    """
+    if value is None:
+        return "not reported"
     if value < 0.0001:
         return "below 0.0001"
     return f"{value:.4f}"

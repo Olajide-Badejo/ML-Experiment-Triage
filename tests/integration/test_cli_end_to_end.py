@@ -378,8 +378,12 @@ def test_sensitivity_finds_the_swept_parameters_with_their_counts(database: Path
 
     for result in results:
         assert result.n_runs == len(experiments)
+        assert result.n_variants == len(CONDITIONS)
         assert result.n_distinct_values >= 3
-        assert "n = " in result.p_value_label()
+        # The label carries both counts: the runs behind the correlation and the
+        # conditions, which is the unit the correlation is actually over.
+        assert f"n variants = {len(CONDITIONS)}" in result.p_value_label()
+        assert f"n runs = {len(experiments)}" in result.p_value_label()
 
 
 def test_rank_correlation_is_blind_to_the_non_monotone_learning_rate(database: Path) -> None:

@@ -38,6 +38,20 @@ Changelog; versions follow semantic versioning.
   and `describe()` both now say what it does.
 * `benjamini_hochberg`'s inert `false_discovery_rate` argument defaults to 0.05
   to match. It never changed the returned adjusted values and still does not.
+* **The sensitivity table's inference is corrected end to end.** Seed replicates
+  entered the rank correlation as independent points: five learning rate levels
+  with eight seeds each reported `rho = -0.594, p = 5.3e-05, n = 40` where the
+  correct unit is the condition (n = 5, exact two sided floor 2/120 = 0.0167), a
+  p value about four orders of magnitude too small. Runs are now averaged onto
+  their variant first. The p value comes from `scipy.stats.permutation_test` over
+  the pairings, exact where enumeration is affordable and seeded above it, in
+  place of `scipy.stats.spearmanr`'s t approximation, which returned exactly 0.0
+  at n = 4 and is invalid under ties. The parameter by metric grid is Benjamini
+  Hochberg corrected, results are ranked by what survives that correction before
+  by the size of rho, `n_variants` is reported beside `n_runs`, and below five
+  conditions no p value is reported at all. `SensitivityResult.p_value` and the
+  new `adjusted_p` are therefore `float | None`, and `significant` and
+  `n_variants` are new fields.
 * **The Benjamini Hochberg family is one per comparison mode, and comparisons
   that cannot reach alpha are excluded from the denominator.** Weak mode (single
   run window block) p values were pooled with seed replicated ones, which

@@ -273,6 +273,8 @@ footer dd { margin: 0; }
       <th class="num">Spearman rho</th>
       <th>Strength</th>
       <th class="num">p</th>
+      <th class="num">p adj</th>
+      <th class="num">n variants</th>
       <th class="num">n runs</th>
       <th class="num">distinct values</th>
       <th class="wrap-cell">Reading</th>
@@ -286,6 +288,8 @@ footer dd { margin: 0; }
       <td class="num">{{ item.correlation | signed }}</td>
       <td>{{ item.strength }}</td>
       <td class="num">{{ item.p_value | p }}</td>
+      <td class="num">{{ item.adjusted_p | p }}</td>
+      <td class="num">{{ item.n_variants }}</td>
       <td class="num">{{ item.n_runs }}</td>
       <td class="num">{{ item.n_distinct_values }}</td>
       <td class="wrap-cell">{{ item.direction }}</td>
@@ -295,10 +299,16 @@ footer dd { margin: 0; }
 </table>
 </div>
 <p class="caption">
-  Spearman rank correlation, two sided. The <em>n runs</em> column is not decoration: a correlation
-  of 0.9 over four runs is not evidence of anything. These are associations across the sweep as it
-  was actually run, not controlled effects, so a parameter that only ever changed alongside another
-  cannot be separated from it here.
+  Spearman rank correlation, two sided, with the p value taken from permuting the pairings rather
+  than from a t approximation that is invalid under ties. The unit is the <em>condition</em>, not
+  the run: seed replicates of one setting are averaged onto one point first, because eight seeds
+  of one learning rate are eight measurements of one point and not eight draws of the parameter.
+  The <em>n variants</em> column is therefore not decoration: a correlation of 0.9 over four
+  conditions is not evidence of anything, and below five conditions no p value is reported at all
+  because none could be small enough to mean anything. <em>p adj</em> is Benjamini Hochberg across
+  this whole table, which is one family of questions asked at once. These are associations across
+  the sweep as it was actually run, not controlled effects, so a parameter that only ever changed
+  alongside another cannot be separated from it here.
 </p>
 {% else %}
 <p class="caption">No hyperparameter varied over enough runs to rank correlate against.</p>

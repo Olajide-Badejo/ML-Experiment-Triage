@@ -238,14 +238,38 @@ all.
 ## 8. Sensitivity, and what it cannot see
 
 Spearman rank correlation between each numeric hyperparameter and the final
-window statistic, one correlation per parameter per metric, with `n` always
-printed beside it.
+window statistic, one correlation per parameter per metric, with both counts
+always printed beside it.
 
 **Null hypothesis.** The parameter and the metric are independent.
 
 **Rank correlation rather than ANOVA** because sweeps are unbalanced (people add
 runs where the results looked interesting) and hyperparameter effects are
 usually monotone but strongly nonlinear.
+
+**The unit is the condition, not the run.** Seed replicates of one setting are
+averaged onto one point before anything is correlated. Feeding them in as
+independent points was the most expensive error in this module: measured on five
+learning rate levels with eight seeds each, it reported
+`rho = -0.594, p = 5.3e-05, n = 40`, where the honest answer over five points
+cannot be smaller than the exact two sided floor of 2/120 = 0.0167. That is about
+four orders of magnitude of fabricated confidence, and it looks exactly like a
+finding. Both `n_variants` and `n_runs` are reported so the difference is visible
+rather than inferred.
+
+**The p value is a permutation over the pairings**, enumerated exactly while the
+number of conditions permits and resampled from the recorded seed above it.
+`scipy.stats.spearmanr`'s own p value is a t approximation that returns exactly
+0.0 at n = 4 (verified) and is invalid under ties, which a swept grid produces
+constantly. Below five conditions no p value is reported at all, because none
+could be small enough to mean anything: the smallest two sided p over 4! pairings
+is 2/24 = 0.083.
+
+**The grid is a family.** Every correlation in the table is a question asked at
+the same time off the same sweep, so the whole parameter by metric grid is
+corrected with Benjamini Hochberg at 5 percent, and the table is ordered by what
+survives the correction before it is ordered by the size of rho. Ordering by
+magnitude alone put a four point artefact above a corrected finding.
 
 **The limitation, stated plainly.** Rank correlation sees monotone relationships
 and nothing else. A hyperparameter with an optimum in the middle of its swept

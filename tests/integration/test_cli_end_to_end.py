@@ -25,6 +25,12 @@ from triage.analysis.sensitivity import analyse
 from triage.cli import main
 from triage.core.store import Store
 
+#: The date and time the report footer stamps, to the minute. The zone name
+#: beside it is deliberately left alone: it cannot differ between two runs in
+#: one process, and a pattern loose enough to swallow it swallowed the words
+#: after it too.
+TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+
 WORST_CONDITION = "lr0.0100_bs32"
 NEGLIGIBLE_CONDITION = "lr0.0010_bs64"
 SINGLE_SEED_CONDITION = "lr0.0030_bs128"
@@ -351,8 +357,14 @@ def test_report_is_byte_identical_when_rerun(database: Path, tmp_path: Path) -> 
             ]
         )
         text = path.read_text(encoding="utf-8")
-        # The generation timestamp is the one thing that legitimately differs.
-        outputs.append([line for line in text.splitlines() if "Generated" not in line])
+        # The generation timestamp is the one thing that legitimately differs, so
+        # it is masked wherever it appears. Dropping the lines that hold the word
+        # "Generated" did not do that: the template writes it in lower case in
+        # both places, so nothing was ever dropped and the test passed only while
+        # the two reports happened to land in the same minute. Building them
+        # takes about nine seconds each, so it failed roughly one run in six, on
+        # a gate whose whole subject is reproducibility.
+        outputs.append(TIMESTAMP.sub("<timestamp>", text).splitlines())
     assert outputs[0] == outputs[1]
 
 

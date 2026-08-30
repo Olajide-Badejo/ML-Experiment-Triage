@@ -70,7 +70,11 @@ SERIES_COLOURS = (
 SERIES_DASHES = ("solid", "dash", "longdash", "dashdot")
 BASELINE_COLOUR = "#52514e"  # secondary ink: the baseline is a reference, not a series
 SURFACE = "#fcfcfb"
-MUTED_INK = "#898781"
+#: Muted ink, mirrored into `--muted` in the template. Measured at 5.03:1 on
+#: `SURFACE`, which clears WCAG AA for the normal size text it styles: table
+#: headers, tile labels, captions, and every axis on every chart. The value it
+#: replaced was 3.50:1, which does not.
+MUTED_INK = "#6f6d68"
 GRID = "#e1e0d9"
 AXIS = "#c3c2b7"
 

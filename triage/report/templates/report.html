@@ -17,7 +17,10 @@
   --plane: #f9f9f7;
   --ink: #0b0b0b;
   --ink-2: #52514e;
-  --muted: #898781;
+  /* Mirrored from MUTED_INK in html_report.py, and a unit test asserts the two
+     agree. Measured 5.03:1 on --surface; the value it replaced was 3.50:1,
+     which fails WCAG AA for the normal size text this styles. */
+  --muted: #6f6d68;
   --grid: #e1e0d9;
   --rule: #c3c2b7;
   --good: #0ca30c;
@@ -79,6 +82,15 @@ td.wrap-cell { white-space: normal; min-width: 260px; }
 .figure { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 8px 0; margin-bottom: 10px; overflow-x: auto; }
 .caption { color: var(--muted); font-size: 12.5px; margin: 0 0 26px; max-width: 88ch; }
 
+/* Each table carries a caption naming it, which is what gives the table an
+   accessible name when a screen reader lists the tables on the page. It is not
+   shown, because the heading directly above every table already says the same
+   thing to a reader who can see it, and printing both would be noise. */
+caption.named {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
 .note {
   background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warning);
   border-radius: 6px; padding: 12px 16px; margin: 14px 0; font-size: 13.5px; color: var(--ink-2);
@@ -104,6 +116,8 @@ footer dd { margin: 0; }
   </p>
 </header>
 
+<main>
+
 <p class="lede">
   Every p value below is labelled with the test and the mode that produced it. Results from the
   single run mode are marked as a weaker claim, because that mode cannot see seed to seed
@@ -113,7 +127,7 @@ footer dd { margin: 0; }
 
 {% set regressions = context.triage.regressions %}
 {% set improvements = context.triage.improvements %}
-<div class="tiles">
+<div class="tiles" role="group" aria-label="Headline counts">
   <div class="tile {% if regressions %}bad{% endif %}">
     <div class="value">{{ regressions | length }}</div>
     <div class="label">regressions</div>
@@ -135,19 +149,20 @@ footer dd { margin: 0; }
 <h2>Verdicts, ranked by severity</h2>
 <div class="scroll">
 <table>
+  <caption class="named">Verdicts for every candidate condition on every metric, ranked by severity</caption>
   <thead>
     <tr>
-      <th>Candidate</th>
-      <th>Metric</th>
-      <th>Verdict</th>
-      <th>Mode</th>
-      <th class="num">Baseline</th>
-      <th class="num">Candidate</th>
-      <th class="num">Change</th>
-      <th class="num">95% interval</th>
-      <th class="num">p (raw)</th>
-      <th class="num">p (BH adjusted)</th>
-      <th class="num">n</th>
+      <th scope="col">Candidate</th>
+      <th scope="col">Metric</th>
+      <th scope="col">Verdict</th>
+      <th scope="col">Mode</th>
+      <th class="num" scope="col">Baseline</th>
+      <th class="num" scope="col">Candidate</th>
+      <th class="num" scope="col">Change</th>
+      <th class="num" scope="col">95% interval</th>
+      <th class="num" scope="col">p (raw)</th>
+      <th class="num" scope="col">p (BH adjusted)</th>
+      <th class="num" scope="col">n</th>
     </tr>
   </thead>
   <tbody>
@@ -203,11 +218,12 @@ footer dd { margin: 0; }
 <h2>Comparisons not made</h2>
 <div class="scroll">
 <table>
+  <caption class="named">Comparisons the analysis declined to make, and the reason for each</caption>
   <thead>
     <tr>
-      <th>Condition</th>
-      <th>Metric</th>
-      <th class="wrap-cell">Why the comparison was refused</th>
+      <th scope="col">Condition</th>
+      <th scope="col">Metric</th>
+      <th class="wrap-cell" scope="col">Why the comparison was refused</th>
     </tr>
   </thead>
   <tbody>
@@ -231,7 +247,8 @@ footer dd { margin: 0; }
 <h2>Curves</h2>
 {% for tag, figure in figures.items() %}
 <h3>{{ tag }}</h3>
-<div class="figure">{{ figure | safe }}</div>
+<div class="figure" role="img"
+     aria-label="Curve of {{ tag }} over training steps, one line per condition with the spread across seeds as a band. The same numbers are in the tables above and below.">{{ figure | safe }}</div>
 {% if tag not in compared %}
 <div class="note">
   <strong>{{ tag }} was not compared against the baseline.</strong>
@@ -256,12 +273,13 @@ footer dd { margin: 0; }
 <h2>Run inventory</h2>
 <div class="scroll">
 <table>
+  <caption class="named">One row per condition: seeds, source format, and the final window statistic per metric</caption>
   <thead>
     <tr>
-      <th>Condition</th>
-      <th class="num">Seeds</th>
-      <th>Source format</th>
-      {% for tag in figures.keys() %}<th class="num">{{ tag }} (mean, sd)</th>{% endfor %}
+      <th scope="col">Condition</th>
+      <th class="num" scope="col">Seeds</th>
+      <th scope="col">Source format</th>
+      {% for tag in figures.keys() %}<th class="num" scope="col">{{ tag }} (mean, sd)</th>{% endfor %}
     </tr>
   </thead>
   <tbody>
@@ -292,18 +310,19 @@ footer dd { margin: 0; }
 {% if context.sensitivity %}
 <div class="scroll">
 <table>
+  <caption class="named">Rank correlation of each swept hyperparameter against each metric</caption>
   <thead>
     <tr>
-      <th>Parameter</th>
-      <th>Metric</th>
-      <th class="num">Spearman rho</th>
-      <th>Strength</th>
-      <th class="num">p</th>
-      <th class="num">p adj</th>
-      <th class="num">n variants</th>
-      <th class="num">n runs</th>
-      <th class="num">distinct values</th>
-      <th class="wrap-cell">Reading</th>
+      <th scope="col">Parameter</th>
+      <th scope="col">Metric</th>
+      <th class="num" scope="col">Spearman rho</th>
+      <th scope="col">Strength</th>
+      <th class="num" scope="col">p</th>
+      <th class="num" scope="col">p adj</th>
+      <th class="num" scope="col">n variants</th>
+      <th class="num" scope="col">n runs</th>
+      <th class="num" scope="col">distinct values</th>
+      <th class="wrap-cell" scope="col">Reading</th>
     </tr>
   </thead>
   <tbody>
@@ -339,6 +358,8 @@ footer dd { margin: 0; }
 {% else %}
 <p class="caption">No hyperparameter varied over enough runs to rank correlate against.</p>
 {% endif %}
+
+</main>
 
 <footer>
   <h3 style="margin-top:0">Methodology and reproducibility</h3>

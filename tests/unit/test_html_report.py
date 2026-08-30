@@ -442,3 +442,94 @@ def test_a_report_under_the_size_limit_says_nothing(
     with caplog.at_level(logging.WARNING, logger="triage.report"):
         render(build([], "base"), tmp_path / "empty.html")
     assert not caplog.records
+
+
+# ----------------------------------------- D26: the page a screen reader gets
+
+
+def relative_luminance(colour: str) -> float:
+    """WCAG 2.1 relative luminance of a `#rrggbb` colour."""
+    channels = [int(colour[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+    linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast_ratio(one: str, other: str) -> float:
+    darker, lighter = sorted((relative_luminance(one), relative_luminance(other)))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_the_muted_ink_clears_wcag_aa_for_the_text_it_styles(tmp_path: Path) -> None:
+    """D26, measured: `#898781` on `#fcfcfb` is 3.50:1, and it styles normal
+    size body text: table headers, tile labels, captions and every axis on every
+    chart. AA wants 4.5:1 for that."""
+    html = render_html(tmp_path, two_conditions(["val/loss"]), "base")
+
+    muted = re.search(r"--muted:\s*(#[0-9a-f]{6});", html).group(1)
+    surface = re.search(r"--surface:\s*(#[0-9a-f]{6});", html).group(1)
+
+    assert contrast_ratio(muted, surface) >= 5.0
+    # The charts are drawn in Python and the page in CSS, so the same ink is
+    # written twice and can drift. It must not.
+    assert muted == html_report.MUTED_INK
+    assert surface == html_report.SURFACE
+
+
+def every_section() -> list[Experiment]:
+    """A sweep that fills all four tables: verdicts, refusals, inventory, sensitivity.
+
+    Six conditions over a swept learning rate give the rank correlation enough
+    to work with, and one condition too short for any calibrated test puts a row
+    in the refusals table.
+    """
+    runs = []
+    for index in range(6):
+        name = "base" if index == 0 else f"c{index:02d}"
+        for seed in range(3):
+            runs.append(
+                make_run(
+                    f"{name}-{seed}",
+                    name,
+                    seed,
+                    ["val/loss"],
+                    offset=0.02 * index,
+                    noise_seed=1000 * index + seed,
+                    config={"lr": 0.001 * (index + 1)},
+                )
+            )
+    runs.append(
+        make_run("tiny-0", "tiny", 0, ["val/loss"], n_points=6, noise_seed=7, config={"lr": 0.05})
+    )
+    return runs
+
+
+def test_every_table_names_itself_and_scopes_its_headers(tmp_path: Path) -> None:
+    markup = markup_of(render_html(tmp_path, every_section(), "base"))
+
+    tables = len(re.findall(r"<table\b", markup))
+    assert tables == 4, "verdicts, refusals, run inventory and sensitivity"
+    assert len(re.findall(r"<caption\b", markup)) == tables
+
+    headers = re.findall(r"<th\b[^>]*>", markup)
+    assert headers
+    assert all('scope="col"' in header for header in headers)
+
+
+def test_the_page_has_one_main_landmark(tmp_path: Path) -> None:
+    markup = markup_of(render_html(tmp_path, two_conditions(["val/loss"]), "base"))
+    assert len(re.findall(r"<main\b", markup)) == 1
+    assert "</main>" in markup
+
+
+def test_every_figure_is_labelled_for_a_reader_who_cannot_see_it(tmp_path: Path) -> None:
+    """A chart is a canvas of nothing to anyone not looking at it, so it has to
+    say what it is."""
+    html = render_html(tmp_path, baseline_is_missing_a_metric(), "base")
+    markup = markup_of(html)
+
+    figures = re.findall(r'<div class="figure"[^>]*>', markup)
+    assert len(figures) == len(GRAPH_DIV.findall(html)) == 2
+    for figure in figures:
+        assert 'role="img"' in figure
+        assert "aria-label=" in figure
+    assert "val/loss" in markup

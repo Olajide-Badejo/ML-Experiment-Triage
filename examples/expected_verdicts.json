@@ -11,7 +11,7 @@
       "verdict": "regression",
       "relative_effect_pct": 38.6716,
       "p_value": 0.0079,
-      "adjusted_p": 0.0159
+      "adjusted_p": 0.0198
     },
     {
       "candidate": "lr0.0003_bs32",
@@ -20,7 +20,7 @@
       "verdict": "regression",
       "relative_effect_pct": 20.271,
       "p_value": 0.0079,
-      "adjusted_p": 0.0159
+      "adjusted_p": 0.0198
     },
     {
       "candidate": "lr0.0100_bs32",
@@ -29,7 +29,7 @@
       "verdict": "regression",
       "relative_effect_pct": -5.0345,
       "p_value": 0.0079,
-      "adjusted_p": 0.0159
+      "adjusted_p": 0.0198
     },
     {
       "candidate": "lr0.0030_bs32",
@@ -38,7 +38,7 @@
       "verdict": "improvement",
       "relative_effect_pct": -19.5247,
       "p_value": 0.0079,
-      "adjusted_p": 0.0159
+      "adjusted_p": 0.0198
     },
     {
       "candidate": "lr0.0030_bs128_seed0",
@@ -47,7 +47,7 @@
       "verdict": "improvement",
       "relative_effect_pct": -16.6359,
       "p_value": 0.0001,
-      "adjusted_p": 0.0006
+      "adjusted_p": 0.0001
     },
     {
       "candidate": "lr0.0030_bs64",
@@ -56,7 +56,7 @@
       "verdict": "improvement",
       "relative_effect_pct": -12.5917,
       "p_value": 0.0238,
-      "adjusted_p": 0.0317
+      "adjusted_p": 0.034
     },
     {
       "candidate": "lr0.0030_bs128_seed0",
@@ -65,7 +65,7 @@
       "verdict": "significant but below the practical threshold",
       "relative_effect_pct": 1.1266,
       "p_value": 0.0001,
-      "adjusted_p": 0.0006
+      "adjusted_p": 0.0001
     },
     {
       "candidate": "lr0.0003_bs32",
@@ -74,7 +74,7 @@
       "verdict": "significant but below the practical threshold",
       "relative_effect_pct": -1.9879,
       "p_value": 0.0238,
-      "adjusted_p": 0.0317
+      "adjusted_p": 0.034
     },
     {
       "candidate": "lr0.0030_bs32",
@@ -83,7 +83,7 @@
       "verdict": "significant but below the practical threshold",
       "relative_effect_pct": 0.9632,
       "p_value": 0.0238,
-      "adjusted_p": 0.0317
+      "adjusted_p": 0.034
     },
     {
       "candidate": "lr0.0030_bs64",
@@ -92,7 +92,7 @@
       "verdict": "no significant change",
       "relative_effect_pct": 0.9127,
       "p_value": 0.0714,
-      "adjusted_p": 0.0857
+      "adjusted_p": 0.0893
     },
     {
       "candidate": "lr0.0010_bs64",
@@ -101,7 +101,7 @@
       "verdict": "no significant change",
       "relative_effect_pct": -0.3849,
       "p_value": 0.4762,
-      "adjusted_p": 0.5195
+      "adjusted_p": 0.5291
     },
     {
       "candidate": "lr0.0010_bs64",

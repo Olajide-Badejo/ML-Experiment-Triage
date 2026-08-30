@@ -287,6 +287,10 @@ def run_compare(args: argparse.Namespace) -> int:
 
     print(f"\n{report.summary()}")
     print(f"gates: {regression_config.describe()}")
+    # An adjusted p value is only readable beside the family it was adjusted in,
+    # and this tool now corrects one family per comparison mode rather than
+    # pooling two different claims about the world into one denominator.
+    print(f"families: {report.family_note()}")
     print(f"statistic: {comparison_config.describe()}\n")
 
     header = f"{'candidate':<28} {'metric':<18} {'change':>9} {'p':>10} {'p adj':>10}  verdict"

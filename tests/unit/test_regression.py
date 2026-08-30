@@ -16,6 +16,7 @@ from triage.analysis.comparison import (
     ComparisonResult,
 )
 from triage.analysis.regression import (
+    FAMILY_INADMISSIBLE,
     VERDICT_BELOW_THRESHOLD,
     VERDICT_IMPROVEMENT,
     VERDICT_NO_CHANGE,
@@ -102,6 +103,78 @@ def test_correction_of_a_single_test_changes_nothing() -> None:
 
 def test_correction_of_nothing_is_nothing() -> None:
     assert benjamini_hochberg([]).size == 0
+
+
+def test_a_weak_mode_p_value_does_not_inflate_the_strong_family() -> None:
+    """D13a: two claim strengths were pooled into one Benjamini Hochberg family.
+
+    The weak mode fires on 53 to 87 percent of comparisons under seed variance
+    alone, so its p values in a shared denominator destroy the FDR control of
+    every strong result beside them. Corrected separately, the seed replicated
+    finding here is a discovery; pooled, its adjusted p would be 0.02 * 5 = 0.10
+    and it would not be.
+    """
+    results = [result(candidate="strong", tag="a", p_value=0.02, relative_pct=+12.0)] + [
+        result(
+            candidate=f"weak{index}",
+            tag=f"w{index}",
+            p_value=0.9,
+            relative_pct=+12.0,
+            mode=MODE_WINDOW_BLOCK,
+        )
+        for index in range(4)
+    ]
+    findings = classify(results, RegressionConfig())
+
+    assert findings[0].family == MODE_SEED_REPLICATE
+    assert findings[0].adjusted_p == pytest.approx(0.02)
+    assert findings[0].verdict == VERDICT_REGRESSION
+    assert {finding.family for finding in findings[1:]} == {MODE_WINDOW_BLOCK}
+
+
+def test_an_inadmissible_comparison_is_excluded_from_the_denominator() -> None:
+    """D13b: a design that can never reach alpha cannot be a discovery.
+
+    Counting four such comparisons in the denominator only costs the admissible
+    ones power. They are judged inconclusive either way, so they are held out and
+    reported as their own family instead.
+    """
+    results = [result(candidate="real", tag="a", p_value=0.02, relative_pct=+12.0)] + [
+        result(
+            candidate=f"tiny{index}",
+            tag=f"t{index}",
+            p_value=0.5,
+            relative_pct=+12.0,
+            min_attainable_p=0.5,
+        )
+        for index in range(4)
+    ]
+    findings = classify(results, RegressionConfig())
+
+    assert findings[0].adjusted_p == pytest.approx(0.02)
+    assert findings[0].verdict == VERDICT_REGRESSION
+    assert [finding.family for finding in findings[1:]] == [FAMILY_INADMISSIBLE] * 4
+    assert all(finding.verdict == VERDICT_UNDERPOWERED for finding in findings[1:])
+    assert not any(finding.passes_statistical_gate for finding in findings[1:])
+
+
+def test_the_report_names_the_families_and_holds_the_inadmissible_apart() -> None:
+    findings = classify(
+        [
+            result(candidate="strong", tag="a", p_value=0.02, relative_pct=+12.0),
+            result(candidate="weak", tag="b", p_value=0.02, relative_pct=+12.0,
+                   mode=MODE_WINDOW_BLOCK),
+            result(candidate="tiny", tag="c", p_value=0.5, relative_pct=+12.0,
+                   min_attainable_p=0.5),
+        ],
+        RegressionConfig(),
+    )  # fmt: skip
+    report = TriageReport(findings=findings, baseline="baseline")
+    assert [finding.candidate for finding in report.inadmissible] == ["tiny"]
+    note = report.family_note()
+    assert MODE_SEED_REPLICATE in note
+    assert MODE_WINDOW_BLOCK in note
+    assert "1 excluded as inadmissible" in note
 
 
 # ------------------------------------------------------------- the two gates

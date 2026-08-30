@@ -182,6 +182,19 @@ values in the original Benjamini and Hochberg paper it rejects three where the
 step up procedure rejects four, and that lost power is real. The implementation
 is tested against exactly that published example.
 
+**One family per comparison mode, and the inadmissible held out.** The family is
+the metrics compared against one baseline *within one mode*, not across modes.
+Pooling them was wrong: the single run window block mode fires on 53 to 87
+percent of comparisons under seed variance alone (measured, section 8), so its p
+values sitting in a shared denominator destroy the false discovery control of
+every seed replicated result beside them. Two different claims about the world
+are two families. Separately, a comparison whose smallest attainable p value
+already exceeds alpha can never be a discovery, so counting it in the denominator
+only costs the admissible comparisons power; it is excluded and reported as its
+own group. Every finding records the family it was corrected in, because an
+adjusted p value read without its family means nothing, and `triage compare`
+prints the family sizes above the table.
+
 Findings are ranked by severity: the size of the relative harm, scaled by
 confidence, and halved for the weaker mode so that a weaker claim never outranks
 a stronger claim of the same size.

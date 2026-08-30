@@ -98,17 +98,17 @@ contained HTML file.
 ```text
 candidate            metric           change     p adj  verdict
 ---------------------------------------------------------------
-lr0.0100_bs32        val/loss        +38.67%    0.0159  regression
-lr0.0003_bs32        val/loss        +20.27%    0.0159  regression
-lr0.0100_bs32        val/accuracy     -5.03%    0.0159  regression
-lr0.0030_bs32        val/loss        -19.52%    0.0159  improvement
-lr0.0030_bs128_seed0 val/loss        -16.85%    0.0006  improvement  [weaker mode]
-lr0.0030_bs64        val/loss        -12.59%    0.0317  improvement
-lr0.0030_bs128_seed0 val/accuracy     +1.10%    0.0006  significant but below the practical threshold
-lr0.0003_bs32        val/accuracy     -1.99%    0.0317  significant but below the practical threshold
-lr0.0030_bs32        val/accuracy     +0.96%    0.0317  significant but below the practical threshold
-lr0.0030_bs64        val/accuracy     +0.91%    0.0857  no significant change
-lr0.0010_bs64        val/accuracy     -0.38%    0.5195  no significant change
+lr0.0100_bs32        val/loss        +38.67%    0.0198  regression
+lr0.0003_bs32        val/loss        +20.27%    0.0198  regression
+lr0.0100_bs32        val/accuracy     -5.03%    0.0198  regression
+lr0.0030_bs32        val/loss        -19.52%    0.0198  improvement
+lr0.0030_bs128_seed0 val/loss        -16.64%    0.0001  improvement  [weaker mode]
+lr0.0030_bs64        val/loss        -12.59%    0.0340  improvement
+lr0.0030_bs128_seed0 val/accuracy     +1.13%    0.0001  significant but below the practical threshold  [weaker mode]
+lr0.0003_bs32        val/accuracy     -1.99%    0.0340  significant but below the practical threshold
+lr0.0030_bs32        val/accuracy     +0.96%    0.0340  significant but below the practical threshold
+lr0.0030_bs64        val/accuracy     +0.91%    0.0893  no significant change
+lr0.0010_bs64        val/accuracy     -0.38%    0.5291  no significant change
 lr0.0010_bs64        val/loss         +0.08%    0.9762  no significant change
 
 best condition found: lr0.0030_bs32 (ground truth: lr0.0030_bs32)
@@ -118,9 +118,10 @@ The tool finds the condition that is genuinely best, and does not flag the condi
 effect is real but negligible.
 
 Read the fifth row against the fourth. Both are improvements of about the same size, but the
-single seed condition reports an adjusted p of 0.0006 where the five seed condition reports
-0.0159. That gap is the anticonservatism from the chart above, appearing in the demo itself.
-It is why the row carries a label.
+single seed condition reports an adjusted p of 0.0001 where the five seed condition reports
+0.0198. The two are corrected in separate families, one per comparison mode, so neither is
+inflating the other's denominator; the gap that remains is the anticonservatism from the chart
+above, appearing in the demo itself. It is why the row carries a label.
 
 ### The curves, with seed spread drawn in
 

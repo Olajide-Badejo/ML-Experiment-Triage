@@ -24,6 +24,7 @@ severity, so the top of the table is the thing to look at first.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -35,6 +36,12 @@ VERDICT_IMPROVEMENT = "improvement"
 VERDICT_NO_CHANGE = "no significant change"
 VERDICT_BELOW_THRESHOLD = "significant but below the practical threshold"
 VERDICT_UNDERPOWERED = "inconclusive: the design cannot reach alpha"
+
+#: The family a comparison that can never reach alpha is put in. It is not a
+#: family in the Benjamini Hochberg sense at all: it is the set held out of every
+#: denominator, because a comparison that cannot be a discovery can only cost the
+#: admissible ones power by being counted beside them.
+FAMILY_INADMISSIBLE = "inadmissible"
 
 
 @dataclass(frozen=True)
@@ -78,6 +85,11 @@ class Finding:
     severity: float
     passes_statistical_gate: bool
     passes_practical_gate: bool
+    #: The multiplicity family this finding was corrected inside, which is the
+    #: comparison mode for an admissible result and `FAMILY_INADMISSIBLE` for one
+    #: whose design cannot reach alpha. An adjusted p value means nothing without
+    #: the family it was adjusted within, so the family travels with it.
+    family: str = ""
 
     @property
     def tag(self) -> str:
@@ -149,6 +161,23 @@ def severity_of(result: ComparisonResult, adjusted_p: float) -> float:
     return severity * 0.5 if result.is_weak_mode else severity
 
 
+def family_of(result: ComparisonResult, config: RegressionConfig | None = None) -> str:
+    """The multiplicity family this comparison belongs to.
+
+    The comparison mode is the family, because the mode is the claim: a seed
+    replicated result and a single run window block result are not two tests of
+    the same kind and must not share a denominator. Naming the family after the
+    mode string rather than a fixed table keeps this open, so a caller that
+    builds results in a mode of its own gets its own family instead of being
+    quietly pooled with ours. A comparison that cannot reach alpha is held out of
+    all of them.
+    """
+    config = config or RegressionConfig()
+    if result.min_attainable_p > config.alpha:
+        return FAMILY_INADMISSIBLE
+    return result.mode
+
+
 def classify(
     results: list[ComparisonResult], config: RegressionConfig | None = None
 ) -> list[Finding]:
@@ -159,6 +188,18 @@ def classify(
     every comparison in a large sweep at once would be defensible too, and would
     be far more conservative; the family chosen here is stated in the reports so
     nobody has to infer it.
+
+    **One family per comparison mode, and the inadmissible held out.** A single
+    pooled family was wrong twice over. The single run window block mode fires on
+    53 to 87 percent of comparisons under seed variance alone, measured, so its p
+    values in a shared denominator destroy the false discovery control of every
+    seed replicated result beside them: two different claims about the world do
+    not belong to one family. And a comparison whose smallest attainable p value
+    already exceeds alpha can never be a discovery, so counting it in the
+    denominator can only cost the admissible comparisons power; it is held out
+    and reported as `FAMILY_INADMISSIBLE` instead. Each finding records the
+    family it was judged in, because an adjusted p value without its family is
+    not interpretable.
 
     Findings come back **in the order the results went in**, one per result, so
     that `zip(results, classify(results))` is a valid join. This function used to
@@ -172,19 +213,35 @@ def classify(
     if not results:
         return []
 
-    adjusted = benjamini_hochberg(
-        [result.p_value for result in results], config.false_discovery_rate
-    )
+    families: dict[str, list[int]] = defaultdict(list)
+    for index, result in enumerate(results):
+        families[family_of(result, config)].append(index)
+
+    adjusted = np.empty(len(results), dtype=np.float64)
+    for family, indices in families.items():
+        raw = [results[index].p_value for index in indices]
+        if family == FAMILY_INADMISSIBLE:
+            # Not corrected, because it was not tested: adjusting a p value
+            # inside a family of one and calling it adjusted would be a
+            # dressed up raw p value. The raw value is what is reported.
+            values = np.asarray(raw, dtype=np.float64)
+        else:
+            values = benjamini_hochberg(raw, config.false_discovery_rate)
+        for index, value in zip(indices, values, strict=True):
+            adjusted[index] = value
 
     findings: list[Finding] = []
     for result, adjusted_p in zip(results, adjusted, strict=True):
+        family = family_of(result, config)
         # The gate is the rate the report names. Comparing the step up adjusted
         # value against q is exactly the original Benjamini Hochberg decision,
-        # which is why the adjusted value is what gets printed beside it.
+        # which is why the adjusted value is what gets printed beside it. An
+        # inadmissible comparison never faces the gate at all.
         statistical = bool(adjusted_p <= config.false_discovery_rate)
+        statistical = statistical and family != FAMILY_INADMISSIBLE
         practical = bool(abs(result.relative_effect_pct) >= config.practical_threshold_pct)
 
-        if result.min_attainable_p > config.alpha:
+        if family == FAMILY_INADMISSIBLE:
             verdict = VERDICT_UNDERPOWERED
         elif statistical and practical:
             verdict = VERDICT_IMPROVEMENT if result.improved else VERDICT_REGRESSION
@@ -198,6 +255,7 @@ def classify(
                 result=result,
                 adjusted_p=float(adjusted_p),
                 verdict=verdict,
+                family=family,
                 severity=severity_of(result, float(adjusted_p))
                 if verdict == VERDICT_REGRESSION
                 else 0.0,
@@ -244,6 +302,34 @@ class TriageReport:
     @property
     def improvements(self) -> list[Finding]:
         return [finding for finding in self.findings if finding.is_improvement]
+
+    @property
+    def inadmissible(self) -> list[Finding]:
+        """The comparisons no correction was applied to, because none could help.
+
+        Reported apart from the corrected families rather than mixed into them:
+        these designs cannot reach alpha, so their p values were never candidates
+        for discovery and were kept out of every denominator.
+        """
+        return [finding for finding in self.findings if finding.family == FAMILY_INADMISSIBLE]
+
+    def family_note(self) -> str:
+        """Which families the correction ran in, and how big each one was."""
+        counts: dict[str, int] = defaultdict(int)
+        for finding in self.findings:
+            counts[finding.family] += 1
+        corrected = ", ".join(
+            f"{family} ({count})"
+            for family, count in sorted(counts.items())
+            if family != FAMILY_INADMISSIBLE
+        )
+        held_out = counts.get(FAMILY_INADMISSIBLE, 0)
+        if not corrected:
+            corrected = "no family large enough to correct"
+        return (
+            f"corrected separately per comparison mode: {corrected}"
+            f"; {held_out} excluded as inadmissible"
+        )
 
     @property
     def best_candidate(self) -> str | None:

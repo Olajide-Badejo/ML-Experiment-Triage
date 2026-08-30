@@ -24,6 +24,17 @@ Changelog; versions follow semantic versioning.
   and `describe()` both now say what it does.
 * `benjamini_hochberg`'s inert `false_discovery_rate` argument defaults to 0.05
   to match. It never changed the returned adjusted values and still does not.
+* **The Benjamini Hochberg family is one per comparison mode, and comparisons
+  that cannot reach alpha are excluded from the denominator.** Weak mode (single
+  run window block) p values were pooled with seed replicated ones, which
+  destroys the false discovery control of the whole family given the weak mode's
+  measured 53 to 87 percent false positive rate under seed variance; and
+  comparisons whose `min_attainable_p` already exceeds alpha inflated the
+  denominator while never being able to be discoveries. Each `Finding` now
+  carries the `family` it was corrected in, `TriageReport.inadmissible` and
+  `.family_note()` report the held out group, and `triage compare` prints the
+  family sizes. Adjusted p values on mixed mode sweeps move as a result; verdicts
+  on the demo sweep did not.
 * **`classify()` now returns findings in input order, not severity order.**
   *Addressed to consumers rejoining findings to results:* one `Finding` comes
   back per `ComparisonResult`, positionally, so `zip(results, classify(results))`

@@ -23,6 +23,11 @@ demo or the tests use.
 A directory is claimed as a run only when nothing beneath it is a run: a sweep
 root that happens to hold a stray parseable file is a container, not a run.
 See `discover_runs`.
+
+One source can hold more than one run. MLflow's SQLite backend puts every run
+of every experiment in a single `mlflow.db`, so a claimed path is expanded
+through `Parser.runs_in` before anything downstream sees it, and each run comes
+out with its own path, its own identity and its own fingerprint.
 """
 
 from __future__ import annotations
@@ -211,6 +216,27 @@ class Parser(ABC):
         narrows it straight back to `Experiment`, which a subclass may do.
         """
 
+    def runs_in(self, path: Path) -> list[Path]:
+        """The runs held at `path`, one returned path per run.
+
+        Almost every log format is one run per directory, so the default is the
+        path itself and `discover_runs` behaves exactly as it always has.
+
+        MLflow's supported backend is the exception that forces the hook to
+        exist: one `mlflow.db` holds every run of every experiment (E8). Reading
+        that file as a single `Experiment` would fold several conditions into
+        one row, and giving all of its runs the same path would give them all
+        the same identity, which is the D4 collision by another route. So a
+        parser over a multi run source returns one path per run, and identity,
+        the fingerprint and the parse all key off that path as usual.
+
+        A path returned here need not exist on disk. It is a name this parser
+        gives one run and then has to understand again in `run_id`,
+        `fingerprint` and `parse`, which is why any parser overriding this
+        overrides those too.
+        """
+        return [path]
+
     # ------------------------------------------------------------- shared help
 
     def run_id(self, path: Path, root: Path | None = None) -> str:
@@ -312,6 +338,23 @@ def _claiming_parser(directory: Path, parsers: list[Parser]) -> Parser | None:
     return None
 
 
+def _runs_in(parser: Parser, path: Path) -> list[Path]:
+    """`parser.runs_in(path)`, with a source it cannot open counted as one run.
+
+    Expansion happens during discovery, before the per run error handling in
+    `ingest` exists, so a parser that has to open a file to say how many runs
+    are in it can fail here. Losing the whole sweep over that would break the
+    same promise `_claiming_parser` keeps: the source is left as the single
+    path it was claimed as, and the parse then fails where the failure is
+    reported against one run and the walk continues.
+    """
+    try:
+        return parser.runs_in(path)
+    except Exception as error:
+        LOGGER.warning("%s could not expand %s: %s", type(parser).__name__, path, error)
+        return [path]
+
+
 def _resolved(path: Path) -> Path:
     """`path` with symlinks resolved, or the path itself when that fails."""
     try:
@@ -394,7 +437,7 @@ def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]
         parser = _claiming_parser(root, parsers)
         if parser is not None:
             LOGGER.debug("claim %s as a run (%s, single file)", root, parser.format_name)
-            return [(parser, root)]
+            return [(parser, run) for run in _runs_in(parser, root)]
         LOGGER.debug("skip %s: no parser claims it", root)
         return []
 
@@ -414,7 +457,7 @@ def discover_runs(root: Path, parsers: list[Parser]) -> list[tuple[Parser, Path]
         parser = _claiming_parser(directory, parsers)
         if parser is not None and not _has_parseable_subdirectory(directory, parsers):
             LOGGER.debug("claim %s as a run (%s)", directory, parser.format_name)
-            found.append((parser, directory))
+            found.extend((parser, run) for run in _runs_in(parser, directory))
             continue
         if parser is not None:
             LOGGER.debug(

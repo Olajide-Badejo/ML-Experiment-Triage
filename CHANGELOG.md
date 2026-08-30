@@ -7,6 +7,18 @@ Changelog; versions follow semantic versioning.
 
 ### Added
 
+* **An MLflow parser, for both of MLflow's backends, with no new dependency.**
+  `triage ingest` reads a local `mlflow.db` through the standard library's
+  `sqlite3` and an `mlruns/` file store as the plain text it is, so an MLflow
+  sweep compares like any other and a core install (numpy and scipy) can do it.
+  Params become the run config with numbers read as numbers, metric keys keep
+  their slashes, MLflow's `is_nan` flag is turned back into the NaN it stands
+  for and dropped where every other format's is, and soft deleted runs are not
+  resurrected. One tracking database holds many runs, so `Parser.runs_in`
+  expands a claimed source into one path per run and each is named
+  `<database>/<run_uuid>`, which keeps run identity unique per D4. Fixtures for
+  both layouts are committed and encode the same reference series as every
+  other parser fixture.
 * **Six new calibration arms, covering the designs a permutation test is not
   exact in.** Unequal spreads at 5v5, 3v7 and 7v3 (7.83, 2.08 and 12.92 percent
   type I at a nominal 5, against 8.25, 1.08 and 17.92 for the raw mean

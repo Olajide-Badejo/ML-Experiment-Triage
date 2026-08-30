@@ -118,6 +118,44 @@ already produces.
 A source whose fingerprint changed may have gained tags, lost tags, or been
 rewritten entirely. Merging would leave stale series behind with no way to notice.
 
+### MLflow is read from its files, with no MLflow dependency
+
+**Chosen** because both of MLflow's on disk formats are made of things the
+standard library already opens, and both have stopped moving: the SQLite
+backend is the supported one and its `runs`, `metrics`, `params` and `tags`
+tables are unchanged in the fields used here from MLflow 1.x through 3.x, while
+the `mlruns/` file store went into maintenance mode when MLflow made SQLite the
+default in 3.7 (December 2025). The `meta.yaml` fields that matter are flat
+scalars, so they are extracted with a regular expression rather than by taking a
+PyYAML dependency for them.
+
+**Rejected:** importing MLflow to read MLflow. It would put a large dependency,
+its SQLAlchemy stack and its version policy inside a tool whose core install is
+numpy and scipy, in exchange for reading two file formats that are frozen.
+
+**Rejected:** Weights and Biases, whose local format is not a stable target, and
+a second TensorBoard reader, since `EventAccumulator` is already the supported
+path and `tbparse` merely wraps it.
+
+**What would change my mind:** MLflow changing its tracking schema, which the
+fixtures for both layouts would catch as a failing parse rather than as a wrong
+number.
+
+### One source can hold more than one run
+
+An MLflow tracking database is a single file holding every run of every
+experiment, which is the first source here that is not one directory per run.
+Reading it into one `Experiment` would average conditions together, and giving
+its runs one path would give them one identity, which is the D4 collision by
+another route. So parsers expand a claimed path through `runs_in`, each run gets
+a path of its own (`<database>/<run_uuid>`), and identity, fingerprint and parse
+all key off that path exactly as they do for a directory.
+
+**Known cost, accepted:** the fingerprint of such a run is the fingerprint of
+the whole file, so a database that changed reparses every run in it. The
+alternative, a per run summary out of the shared tables, would miss a value
+rewritten in place, and being conservative here costs time rather than data.
+
 ### Parsers accept both wide and long table shapes
 
 Detected from the header rather than configured. Both shapes occur in the wild,

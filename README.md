@@ -208,11 +208,13 @@ spread rather than within run measurement noise. The statistic itself uses a nin
 flowchart LR
     subgraph sources [Training logs]
         TB[TensorBoard<br/>event files]
+        MLF[MLflow<br/>mlflow.db or mlruns]
         CSV[CSV<br/>wide or long]
         JSONL[JSONL<br/>or JSON]
     end
 
     TB --> P[Parsers]
+    MLF --> P
     CSV --> P
     JSONL --> P
 
@@ -295,6 +297,29 @@ what makes the strong comparison mode available.
 
 </details>
 
+<details>
+<summary>Reading MLflow runs</summary>
+
+Both of MLflow's backends are read directly, with no MLflow installed and no extra needed:
+
+```bash
+triage ingest path/to/mlflow.db --database triage.db   # the SQLite backend
+triage ingest path/to/mlruns    --database triage.db   # the file store
+```
+
+A tracking database holds many runs, so each becomes its own run named
+`<database>/<run_uuid>`; a file store run keeps its directory path. MLflow params become the
+run config, with numbers read as numbers, so an MLflow sweep reaches the sensitivity ranking
+like any other.
+
+**Versions.** The four tables read out of the SQLite backend (`runs`, `metrics`, `params`,
+`tags`) are unchanged in these fields from MLflow 1.x through 3.x, and the `is_nan` column
+added in 1.9 is optional here. The `mlruns/` file store is read as MLflow froze it: MLflow put
+that backend into maintenance mode and made SQLite the default in 3.7 (December 2025), which is
+what makes both targets safe to read without the library.
+
+</details>
+
 ---
 
 ## The method, briefly
@@ -354,6 +379,9 @@ Documented, tested, and printed next to the results rather than buried.
   inconclusive rather than as "no significant change", because a negative result from a design
   that could not have found anything is not a finding.
 - **TensorBoard support covers scalars only.** Histograms and images are out of scope.
+- **MLflow is read from disk, not through its API.** Artifacts, model registry entries and
+  remote tracking servers are out of scope: what is read is a local `mlflow.db` or `mlruns/`
+  tree, which is what a comparison of training curves needs and all of it.
 
 ---
 
@@ -403,7 +431,7 @@ Measured, not estimated. The last row is the one that matters: `git clone` follo
 ```text
 triage/            the library
   core/            Experiment model and SQLite store
-  parsers/         TensorBoard, CSV and JSONL readers
+  parsers/         TensorBoard, MLflow, CSV and JSONL readers
   analysis/        comparison, regression flagging, sensitivity
   report/          self contained HTML reporting
   calibration.py   the measured error rates, as the single source

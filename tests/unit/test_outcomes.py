@@ -162,8 +162,14 @@ def test_an_undeclared_step_free_file_needs_the_flag(fixture_root: Path) -> None
     assert [type(p).__name__ for p in parsers_for(outcomes=True)] == [
         type(p).__name__ for p in parsers_for(outcomes=False)
     ]
-    assert parsers_for(outcomes=True)[2].strict is False
-    assert parsers_for(outcomes=False)[2].strict is True
+
+    # Found by type rather than by position: the order is asserted above, and
+    # pinning an index here made adding a parser look like a behaviour change.
+    def outcomes_parser(flag: bool) -> OutcomesParser:
+        return next(p for p in parsers_for(outcomes=flag) if isinstance(p, OutcomesParser))
+
+    assert outcomes_parser(True).strict is False
+    assert outcomes_parser(False).strict is True
 
 
 # ------------------------------------------------------------------ pairing

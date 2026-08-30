@@ -495,6 +495,42 @@ print("refused")
     assert "refused" in result.stdout
 
 
+def test_a_core_only_install_reads_mlflow_from_both_backends(fixture_root: Path) -> None:
+    """E8 meets E1: the MLflow parser must need nothing but the standard library.
+
+    It is the one parser added after the packaging split, so the temptation to
+    reach for pandas or PyYAML while writing it was real and this is what says
+    it was not taken. Both backends are read in a subprocess with every extra
+    refused at import time.
+    """
+    database = fixture_root / "mlflow_sqlite" / "mlflow.db"
+    file_store = fixture_root / "mlflow_filestore" / "mlruns"
+    body = f"""
+import sys
+from pathlib import Path
+from triage.parsers import MlflowParser, discover_runs
+
+parser = MlflowParser()
+runs = parser.runs_in(Path({str(database)!r}))
+assert len(runs) == 2, runs
+from_database = parser.parse(runs[0])
+assert from_database.tags == ["train/loss", "val/accuracy"], from_database.tags
+
+found = discover_runs(Path({str(file_store)!r}), [parser])
+assert len(found) == 1, found
+from_files = found[0][0].parse(found[0][1])
+assert from_files.tags == from_database.tags
+assert from_files.config == from_database.config
+loaded = sorted(m for m in {HEAVY!r} if m in sys.modules)
+assert loaded == [], loaded
+print("read", len(from_database.series("train/loss")))
+"""
+    result = run_core_only(body)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("read 60")
+
+
 def test_the_missing_extra_error_is_an_import_error() -> None:
     """Callers already guard optional features with `except ImportError`."""
     from triage._extras import MissingExtraError

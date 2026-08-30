@@ -224,12 +224,18 @@ def test_ingest_reads_a_mixed_format_tree(fixture_root: Path, temp_database: Pat
     """
     with Store(temp_database) as store:
         result = ingest(fixture_root, store, parsers=DEFAULT_PARSERS, show_progress=False)
-        assert len(result.added) == 7
+        assert len(result.added) == 10
         assert store.run_ids() == [
             "csv_long/csv_long_run",
             "csv_wide/csv_wide_run",
             "jsonl/jsonl_run",
             "jsonl_truncated/killed_run",
+            # One MLflow file store run, and two runs out of one tracking
+            # database: `runs_in` expands the file, and each run carries the
+            # path to the database it came from so the two cannot collide (E8).
+            "mlflow_filestore/mlruns/0/f1e2d3c4b5a60718293a4b5c6d7e8f90",
+            "mlflow_sqlite/mlflow/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+            "mlflow_sqlite/mlflow/9f8e7d6c5b4a30291817263544332211",
             "tensorboard/tb_run",
             "tpt_jsonl/healthy_steps",
         ]

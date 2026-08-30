@@ -230,6 +230,20 @@ def docs(session: nox.Session) -> None:
     run(session, "scripts/render_calibration_docs.py", *session.posargs)
 
 
+@nox.session(name="docs-site", **IN_PROJECT_VENV)
+def docs_site(session: nox.Session) -> None:
+    """Build the mkdocs site, strict. `nox -s docs-site -- serve` to preview.
+
+    Strict is the only setting worth having: it turns a dead cross reference or
+    a page that fell out of the navigation into a failing build rather than
+    something a reader finds. CI runs exactly this command.
+    """
+    if session.posargs and session.posargs[0] == "serve":
+        run(session, "-m", "mkdocs", "serve", *session.posargs[1:])
+        return
+    run(session, "-m", "mkdocs", "build", "--strict", *session.posargs)
+
+
 @nox.session(**IN_PROJECT_VENV)
 def assets(session: nox.Session) -> None:
     """Regenerate the report figures and tables from the committed database."""

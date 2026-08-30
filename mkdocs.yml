@@ -1,0 +1,108 @@
+# The documentation site (Section 7 item 1), built strict.
+#
+# `mkdocs build --strict` turns every warning into a failure, which is the only
+# setting worth having: a dead cross reference or a page that fell out of the
+# navigation is then a broken build rather than something a reader finds. The
+# same command runs in CI and in `nox -s docs_site`.
+#
+# The API reference is rendered by mkdocstrings from the docstrings in the
+# package. It is deliberately not a second copy of them: a hand written
+# reference drifts from the code the first time somebody changes a signature,
+# and this project already has one single source rule for numbers.
+#
+# Every construct here is plain YAML. Material's documentation reaches for
+# `!!python/name:` tags for a few extensions, and this file uses none of them,
+# because the `check-yaml` commit hook parses it safely and a config that needs
+# `--unsafe` to be read is a config nothing else can read either.
+
+site_name: ML Experiment Triage
+site_description: Ranked, significance tested comparison of machine learning training runs.
+site_author: Olajide Badejo
+site_url: https://olajide-badejo.github.io/ML-Experiment-Triage/
+repo_url: https://github.com/Olajide-Badejo/ML-Experiment-Triage
+repo_name: Olajide-Badejo/ML-Experiment-Triage
+edit_uri: edit/main/docs/
+copyright: MIT licensed. Sole author, Olajide Badejo.
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - toc.follow
+  palette:
+    # The report itself commits to one light theme on purpose (it gets
+    # screenshotted into other documents). A documentation site is read rather
+    # than pasted, so this one follows the reader.
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Quickstart: quickstart.md
+  - Library tutorial: library.md
+  - Methodology: methodology.md
+  - The autofill vertical: autofill.md
+  - The local LLM layer: llm.md
+  - Ecosystem: ecosystem.md
+  - Design decisions: DESIGN_DECISIONS.md
+  - Engineering log: ENGINEERING_LOG.md
+  - API reference: api.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            heading_level: 3
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_heading: true
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+
+# Strict already fails the build on a broken internal link. These make the two
+# quieter classes loud as well: a page that is in the tree but in no nav entry,
+# and an anchor that no heading defines.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Olajide-Badejo/ML-Experiment-Triage
+      name: The repository

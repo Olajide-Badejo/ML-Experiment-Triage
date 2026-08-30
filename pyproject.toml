@@ -85,6 +85,12 @@ dev = [
     # package ships imports it, and a user installing the wheel must not be
     # asked to carry a test framework (D30).
     "hypothesis>=6.100",
+    # The documentation site (Section 7 item 1). Development and CI only: it
+    # builds the site, it is not imported by anything shipped. mkdocstrings
+    # renders the docstrings that already exist rather than a second copy of
+    # them, which is the whole reason the site is allowed to make a claim.
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
     "mypy>=1.11",
     "nox>=2024.4.15",
     # The commit hooks in .pre-commit-config.yaml. Optional to use and pinned

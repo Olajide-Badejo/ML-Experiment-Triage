@@ -18,6 +18,10 @@ build/
 dist/
 *.whl
 
+# The rendered documentation site. It is built by CI and published to Pages from
+# there, so a copy in the tree could only ever be a stale one.
+site/
+
 # Coverage output.
 .coverage
 .coverage.*

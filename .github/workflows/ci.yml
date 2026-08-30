@@ -20,6 +20,8 @@ name: CI
 #   core-only         does a numpy plus scipy install work, which is E1
 #   package           does the built wheel install somewhere new and run
 #   reports           are the committed PDFs the ones this tree builds
+#   docs              does the site build with every warning an error
+#   pages             publishes that site, on a tag only
 #
 # Development happens on Windows and the package claims 3.12, so a matrix of
 # ubuntu alone on 3.13 was testing neither. The calibration gates stay on one
@@ -427,3 +429,64 @@ jobs:
             report/main.pdf
             report_debug/debug_report.pdf
           if-no-files-found: error
+
+  docs:
+    name: The documentation site builds strict
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Section 7 item 1. Strict makes every warning a failure, so a dead cross
+    # reference, a page that fell out of the navigation, or a docstring
+    # mkdocstrings cannot resolve breaks the build here rather than being
+    # something a reader finds. The API reference is generated from the
+    # docstrings, so this job also fails when a rename leaves the reference
+    # pointing at a name that no longer exists.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
+        run: |
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
+
+      - name: Build the site
+        run: nox -s docs-site
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    name: Publish the documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docs, lint, typecheck, test]
+
+    # Deploys on a release tag only. A docs site that redeploys from every
+    # branch push describes whatever was last merged rather than what is
+    # released, and this project publishes measured numbers: the page a reader
+    # lands on has to be the one that matches the version they installed.
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy the artifact built by the docs job
+        id: deployment
+        uses: actions/deploy-pages@v4

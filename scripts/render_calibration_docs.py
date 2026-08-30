@@ -39,6 +39,7 @@ from triage.calibration import (
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
+INDEX = ROOT / "docs" / "index.md"
 METHODOLOGY = ROOT / "docs" / "methodology.md"
 DECISIONS = ROOT / "docs" / "DESIGN_DECISIONS.md"
 
@@ -133,7 +134,15 @@ def regions() -> dict[Path, dict[str, str]]:
         ),
     }
     everything = {**block, **inline}
-    return {README: everything, METHODOLOGY: everything, DECISIONS: everything}
+    # Every document that quotes a measured number, including the landing page
+    # of the documentation site: a number on a published page is a number this
+    # script owns, and a page not listed here is a page that can drift.
+    return {
+        README: everything,
+        INDEX: everything,
+        METHODOLOGY: everything,
+        DECISIONS: everything,
+    }
 
 
 #: One number lives where an HTML comment cannot: inside a mermaid diagram,

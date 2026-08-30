@@ -16,8 +16,8 @@
 
 .PHONY: all help env lock lint fmt check-style check-fixtures typecheck test \
         test-unit test-stats test-property test-integration demo verify-demo assets \
-        calibration-docs check-calibration-docs html report report-debug \
-        images pdfs package clean distclean
+        calibration-docs check-calibration-docs docs-site serve-docs html \
+        report report-debug images pdfs package clean distclean
 
 ifeq ($(OS),Windows_NT)
 BASE_PY := py -3.13
@@ -45,6 +45,7 @@ help:
 	@echo "  demo-autofill   the autofill vertical end to end (LLM step skips if Ollama is down)"
 	@echo "  assets          regenerate report figures and tables from the database"
 	@echo "  calibration-docs render the measured calibration numbers into the Markdown"
+	@echo "  docs-site       build the mkdocs site with every warning an error"
 	@echo "  pdfs            compile the main and debug reports"
 	@echo "  images          regenerate the landing page charts (needs kaleido)"
 	@echo "  package         build the wheel and prove it installs and runs"
@@ -134,6 +135,14 @@ calibration-docs:
 
 check-calibration-docs:
 	$(NOX) -s docs -- --check
+
+# The mkdocs site, built with every warning an error. `make serve-docs` is the
+# preview with live reload; CI runs the strict build on every push.
+docs-site:
+	$(NOX) -s docs-site
+
+serve-docs:
+	$(NOX) -s docs-site -- serve
 
 html:
 	$(PY) -m triage.cli report --database $(DEMO_DB) --baseline $(BASELINE) --output experiments/results/triage_report.html

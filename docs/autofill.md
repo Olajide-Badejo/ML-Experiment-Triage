@@ -423,7 +423,7 @@ in a temporary directory. There is no real site anywhere in it.
 ![The demo's checkout page, filled. Nineteen inputs across an account, a
 shipping and a payment section, each holding the synthetic profile value for the
 type the model predicted: an example.com address, a US address, and the
-documented test card number 4242 4242 4242 4242.](../assets/images/agentic-demo.png)
+documented test card number 4242 4242 4242 4242.](https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/agentic-demo.png)
 
 ### Measured, in a real browser
 

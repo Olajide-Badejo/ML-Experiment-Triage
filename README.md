@@ -268,13 +268,14 @@ the null, which is what the null already asserts.
 Two or more runs on both sides selects the strong mode; anything less falls back. The choice is
 made by what data exists, never by which produces the smaller p value.
 
-**Two gates for a regression.** An adjusted p below 0.05 **and** a relative effect of at least
+**Two gates for a regression.** An adjusted p at or below the false discovery rate **and** a relative effect of at least
 2%. With enough data a meaningless 0.05% change becomes statistically significant, so pairing
 significance with a visible practical threshold is the difference between a tool people keep and
 a tool people mute.
 
-**Multiplicity.** Benjamini Hochberg at a 10% false discovery rate, not Bonferroni: training
-metrics are strongly correlated and Bonferroni assumes worst case dependence. On the fifteen p
+**Multiplicity.** Benjamini Hochberg at FDR 5% by default, configurable with `--fdr`, not
+Bonferroni: training metrics
+are strongly correlated and Bonferroni assumes worst case dependence. On the fifteen p
 values in the original 1995 paper it rejects three where the step up procedure rejects four, and
 the implementation here is tested against exactly that example.
 

@@ -108,7 +108,14 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
         help="resamples when exhaustive enumeration is too large",
     )
     parser.add_argument(
-        "--alpha", type=float, default=RegressionConfig.alpha, help="statistical gate"
+        "--alpha",
+        type=float,
+        default=RegressionConfig.alpha,
+        help=(
+            "admissibility bound: a design whose smallest attainable p value exceeds "
+            "this is reported as inconclusive rather than as no change. The "
+            "statistical gate is --fdr"
+        ),
     )
     parser.add_argument(
         "--practical-threshold",
@@ -120,7 +127,11 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
         "--fdr",
         type=float,
         default=RegressionConfig.false_discovery_rate,
-        help="Benjamini Hochberg false discovery rate",
+        help=(
+            "Benjamini Hochberg false discovery rate, which is the statistical gate: "
+            "a finding is significant when its adjusted p is at or below this "
+            f"(default: {RegressionConfig.false_discovery_rate:g})"
+        ),
     )
     parser.add_argument(
         "--seed",

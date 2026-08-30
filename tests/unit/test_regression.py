@@ -127,6 +127,50 @@ def test_a_large_but_uncertain_effect_is_not_a_regression() -> None:
     assert not findings[0].passes_statistical_gate
 
 
+def test_the_false_discovery_rate_is_the_operative_gate() -> None:
+    """D2: the field was inert. The gate compared the adjusted p against alpha.
+
+    Verified before this fix: `--fdr 0.001`, `0.10` and `0.90` produced byte
+    identical verdicts, because `false_discovery_rate` was passed to a procedure
+    whose output does not depend on it and then never used again.
+    """
+    strict = classify(
+        [result(p_value=0.03, relative_pct=+12.0)],
+        RegressionConfig(false_discovery_rate=0.01),
+    )
+    lenient = classify(
+        [result(p_value=0.03, relative_pct=+12.0)],
+        RegressionConfig(false_discovery_rate=0.10),
+    )
+    assert strict[0].verdict == VERDICT_NO_CHANGE
+    assert not strict[0].passes_statistical_gate
+    assert lenient[0].verdict == VERDICT_REGRESSION
+    assert lenient[0].passes_statistical_gate
+
+
+def test_the_default_false_discovery_rate_is_five_percent() -> None:
+    """The default was moved from 10 to 5 percent so the observed behaviour holds.
+
+    Making the field operative at 10 percent would have loosened every existing
+    verdict, including a consumer's. At 5 percent the decision at defaults is the
+    same one the old alpha gate made, so nothing shifts under anybody.
+    """
+    config = RegressionConfig()
+    assert config.false_discovery_rate == 0.05
+    assert "5%" in config.describe()
+    assert "--fdr" in config.describe()
+
+
+def test_alpha_bounds_admissibility_and_nothing_else() -> None:
+    """A tighter alpha no longer silences an admissible finding."""
+    findings = classify(
+        [result(p_value=0.03, relative_pct=+12.0, min_attainable_p=0.002)],
+        RegressionConfig(alpha=0.01),
+    )
+    assert findings[0].verdict == VERDICT_REGRESSION
+    assert "admissibility" in RegressionConfig().describe()
+
+
 def test_the_practical_threshold_is_configurable() -> None:
     strict = classify([result(p_value=0.001, relative_pct=+3.0)], RegressionConfig())
     lenient = classify(

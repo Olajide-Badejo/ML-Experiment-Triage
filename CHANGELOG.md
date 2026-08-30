@@ -3,6 +3,28 @@
 All notable changes to this project are recorded here. Format follows Keep a
 Changelog; versions follow semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+* **`RegressionConfig.false_discovery_rate` went from inert to operative, with
+  no change in default behaviour.** The statistical gate now reads
+  `adjusted_p <= config.false_discovery_rate`, which is the Benjamini Hochberg
+  decision the reports have always claimed to be making; through 1.0.0 it read
+  `adjusted_p < config.alpha` and the rate was passed to a procedure whose output
+  does not depend on it, so `--fdr 0.001`, `--fdr 0.10` and `--fdr 0.90` produced
+  byte identical verdicts. The default rate moves from 0.10 to **0.05** so that
+  the decision made at defaults is exactly the decision 1.0.0 made: no verdict
+  shifts under anyone who does not set the flag. `--fdr` now does what it says.
+* **`RegressionConfig.alpha` is retained with a narrowed meaning.** It bounds
+  admissibility only: a design whose smallest attainable p value exceeds alpha
+  is reported as `inconclusive: the design cannot reach alpha` rather than as no
+  change. It no longer gates significance. The field is kept because consumers
+  construct `RegressionConfig`, and removing a field is a break; its docstring
+  and `describe()` both now say what it does.
+* `benjamini_hochberg`'s inert `false_discovery_rate` argument defaults to 0.05
+  to match. It never changed the returned adjusted values and still does not.
+
 ## [1.0.0] 2026-08-05
 
 First release. The repository replaces its previous contents in full.
@@ -22,8 +44,11 @@ First release. The repository replaces its previous contents in full.
   enough, so p values are exact rather than estimated at typical seed counts,
   and reporting of the smallest p value a given design can attain.
 * Two gate regression flagging, statistical and practical, with Benjamini
-  Hochberg correction at a 10 percent false discovery rate and severity ranking
-  that discounts the weaker mode.
+  Hochberg correction and severity ranking that discounts the weaker mode. (This
+  release described the correction as running at a 10 percent false discovery
+  rate. It did not: the gate compared the adjusted p against alpha 0.05 and the
+  rate was inert. Corrected in 1.1.0, which is where the accurate statement of
+  the rule now lives.)
 * Spearman hyperparameter sensitivity with the run count printed beside every
   correlation.
 * A statistical calibration suite as a phase gate: measured type I error inside

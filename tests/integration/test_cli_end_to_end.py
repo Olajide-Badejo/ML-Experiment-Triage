@@ -194,6 +194,40 @@ def test_a_direction_flag_flips_the_verdict_on_that_metric(
     assert "improvement" not in _verdict_for(flipped, WORST_CONDITION, "val/accuracy")
 
 
+def _verdicts_from(printed: str) -> dict[tuple[str, str], str]:
+    """Every table row as `(candidate, metric) -> verdict`, for diffing runs."""
+    verdicts = {}
+    for line in printed.splitlines():
+        columns = line.split()
+        if len(columns) >= 6 and columns[1].startswith("val/"):
+            verdicts[(columns[0], columns[1])] = " ".join(columns[5:])
+    return verdicts
+
+
+def test_the_fdr_flag_changes_at_least_one_verdict(
+    database: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D2: `--fdr` was a no-op, and three decades of values printed one table.
+
+    The flag now sets the gate it names, so a rate loose enough to admit a large
+    adjusted p has to move something. Nothing here asserts which row moves: the
+    defect was that no row could.
+    """
+    argv = ["compare", "--database", str(database), "--baseline", BASELINE, "--quiet"]
+    assert main([*argv, "--fdr", "0.05"]) == 0
+    default = _verdicts_from(capsys.readouterr().out)
+    assert default, "the demo sweep must produce a verdict table to compare against"
+
+    assert main([*argv, "--fdr", "0.90"]) == 0
+    loosened = _verdicts_from(capsys.readouterr().out)
+    assert set(default) == set(loosened), "the same comparisons, judged differently"
+    assert default != loosened
+
+    assert main([*argv, "--fdr", "0.001"]) == 0
+    tightened = _verdicts_from(capsys.readouterr().out)
+    assert tightened != default
+
+
 def test_a_tag_named_in_both_direction_flags_is_a_usage_error(
     database: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

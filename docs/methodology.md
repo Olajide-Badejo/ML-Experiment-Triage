@@ -157,14 +157,24 @@ method that produced it.
 
 A finding is a regression only if **both** hold:
 
-1. **Statistical.** The Benjamini Hochberg adjusted p is below 0.05.
+1. **Statistical.** The Benjamini Hochberg adjusted p is at or below the false
+   discovery rate: Benjamini Hochberg at FDR 5 percent by default, configurable
+   with `--fdr`.
 2. **Practical.** The relative effect is at least 2 percent, in the harmful
    direction for that metric.
 
 The direction is inferred from the tag name (a `loss` falls to improve, an
 `accuracy` rises) and can be overridden.
 
-The correction controls the false discovery rate at 10 percent across the
+`alpha` is a separate thing and does not gate significance: it bounds
+*admissibility*, so a design whose smallest attainable p value exceeds it is
+reported as inconclusive rather than as no change. Through v1.0.0 the gate read
+`adjusted_p < alpha` while the rate the reports named was passed to a procedure
+that ignores it, which meant the rate stated was not the rate applied. The
+default rate is 5 percent precisely so that making the field operative changed
+no verdict at defaults.
+
+The correction controls the false discovery rate across the
 metrics compared against one baseline, which is the family a reader looks at
 together. Bonferroni was rejected because training metrics are strongly
 correlated and Bonferroni assumes the worst case dependence: on the fifteen p

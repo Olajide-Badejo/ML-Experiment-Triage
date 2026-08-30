@@ -11,12 +11,12 @@ rather than a number buried in the code.
 
 **Too many false alerts.** Testing eight metrics against a baseline at alpha
 0.05 gives roughly a one in three chance of at least one false alarm even when
-nothing changed. The correction here is Benjamini and Hochberg at a 10 percent
-false discovery rate rather than Bonferroni, because training metrics are
-strongly correlated with one another and Bonferroni, which assumes the worst
-case dependence, would be needlessly conservative and cost real power
-(Benjamini and Hochberg, *Journal of the Royal Statistical Society B* 57(1),
-1995).
+nothing changed. The correction here is Benjamini and Hochberg at a 5 percent
+false discovery rate by default, configurable with `--fdr`, rather than
+Bonferroni, because training metrics are strongly correlated with one another
+and Bonferroni, which assumes the worst case dependence, would be needlessly
+conservative and cost real power (Benjamini and Hochberg, *Journal of the Royal
+Statistical Society B* 57(1), 1995).
 
 The two gates are independent and both must pass. Findings are then ranked by
 severity, so the top of the table is the thing to look at first.
@@ -41,16 +41,30 @@ VERDICT_UNDERPOWERED = "inconclusive: the design cannot reach alpha"
 class RegressionConfig:
     """The two gates and the correction, all visible and all configurable."""
 
+    #: Admissibility only, and nothing else. A design whose smallest attainable p
+    #: value exceeds `alpha` cannot produce a discovery at all, so its findings
+    #: are reported as inconclusive rather than as "no change". This field does
+    #: NOT gate significance: `false_discovery_rate` does. Through v1.0.0 the
+    #: statistical gate read `adjusted_p < alpha` while `false_discovery_rate`
+    #: was passed to a procedure that ignores it, so the rate the reports named
+    #: was not the rate they applied. The field is kept, with its meaning
+    #: narrowed, because a consumer constructs this dataclass and removing a
+    #: field is a break.
     alpha: float = 0.05
     practical_threshold_pct: float = 2.0
-    false_discovery_rate: float = 0.10
+    #: The operative statistical gate: a finding is significant when its
+    #: Benjamini Hochberg adjusted p value is at or below this rate. Five percent
+    #: by default, which is the decision the old alpha gate happened to make, so
+    #: making the field operative does not shift anybody's verdicts at defaults.
+    false_discovery_rate: float = 0.05
     correct_across: str = "metric"
 
     def describe(self) -> str:
         return (
-            f"two gates: Benjamini Hochberg adjusted p below {self.alpha:g} at a "
-            f"{self.false_discovery_rate:.0%} false discovery rate, and a relative effect of at "
-            f"least {self.practical_threshold_pct:g} percent"
+            f"two gates: Benjamini Hochberg at FDR {self.false_discovery_rate:.0%} "
+            f"(adjusted p at or below {self.false_discovery_rate:g}, configurable with --fdr), "
+            f"and a relative effect of at least {self.practical_threshold_pct:g} percent; "
+            f"alpha {self.alpha:g} bounds admissibility only"
         )
 
 
@@ -92,7 +106,7 @@ class Finding:
         )
 
 
-def benjamini_hochberg(p_values: list[float], false_discovery_rate: float = 0.10) -> np.ndarray:
+def benjamini_hochberg(p_values: list[float], false_discovery_rate: float = 0.05) -> np.ndarray:
     """Adjusted p values controlling the false discovery rate at `q`.
 
     Returns the step up adjusted values, which are monotone in the raw p values
@@ -156,7 +170,10 @@ def classify(
 
     findings: list[Finding] = []
     for result, adjusted_p in zip(results, adjusted, strict=True):
-        statistical = bool(adjusted_p < config.alpha)
+        # The gate is the rate the report names. Comparing the step up adjusted
+        # value against q is exactly the original Benjamini Hochberg decision,
+        # which is why the adjusted value is what gets printed beside it.
+        statistical = bool(adjusted_p <= config.false_discovery_rate)
         practical = bool(abs(result.relative_effect_pct) >= config.practical_threshold_pct)
 
         if result.min_attainable_p > config.alpha:

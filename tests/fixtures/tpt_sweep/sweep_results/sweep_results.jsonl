@@ -1,0 +1,16 @@
+{"config_key": "bs8_w2", "runner": "eager", "batch_size": 8, "num_workers": 2, "throughput_samples_per_s": 759.82, "peak_memory_mb": 210.0, "status": "ok"}
+{"config_key": "bs8_w2", "runner": "compiled", "batch_size": 8, "num_workers": 2, "throughput_samples_per_s": 878.107, "peak_memory_mb": 210.0, "status": "ok"}
+{"config_key": "bs8_w4", "runner": "eager", "batch_size": 8, "num_workers": 4, "throughput_samples_per_s": 797.987, "peak_memory_mb": 240.0, "status": "ok"}
+{"config_key": "bs8_w4", "runner": "compiled", "batch_size": 8, "num_workers": 4, "throughput_samples_per_s": 958.785, "peak_memory_mb": 240.0, "status": "ok"}
+{"config_key": "bs16_w2", "runner": "eager", "batch_size": 16, "num_workers": 2, "throughput_samples_per_s": 967.483, "peak_memory_mb": 390.0, "status": "ok"}
+{"config_key": "bs16_w2", "runner": "compiled", "batch_size": 16, "num_workers": 2, "throughput_samples_per_s": 1117.845, "peak_memory_mb": 390.0, "status": "ok"}
+{"config_key": "bs16_w4", "runner": "eager", "batch_size": 16, "num_workers": 4, "throughput_samples_per_s": 1022.127, "peak_memory_mb": 420.0, "status": "ok"}
+{"config_key": "bs16_w4", "runner": "compiled", "batch_size": 16, "num_workers": 4, "throughput_samples_per_s": 1214.472, "peak_memory_mb": 420.0, "status": "ok"}
+{"config_key": "bs32_w2", "runner": "eager", "batch_size": 32, "num_workers": 2, "throughput_samples_per_s": 1197.998, "peak_memory_mb": 750.0, "status": "ok"}
+{"config_key": "bs32_w2", "runner": "compiled", "batch_size": 32, "num_workers": 2, "throughput_samples_per_s": 1384.917, "peak_memory_mb": 750.0, "status": "ok"}
+{"config_key": "bs32_w4", "runner": "eager", "batch_size": 32, "num_workers": 4, "throughput_samples_per_s": 1261.723, "peak_memory_mb": 780.0, "status": "ok"}
+{"config_key": "bs32_w4", "runner": "compiled", "batch_size": 32, "num_workers": 4, "throughput_samples_per_s": 1487.737, "peak_memory_mb": 780.0, "status": "ok"}
+{"config_key": "bs64_w2", "runner": "eager", "batch_size": 64, "num_workers": 2, "throughput_samples_per_s": 1392.568, "peak_memory_mb": 1470.0, "status": "ok"}
+{"config_key": "bs64_w2", "runner": "compiled", "batch_size": 64, "num_workers": 2, "throughput_samples_per_s": 1628.377, "peak_memory_mb": 1470.0, "status": "ok"}
+{"config_key": "bs64_w4", "runner": "eager", "batch_size": 64, "num_workers": 4, "throughput_samples_per_s": 1469.226, "peak_memory_mb": 1500.0, "status": "ok"}
+{"config_key": "bs64_w4", "runner": "compiled", "batch_size": 64, "num_workers": 4, "throughput_samples_per_s": 1759.67, "peak_memory_mb": 1500.0, "status": "ok"}

@@ -47,6 +47,7 @@ from typing import Any
 import numpy as np
 
 from triage.core.experiment import Experiment, MetricSeries
+from triage.core.outcomes import Outcomes
 
 LOGGER = logging.getLogger("triage.store")
 
@@ -106,7 +107,36 @@ CREATE TABLE IF NOT EXISTS metrics (
 );
 
 CREATE INDEX IF NOT EXISTS metrics_tag_idx ON metrics(tag);
+
+CREATE TABLE IF NOT EXISTS outcomes (
+    run_id          TEXT PRIMARY KEY,
+    source_path     TEXT NOT NULL,
+    source_format   TEXT NOT NULL,
+    config_json     TEXT NOT NULL,
+    metadata_json   TEXT NOT NULL,
+    source_hash     TEXT NOT NULL,
+    parsed_at       TEXT NOT NULL,
+    ingest_root     TEXT NOT NULL DEFAULT '',
+    n_rows          INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS outcome_columns (
+    run_id      TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    n_rows      INTEGER NOT NULL,
+    values_blob BLOB NOT NULL,
+    PRIMARY KEY (run_id, name),
+    FOREIGN KEY (run_id) REFERENCES outcomes(run_id) ON DELETE CASCADE
+);
 """
+
+#: The two kinds of outcome column. A measurement is a float64 buffer; a group
+#: key is a zlib compressed JSON array of strings. They are stored in one table
+#: with a `kind` rather than two, because every read wants all of them and the
+#: only difference is how eight bytes are spelled.
+COLUMN_FIELD = "field"
+COLUMN_GROUP = "group"
 
 #: Columns version 2 added to `experiments`, with the DDL to add each to a
 #: version 1 table. Both carry a DEFAULT, which is what makes the migration
@@ -432,17 +462,95 @@ class Store:
                 ],
             )
 
+    def upsert_outcomes(self, outcomes: Outcomes, source_hash: str, ingest_root: str = "") -> None:
+        """Insert or replace one set of cross sectional rows, in one transaction.
+
+        Outcomes live in their own tables rather than being bent into the
+        `metrics` shape. A metric row is `(step, value)`; an outcome row is a
+        record with several named columns and no step, and inventing a step
+        index for it would create exactly the false ordering that
+        `refuse_outcomes` exists to prevent downstream.
+
+        The same identity rules apply as for a run, and for the same reason: two
+        different sources under one id would overwrite each other in silence.
+        """
+        self._refuse_a_write("upsert_outcomes")
+        stored_path = self.outcome_source_path(outcomes.run_id)
+        if stored_path is not None and stored_path != outcomes.source_path:
+            raise StoreError(
+                f"outcomes id {outcomes.run_id!r} is already stored from a different source: "
+                f"{stored_path!r} is on record and {outcomes.source_path!r} was offered. "
+                f"Two sets of rows cannot share one id. Ingest each root into its own database, "
+                f"or delete the stored one first if it really was moved"
+            )
+        parsed_at = datetime.now(UTC).isoformat(timespec="seconds")
+        columns = [
+            (outcomes.run_id, name, COLUMN_FIELD, outcomes.n_rows, _compress(column, "<f8"))
+            for name, column in sorted(outcomes.fields.items())
+        ] + [
+            (
+                outcomes.run_id,
+                name,
+                COLUMN_GROUP,
+                outcomes.n_rows,
+                zlib.compress(json.dumps([str(item) for item in column]).encode("utf-8"), level=6),
+            )
+            for name, column in sorted(outcomes.groups.items())
+        ]
+        with self._wrapping(f"storing outcomes {outcomes.run_id!r}"), self.connection:
+            self.connection.execute(
+                "DELETE FROM outcome_columns WHERE run_id = ?", (outcomes.run_id,)
+            )
+            self.connection.execute(
+                """
+                INSERT OR REPLACE INTO outcomes
+                    (run_id, source_path, source_format, config_json, metadata_json,
+                     source_hash, parsed_at, ingest_root, n_rows)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcomes.run_id,
+                    outcomes.source_path,
+                    outcomes.source_format,
+                    _dump_json(outcomes.config),
+                    _dump_json(outcomes.metadata),
+                    source_hash,
+                    parsed_at,
+                    ingest_root,
+                    outcomes.n_rows,
+                ),
+            )
+            self.connection.executemany(
+                """
+                INSERT INTO outcome_columns (run_id, name, kind, n_rows, values_blob)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                columns,
+            )
+
     def delete(self, run_id: str) -> None:
         self._refuse_a_write("delete")
         with self._wrapping(f"deleting run {run_id!r}"), self.connection:
             self.connection.execute("DELETE FROM metrics WHERE run_id = ?", (run_id,))
             self.connection.execute("DELETE FROM experiments WHERE run_id = ?", (run_id,))
+            self.connection.execute("DELETE FROM outcome_columns WHERE run_id = ?", (run_id,))
+            self.connection.execute("DELETE FROM outcomes WHERE run_id = ?", (run_id,))
 
     # ---------------------------------------------------------------- reading
 
     def source_hash(self, run_id: str) -> str | None:
-        """The fingerprint recorded for a run, or None when it is not stored."""
-        return self._column("source_hash", run_id)
+        """The fingerprint recorded for this id, whichever table holds it.
+
+        Both tables are consulted because `ingest` asks this one question to
+        decide whether to reparse, and it asks it before it knows which shape
+        the file will turn out to be. An id lives in one table or the other,
+        never both: `upsert` and `upsert_outcomes` each refuse an id already
+        recorded against a different source.
+        """
+        stored = self._column("source_hash", run_id)
+        if stored is not None:
+            return stored
+        return self._outcome_column("source_hash", run_id)
 
     def source_path(self, run_id: str) -> str | None:
         """The source path recorded for a run, or None when it is not stored."""
@@ -480,6 +588,74 @@ class Store:
             ).fetchone()
         return None if row is None else str(row[column])
 
+    def _outcome_column(self, column: str, run_id: str) -> str | None:
+        with self._wrapping(f"reading {column} for outcomes {run_id!r}"):
+            row = self.connection.execute(
+                f"SELECT {column} FROM outcomes WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else str(row[column])
+
+    def outcome_source_path(self, run_id: str) -> str | None:
+        """The source path recorded for a set of outcomes, or None."""
+        return self._outcome_column("source_path", run_id)
+
+    def outcome_run_ids(self) -> list[str]:
+        """Every stored set of cross sectional rows, by id.
+
+        Kept apart from `run_ids` deliberately. A caller asking for runs wants
+        things it can compare with a windowed test, and quietly handing it a set
+        of outcomes would push the refusal one layer further from the cause.
+        """
+        with self._wrapping("listing outcomes"):
+            rows = self.connection.execute("SELECT run_id FROM outcomes ORDER BY run_id").fetchall()
+        return [str(row["run_id"]) for row in rows]
+
+    def load_outcomes(self, run_id: str) -> Outcomes:
+        """Read one stored set of rows back, columns and all."""
+        with self._wrapping(f"loading outcomes {run_id!r}"):
+            row = self.connection.execute(
+                "SELECT * FROM outcomes WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"no outcomes {run_id!r} in {self.path}")
+            column_rows = self.connection.execute(
+                "SELECT * FROM outcome_columns WHERE run_id = ? ORDER BY name", (run_id,)
+            ).fetchall()
+
+        expected = int(row["n_rows"])
+        fields: dict[str, np.ndarray] = {}
+        groups: dict[str, np.ndarray] = {}
+        for column_row in column_rows:
+            name = str(column_row["name"])
+            if int(column_row["n_rows"]) != expected:
+                raise StoreError(
+                    f"outcomes {run_id!r} column {name!r} records {int(column_row['n_rows'])} "
+                    f"rows against the {expected} on the run; the row is damaged. Delete it and "
+                    f"ingest it again"
+                )
+            blob = column_row["values_blob"]
+            if str(column_row["kind"]) == COLUMN_FIELD:
+                values = _decompress(blob, "<f8")
+                fields[name] = values
+            else:
+                values = np.asarray(json.loads(zlib.decompress(blob).decode("utf-8")), dtype=object)
+                groups[name] = values
+            if values.size != expected:
+                raise StoreError(
+                    f"outcomes {run_id!r} column {name!r} holds {values.size} value(s) against "
+                    f"the {expected} rows recorded; the blob is damaged"
+                )
+        return Outcomes(
+            run_id=str(row["run_id"]),
+            source_path=str(row["source_path"]),
+            source_format=str(row["source_format"]),
+            fields=fields,
+            groups=groups,
+            config=json.loads(row["config_json"]),
+            metadata=json.loads(row["metadata_json"]),
+        )
+
     def is_empty(self, run_id: str) -> bool:
         """True when this run is stored and holds no series at all.
 
@@ -488,7 +664,10 @@ class Store:
         ingest skip such a run in silence, which is how an empty run stopped
         being visible at the point a reader was most likely to trust the tool.
         """
-        if self.source_hash(run_id) is None:
+        if self._column("source_hash", run_id) is None:
+            # Not a stored run at all. An id in the outcomes table lands here
+            # too, and correctly: a set of cross sectional rows has no series
+            # and is not thereby an empty run.
             return False
         with self._wrapping(f"counting series for run {run_id!r}"):
             row = self.connection.execute(

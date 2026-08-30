@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from triage.core.experiment import Experiment, MetricSeries
+from triage.core.outcomes import Outcomes
 
 CONFIG_FILENAME = "config.json"
 
@@ -197,12 +198,17 @@ class Parser(ABC):
         """True when this parser recognises `path` as one run it can read."""
 
     @abstractmethod
-    def parse(self, path: Path, root: Path | None = None) -> Experiment:
+    def parse(self, path: Path, root: Path | None = None) -> Experiment | Outcomes:
         """Read `path` into an `Experiment`. Raises `ParseError` on bad input.
 
         `root` is the ingest root, which fixes the run's identity: see
         `run_id`. It defaults to the run's parent, so parsing a single run on
         its own gives it the plain name it has always had.
+
+        The return type is widened to `Experiment | Outcomes` for the one parser
+        that reads step free evaluation rows (E5), which are not a time series
+        and have no honest `Experiment` to become. Every parser of training logs
+        narrows it straight back to `Experiment`, which a subclass may do.
         """
 
     # ------------------------------------------------------------- shared help

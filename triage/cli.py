@@ -39,7 +39,7 @@ from triage.calibration import SUMMARY
 from triage.core.experiment import Experiment, SeriesError
 from triage.core.store import Store, StoreError
 from triage.ingest import ingest
-from triage.parsers import ParseError
+from triage.parsers import ParseError, parsers_for
 
 DEFAULT_DATABASE = "triage.db"
 
@@ -368,6 +368,17 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument(
         "--force", action="store_true", help="reparse even when the source is unchanged"
     )
+    ingest_parser.add_argument(
+        "--outcomes",
+        action="store_true",
+        help=(
+            "read step free JSONL under this path as cross sectional outcome rows "
+            "(one row per scored unit) even when the file declares no record schema. "
+            "A file that DOES declare one is recognised without this flag; the flag is "
+            "how you say that an undeclared step free file is evaluation output rather "
+            "than a log this tool failed to understand"
+        ),
+    )
     add_common(ingest_parser)
 
     compare_parser = subparsers.add_parser("compare", help="print the ranked verdict table")
@@ -387,10 +398,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_ingest(args: argparse.Namespace) -> int:
     with Store(args.database) as store:
-        result = ingest(args.path, store, force=args.force, show_progress=not args.quiet)
+        result = ingest(
+            args.path,
+            store,
+            parsers=parsers_for(outcomes=args.outcomes),
+            force=args.force,
+            show_progress=not args.quiet,
+        )
         stats = store.statistics()
 
     print(f"ingest: {result.summary()}")
+    for run_id in result.outcome_runs:
+        print(
+            f"  {run_id} holds cross sectional outcome rows, not a training curve: compare it "
+            f"with paired_permutation rather than `triage compare`",
+            file=sys.stderr,
+        )
     for run_id, message in result.failed:
         print(f"  failed: {run_id}: {message}", file=sys.stderr)
         # The traceback is kept rather than printed by default: it is what

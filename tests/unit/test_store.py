@@ -224,7 +224,7 @@ def test_ingest_reads_a_mixed_format_tree(fixture_root: Path, temp_database: Pat
     """
     with Store(temp_database) as store:
         result = ingest(fixture_root, store, parsers=DEFAULT_PARSERS, show_progress=False)
-        assert len(result.added) == 6
+        assert len(result.added) == 7
         assert store.run_ids() == [
             "csv_long/csv_long_run",
             "csv_wide/csv_wide_run",
@@ -233,6 +233,13 @@ def test_ingest_reads_a_mixed_format_tree(fixture_root: Path, temp_database: Pat
             "tensorboard/tb_run",
             "tpt_jsonl/healthy_steps",
         ]
+        # The consumer's step free file is in this tree too, and it is stored as
+        # outcomes rather than as a run (E5): it has no series to compare.
+        assert store.outcome_run_ids() == ["outcomes/autofill_run"]
+        assert result.outcome_runs == ["outcomes/autofill_run"]
+        # The undeclared sweep is refused without --outcomes, and the refusal is
+        # a legible ParseError rather than a guess at its schema.
+        assert [name for name, _ in result.failed] == ["tpt_sweep/sweep_results"]
         formats = {run.run_id: run.source_format for run in store.load_all()}
     assert formats["tensorboard/tb_run"] == "tensorboard"
     assert formats["jsonl/jsonl_run"] == "jsonl"

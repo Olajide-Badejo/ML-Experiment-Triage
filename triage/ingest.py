@@ -27,6 +27,7 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from triage.core.outcomes import Outcomes
 from triage.core.store import Store
 from triage.parsers import DEFAULT_PARSERS, Parser, discover_runs
 from triage.progress import track
@@ -43,6 +44,12 @@ class IngestResult:
     skipped: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
     empty: list[str] = field(default_factory=list)
+    #: Of the runs added or updated, the ones that were cross sectional outcome
+    #: rows rather than training curves (E5). Named separately because they go
+    #: into different tables and support a different test, so a summary that
+    #: counted them together would tell a reader they had ingested runs they can
+    #: compare with `triage compare`, which they cannot.
+    outcome_runs: list[str] = field(default_factory=list)
     #: Non finite points discarded while parsing, per run that lost any. The
     #: filter itself lives in `MetricSeries`; this is where the loss becomes
     #: visible, because a point dropped without a count is a point lost.
@@ -67,6 +74,8 @@ class IngestResult:
             f"{len(self.updated)} updated",
             f"{len(self.skipped)} unchanged",
         ]
+        if self.outcome_runs:
+            parts.append(f"{len(self.outcome_runs)} of them outcome files")
         if self.empty:
             parts.append(f"{len(self.empty)} with no scalars")
         if self.failed:
@@ -126,15 +135,25 @@ def ingest(
                     result.empty.append(run_id)
                     LOGGER.warning("%s is stored with no scalar metrics", run_id)
                 continue
-            experiment = parser.parse(path, identity_root)
-            store.upsert(experiment, fingerprint, ingest_root=str(identity_root))
-            dropped = int(experiment.metadata.get("n_dropped_non_finite", 0) or 0)
-            if dropped:
-                result.dropped_by_run[run_id] = dropped
-                LOGGER.warning("%s: dropped %d non finite point(s)", run_id, dropped)
-            if not experiment.metrics:
-                result.empty.append(run_id)
-                LOGGER.warning("%s parsed but carries no scalar metrics", run_id)
+            parsed = parser.parse(path, identity_root)
+            if isinstance(parsed, Outcomes):
+                # Cross sectional rows (E5): stored in their own tables, because
+                # they have no step axis and inventing one would manufacture the
+                # ordering that every windowed statistic then refuses to trust.
+                store.upsert_outcomes(parsed, fingerprint, ingest_root=str(identity_root))
+                result.outcome_runs.append(run_id)
+                if parsed.is_empty:
+                    result.empty.append(run_id)
+                    LOGGER.warning("%s parsed but carries no outcome rows", run_id)
+            else:
+                store.upsert(parsed, fingerprint, ingest_root=str(identity_root))
+                dropped = int(parsed.metadata.get("n_dropped_non_finite", 0) or 0)
+                if dropped:
+                    result.dropped_by_run[run_id] = dropped
+                    LOGGER.warning("%s: dropped %d non finite point(s)", run_id, dropped)
+                if not parsed.metrics:
+                    result.empty.append(run_id)
+                    LOGGER.warning("%s parsed but carries no scalar metrics", run_id)
             if known is None:
                 result.added.append(run_id)
             else:

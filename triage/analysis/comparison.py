@@ -74,6 +74,7 @@ import numpy as np
 from scipy import stats as scipy_stats
 
 from triage.core.experiment import Experiment, MetricSeries, SeriesError
+from triage.core.outcomes import Outcomes
 
 DEFAULT_SEED = 20260805
 
@@ -365,6 +366,32 @@ def direction_for(tag: str, config: ComparisonConfig | None = None) -> bool:
     return infer_direction(tag)
 
 
+def refuse_outcomes(*candidates: Any) -> None:
+    """Refuse a windowed comparison over cross sectional rows, by name.
+
+    Every windowed statistic in this module reduces a curve to the mean of its
+    final window, and "final" is only meaningful when the rows are ordered by
+    something. `Outcomes` rows are not: they are one per classified field, one
+    per example, one per configuration, in whatever order the evaluation wrote
+    them. A window mean over that is a mean of an arbitrary subset, which is a
+    number with no referent, and it would compute perfectly happily.
+
+    So the refusal is by construction rather than by hoping the caller notices,
+    and it names `paired_permutation`, because a dead end is not a diagnosis:
+    two conditions scored on the SAME units have a right test, and the message
+    is where a reader learns which one it is.
+    """
+    for candidate in candidates:
+        if isinstance(candidate, Outcomes):
+            raise ComparisonError(
+                f"run {candidate.run_id!r} holds {candidate.n_rows} cross sectional outcome "
+                f"row(s) and no step axis, so it has no final window and no windowed comparison "
+                f"can be made from it. Two conditions scored on the same units are compared with "
+                f"paired_permutation(baseline, candidate, statistic, clusters=...): pair the rows "
+                f"first with Outcomes.pair_on, and cluster by whatever makes them non independent"
+            )
+
+
 def _finite_window(
     series: MetricSeries, config: ComparisonConfig, smooth: bool = True
 ) -> np.ndarray:
@@ -405,6 +432,7 @@ def _finite_window(
 
 def window_statistic(series: MetricSeries, config: ComparisonConfig) -> float:
     """The comparison statistic: mean of the smoothed final window."""
+    refuse_outcomes(series)
     if series.is_empty:
         raise ComparisonError(f"tag {series.tag!r} has no points")
     return float(np.mean(_finite_window(series, config)))
@@ -728,6 +756,7 @@ def compare_seed_replicated(
     No distributional form is assumed, and seed to seed variance is inside the
     null distribution rather than assumed away.
     """
+    refuse_outcomes(*baseline_runs, *candidate_runs)
     config = config or ComparisonConfig()
     baseline_name = baseline_name or (baseline_runs[0].variant_key if baseline_runs else "baseline")
     candidate_name = candidate_name or (
@@ -852,6 +881,7 @@ def compare_window_block(
     `triage.calibration.WEAK_MODE_COST` rather than buried, or restated here
     where they would go stale.
     """
+    refuse_outcomes(baseline_run, candidate_run)
     config = config or ComparisonConfig()
     if higher_is_better is None:
         higher_is_better = direction_for(tag, config)
@@ -1170,6 +1200,7 @@ def compare(
     The choice is made by what is available, never by which produces the
     smaller p value.
     """
+    refuse_outcomes(*baseline_runs, *candidate_runs)
     config = config or ComparisonConfig()
     usable_baseline = [run for run in baseline_runs if run.has(tag)]
     usable_candidate = [run for run in candidate_runs if run.has(tag)]
@@ -1208,6 +1239,7 @@ def compare_all(
     refusals. The returned object is still a list of results, so a caller that
     only wants the comparisons that succeeded does not have to know any of this.
     """
+    refuse_outcomes(*experiments)
     config = config or ComparisonConfig()
     variants = group_by_variant(experiments)
     baseline_key = _resolve_baseline(baseline, variants, experiments)

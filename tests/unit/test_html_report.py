@@ -110,15 +110,21 @@ def build(
     baseline: str,
     *,
     config: ComparisonConfig | None = None,
+    with_analysis: bool = True,
     **kwargs,
 ):
-    """A context assembled the way the CLI assembles one, from real analysis."""
+    """A context assembled the way the CLI assembles one, from real analysis.
+
+    `with_analysis=False` skips the comparison layer, which is what the very
+    large fixtures want: the unit under test here is the renderer, and running
+    ten thousand permutations per condition to reach it measures something else.
+    """
     comparison_config = config or ComparisonConfig()
     regression_config = RegressionConfig()
     refusals: tuple[ComparisonRefusal, ...] = ()
     findings: list = []
     sensitivity: list = []
-    if experiments:
+    if experiments and with_analysis:
         results = compare_all(experiments, baseline, config=comparison_config)
         refusals = results.refusals
         findings = rank(classify(list(results), regression_config))
@@ -588,3 +594,50 @@ def test_an_unparseable_source_date_epoch_falls_back_rather_than_failing(
     assert stamp
     assert FIXED_GENERATED_AT not in stamp
     assert any("SOURCE_DATE_EPOCH" in record.getMessage() for record in caplog.records)
+
+
+# ------------------------------------------------ D28: the ends of the range
+
+
+def test_a_single_run_still_renders_a_report(tmp_path: Path) -> None:
+    """One run is a legitimate database. Nothing can be compared against it, and
+    the page has to say that rather than fall over on an empty table."""
+    only = [make_run("only", "base", 0, ["val/loss"], noise_seed=3)]
+    html = render_html(tmp_path, only, "base")
+
+    assert len(GRAPH_DIV.findall(html)) == 1
+    assert "not compared against the baseline" in markup_of(html)
+    assert ">1<" in html, "the run count tile"
+
+
+def test_a_five_hundred_run_sweep_renders_a_readable_page(tmp_path: Path) -> None:
+    """D25 and D28: the case that produced a 14.5 MB page of fifty curves.
+
+    The analysis is skipped on purpose; the renderer is what is under test, and
+    the number of runs is what is being varied.
+    """
+    runs = []
+    for condition in range(20):
+        name = "base" if condition == 0 else f"c{condition:02d}"
+        for seed in range(25):
+            runs.append(
+                make_run(
+                    f"{name}-{seed}",
+                    name,
+                    seed,
+                    ["val/loss"],
+                    offset=0.01 * condition,
+                    noise_seed=1000 * condition + seed,
+                )
+            )
+    assert len(runs) == 500
+
+    path = render(build(runs, "base", with_analysis=False), tmp_path / "big.html")
+    html = path.read_text(encoding="utf-8")
+
+    assert len(LINE_STYLE.findall(html)) == MAX_PLOTTED_CONDITIONS + 1
+    assert "7 further conditions" in html
+    assert path.stat().st_size < html_report.LARGE_REPORT_BYTES
+    # Every condition is still accounted for in the inventory, which is the
+    # table the chart must not silently disagree with.
+    assert markup_of(html).count("<tr>") >= 20

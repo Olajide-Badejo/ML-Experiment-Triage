@@ -1,4 +1,4 @@
-"""The four autofill verbs, behind `triage autofill`.
+"""The five autofill verbs, behind `triage autofill`.
 
 The argument parser lives in `triage/cli.py` with every other verb, so `triage
 --help` is one document; the handlers live here so that nothing in the command
@@ -12,22 +12,32 @@ a running Ollama and it says so when there is not one, rather than falling back
 to the model, which would report LLM numbers that no LLM produced. The response
 cache lives in `--database`, so a second run of the same command reproduces the
 same numbers without asking the model anything.
+
+**On `agentic`.** It is the same three engines again, driving a browser over
+the generated pages instead of scoring a split (5.4). The engine is bound once
+and called per page, so the LLM arm keeps one open cache and one embedded
+example corpus across all six pages rather than rebuilding them per page.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from triage.cli import EXIT_OK, EXIT_USAGE
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     # Types only, so the annotations below are precise while the modules that
     # define them are still imported at the moment a verb runs and not before.
     from triage.autofill.evaluate import ScoredEngine
     from triage.autofill.generator import FieldRecord
+
+    Classifier = Callable[[list[FieldRecord]], ScoredEngine]
 
 #: The policy names 5.5 lists.
 POLICIES = ("model", "heuristic", "llm")
@@ -233,11 +243,165 @@ def _print_policies(path: Path) -> None:
     )
 
 
+def run_agentic(args: argparse.Namespace) -> int:
+    """Fill the generated pages with one engine and report what landed."""
+    from triage.autofill import agentic
+    from triage.autofill.policy import RewardModel, always_fill, load_policy
+
+    if args.policy == "model" and not args.weights:
+        print(
+            "error: --policy model needs --weights pointing at a .npz written by "
+            "`triage autofill train` or `triage autofill sweep`",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    pages = sorted(Path(args.pages).glob("*.html"))
+    if not pages:
+        print(
+            f"error: no HTML pages under {args.pages}: run `triage autofill generate` and "
+            f"point --pages at the `pages` directory it wrote",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    if not args.no_browser and not agentic.chrome_available():
+        print(
+            "error: no Chromium to drive. Install one (choreographer ships "
+            "`choreo_get_chrome`) or run the same demo with --no-browser, which parses "
+            "the pages instead and scores them with the same code",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    policy = always_fill()
+    if args.decisions:
+        comparison = load_policy(args.decisions)
+        policy = comparison.chosen_policy()
+        if args.policy != "model":
+            # `evaluate.py` exports nothing for the heuristic, whose confidences
+            # are six tiers rather than probabilities. Applying a model's
+            # thresholds to them is a legitimate thing to ask for and not a
+            # comparison of like with like, so it says so once and does it.
+            print(
+                f"note: {args.decisions} was fitted on calibrated model confidences; "
+                f"the {args.policy} engine reports confidence on a different scale",
+                file=sys.stderr,
+            )
+    reward = RewardModel.parse(args.penalties) if args.penalties else RewardModel()
+
+    from triage.autofill.evaluate import ENGINE_NAMES
+
+    config = agentic.DemoConfig(
+        engine=ENGINE_NAMES[args.policy],
+        browser=not args.no_browser,
+        bootstrap=args.bootstrap,
+        seed=args.seed,
+        screenshot=Path(args.screenshot) if args.screenshot else None,
+        screenshot_page=args.screenshot_page,
+    )
+    with ExitStack() as closing:
+        classify = _engine_for(args, pages, closing)
+        result = agentic.run_demo(pages, classify, policy, reward, config)
+    paths = agentic.write_demo(args.out, result)
+
+    where = "headless Chrome" if result.browser else "the HTML parser, no browser"
+    print(
+        f"agentic: {config.engine} over {len(result.pages)} page(s) in "
+        f"{len({page.locale for page in result.pages})} locale(s) through {where}, "
+        f"policy {policy.kind}, in {result.seconds:.1f} s"
+    )
+    print(agentic.format_table(result))
+    print(f"reward: {reward.describe()}")
+    if result.n_landed != result.n_filled:
+        print(
+            f"warning: {result.n_filled - result.n_landed} value(s) did not read back out of "
+            f"the page and are scored as wrong fills",
+            file=sys.stderr,
+        )
+    if paths.screenshot is not None:
+        print(
+            f"screenshot: {paths.screenshot} "
+            f"({paths.screenshot.stat().st_size / 1024:.1f} KB at scale "
+            f"{agentic.SCREENSHOT_SCALE})"
+        )
+    print(f"runs: {len(paths.runs)} under {paths.root / 'runs'}; summary {paths.summary}")
+    print(f"next: triage ingest {paths.root / 'runs'} --database {args.database}")
+    return EXIT_OK
+
+
+def _engine_for(args: argparse.Namespace, pages: list[Path], closing: ExitStack) -> Classifier:
+    """The classifier the demo drives, as one function over a page's fields.
+
+    Each engine is bound once and called per page, which is what keeps the
+    per page loop free of any knowledge of which engine it is running: the LLM
+    arm holds an open store and an embedded example corpus, the model arm holds
+    the weights, and the rules arm holds nothing at all.
+    """
+    from triage.autofill.evaluate import ScoredEngine, heuristic_predict, model_predict
+    from triage.autofill.features import featurise
+    from triage.autofill.model import LogisticModel
+
+    if args.policy == "heuristic":
+
+        def rules(records: list[FieldRecord]) -> ScoredEngine:
+            predicted, confidence, latency = heuristic_predict(records)
+            return ScoredEngine(
+                engine="rules", predicted=predicted, confidence=confidence, latency_us=latency
+            )
+
+        return rules
+
+    if args.policy == "model":
+        model = LogisticModel.load(args.weights)
+
+        def ngram(records: list[FieldRecord]) -> ScoredEngine:
+            predicted, confidence, latency = model_predict(model, featurise(records))
+            return ScoredEngine(
+                engine="ngram", predicted=predicted, confidence=confidence, latency_us=latency
+            )
+
+        return ngram
+
+    return _llm_engine_for(args, pages, closing)
+
+
+def _llm_engine_for(args: argparse.Namespace, pages: list[Path], closing: ExitStack) -> Classifier:
+    """The local annotator, bound to the corpus the pages were generated from.
+
+    The examples come from the training split rather than from the pages, for
+    the reason 6.3 gives: retrieval augmented few shot selection retrieves from
+    LABELLED data, and the pages are the thing being answered.
+    """
+    from triage.autofill.generator import load_split
+    from triage.core.store import Store
+    from triage.llm.annotator import ENGINE_LLM, Annotator, AnnotatorConfig
+    from triage.llm.ollama_client import OllamaClient
+
+    data = Path(args.data) if args.data else pages[0].parent.parent
+    client = OllamaClient(host=args.llm_host, chat_model=args.llm_model)
+    chat_model = client.resolve_chat_model(args.llm_model)
+    if chat_model != args.llm_model:
+        print(f"note: using {chat_model}; {args.llm_model} is not pulled", file=sys.stderr)
+    examples = load_split(data, "train")
+    settings = AnnotatorConfig(k=args.llm_k, chat_model=chat_model, engine=ENGINE_LLM)
+    store = closing.enter_context(Store(args.database))
+    annotator = Annotator(client, store, settings, examples=examples)
+
+    def llm(records: list[FieldRecord]) -> ScoredEngine:
+        run = annotator.annotate(records)
+        print(run.describe(), file=sys.stderr)
+        return run.scored()
+
+    return llm
+
+
 HANDLERS = {
     "generate": run_generate,
     "train": run_train,
     "sweep": run_sweep,
     "evaluate": run_evaluate,
+    "agentic": run_agentic,
 }
 
 

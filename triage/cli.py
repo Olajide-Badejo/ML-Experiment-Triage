@@ -807,6 +807,110 @@ def add_autofill(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]
     )
     add_common(evaluate)
 
+    agentic = verbs.add_parser(
+        "agentic",
+        help="fill the generated HTML pages in a headless browser and score what landed",
+        description=(
+            "Load each generated form page over file://, read every input's signals "
+            "out of the live DOM, classify them, apply the exported fill or skip "
+            "policy, type the locale's synthetic profile into the fields it decides "
+            "to fill, and score what the DOM holds afterwards against the ground "
+            "truth the generator embedded. Writes one ordinary run directory per "
+            "page and replicate, so `triage ingest` and `triage compare` rank the "
+            "engines on the task metric. Synthetic data, local pages, nothing on "
+            "the network."
+        ),
+    )
+    agentic.add_argument(
+        "--pages",
+        required=True,
+        metavar="DIR",
+        help="the `pages` directory `triage autofill generate` wrote",
+    )
+    agentic.add_argument(
+        "--out", required=True, metavar="DIR", help="where the runs and the summary go"
+    )
+    agentic.add_argument(
+        "--policy",
+        default="model",
+        choices=["model", "heuristic", "llm"],
+        help="which engine classifies the fields (default: model)",
+    )
+    agentic.add_argument(
+        "--weights", metavar="W.npz", default=None, help="a model written by train or sweep"
+    )
+    agentic.add_argument(
+        "--data",
+        metavar="DIR",
+        default=None,
+        help=(
+            "the corpus the pages came from, for --policy llm, which retrieves its few "
+            "shot examples from the training split (default: the parent of --pages)"
+        ),
+    )
+    agentic.add_argument(
+        "--decisions",
+        metavar="POLICY.json",
+        default=None,
+        help=(
+            "the contextual bandit comparison `triage autofill evaluate` exported. Its "
+            "chosen policy decides which fields are filled; without it the demo fills "
+            "every field it has a value for, which is the naive product 5.3 compares "
+            "against"
+        ),
+    )
+    agentic.add_argument(
+        "--no-browser",
+        action="store_true",
+        help=(
+            "extract the fields by parsing the HTML instead of driving Chrome. The "
+            "decision, fill and scoring logic is the same code either way, which is "
+            "what makes this runnable in CI"
+        ),
+    )
+    agentic.add_argument(
+        "--screenshot",
+        metavar="PNG",
+        default=None,
+        help="capture ONE page to this file (browser mode only)",
+    )
+    agentic.add_argument(
+        "--screenshot-page",
+        metavar="STEM",
+        default=None,
+        help="which page to capture, by file stem (default: the first)",
+    )
+    agentic.add_argument(
+        "--bootstrap",
+        type=bounded_int(low=2),
+        default=5,
+        help="resampled replicates per page, one run directory each (default: 5)",
+    )
+    agentic.add_argument("--seed", type=bounded_int(low=0), default=0, help="resampling seed")
+    agentic.add_argument(
+        "--penalties",
+        metavar="SPEC",
+        default=None,
+        help="what a wrong fill costs, by cost tier, as `payment=4,address=2` (see evaluate)",
+    )
+    agentic.add_argument(
+        "--llm-host",
+        default="http://localhost:11434",
+        help="where Ollama is listening, for --policy llm (default: http://localhost:11434)",
+    )
+    agentic.add_argument(
+        "--llm-model",
+        default="mistral-nemo:12b-instruct-2407-q4_K_M",
+        help="chat model for --policy llm; the faster fallback is used when it is absent",
+    )
+    agentic.add_argument(
+        "--llm-k",
+        type=bounded_int(low=1, high=32),
+        default=8,
+        help="few shot examples retrieved per field for --policy llm (default: 8)",
+    )
+    add_common(agentic)
+
 
 def run_autofill(args: argparse.Namespace) -> int:
     """Hand off to the reference workload, imported only when it is asked for."""

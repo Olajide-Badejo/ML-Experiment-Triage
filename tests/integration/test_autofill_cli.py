@@ -508,6 +508,197 @@ def test_the_heuristic_policy_needs_no_weights(corpus: Path, tmp_path: Path) -> 
     assert sorted(p.name for p in (out / "runs").iterdir())[0].startswith("rules_")
 
 
+def test_the_agentic_demo_fills_every_page_with_no_browser(
+    corpus: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Acceptance criterion 5's table, over three templates in two locales."""
+    out = tmp_path / "agentic"
+    assert (
+        main(
+            [
+                "autofill",
+                "agentic",
+                "--pages",
+                str(corpus / "pages"),
+                "--out",
+                str(out),
+                "--policy",
+                "heuristic",
+                "--no-browser",
+                "--bootstrap",
+                "3",
+            ]
+        )
+        == EXIT_OK
+    )
+    printed = capsys.readouterr().out
+    assert "all pages" in printed
+    assert "no browser" in printed
+    summary = json.loads((out / "agentic.json").read_text(encoding="utf-8"))
+    assert len(summary["pages"]) == 6
+    assert {page["locale"] for page in summary["pages"]} == {"en_US", "de_DE"}
+    assert {page["template"] for page in summary["pages"]} == {
+        "checkout",
+        "registration",
+        "address_book",
+    }
+    assert summary["totals"]["n_landed"] == summary["totals"]["n_filled"]
+    assert summary["totals"]["fill_accuracy"] > 0.5
+
+
+def test_the_agentic_runs_ingest_and_compare_with_no_autofill_flag(
+    corpus: Path, tmp_path: Path
+) -> None:
+    """The task metrics land in the ordinary tool, which is what 5.4 asks for.
+
+    Two engines into one database, so the comparison it then runs is the one the
+    demo exists to support: the rules baseline against the trained model on fill
+    accuracy and expected reward rather than on a validation curve.
+    """
+    runs = tmp_path / "trained"
+    assert (
+        main(["autofill", "train", "--data", str(corpus), "--out", str(runs), "--epochs", "4"])
+        == EXIT_OK
+    )
+    weights = next(runs.glob("*/weights.npz"))
+
+    out = tmp_path / "agentic_both"
+    for policy, extra in (("heuristic", []), ("model", ["--weights", str(weights)])):
+        assert (
+            main(
+                [
+                    "autofill",
+                    "agentic",
+                    "--pages",
+                    str(corpus / "pages"),
+                    "--out",
+                    str(out),
+                    "--policy",
+                    policy,
+                    "--no-browser",
+                    "--bootstrap",
+                    "3",
+                    *extra,
+                ]
+            )
+            == EXIT_OK
+        )
+
+    database = tmp_path / "agentic.db"
+    assert main(["ingest", str(out / "runs"), "--database", str(database), "--quiet"]) == EXIT_OK
+    assert (
+        main(["compare", "--database", str(database), "--baseline", "rules", "--quiet"]) == EXIT_OK
+    )
+
+
+def test_the_exported_policy_makes_the_demo_skip_fields(corpus: Path, tmp_path: Path) -> None:
+    """The 5.3 policy drives the 5.4 demo, which is the coupling 5.3 promises."""
+    runs = tmp_path / "trained_policy"
+    assert (
+        main(["autofill", "train", "--data", str(corpus), "--out", str(runs), "--epochs", "4"])
+        == EXIT_OK
+    )
+    weights = next(runs.glob("*/weights.npz"))
+    evaluation = tmp_path / "eval_policy"
+    assert (
+        main(
+            [
+                "autofill",
+                "evaluate",
+                "--data",
+                str(corpus),
+                "--weights",
+                str(weights),
+                "--out",
+                str(evaluation),
+                "--bootstrap",
+                "2",
+                # A penalty this steep makes filling anything uncertain a bad
+                # bet, so the fitted thresholds have something to say.
+                "--penalties",
+                "payment=40,identity=40,address=20,other=10",
+                "--quiet",
+            ]
+        )
+        == EXIT_OK
+    )
+
+    filled = {}
+    for name, decisions in (
+        ("open", []),
+        ("policy", ["--decisions", str(evaluation / "policy.json")]),
+    ):
+        out = tmp_path / f"agentic_{name}"
+        assert (
+            main(
+                [
+                    "autofill",
+                    "agentic",
+                    "--pages",
+                    str(corpus / "pages"),
+                    "--out",
+                    str(out),
+                    "--policy",
+                    "model",
+                    "--weights",
+                    str(weights),
+                    "--no-browser",
+                    "--bootstrap",
+                    "2",
+                    *decisions,
+                ]
+            )
+            == EXIT_OK
+        )
+        summary = json.loads((out / "agentic.json").read_text(encoding="utf-8"))
+        filled[name] = summary["totals"]["n_filled"]
+        if decisions:
+            assert summary["policy"] == "per_type_threshold"
+    assert filled["policy"] < filled["open"]
+
+
+def test_the_agentic_model_engine_without_weights_is_refused(
+    corpus: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(
+        [
+            "autofill",
+            "agentic",
+            "--pages",
+            str(corpus / "pages"),
+            "--out",
+            str(tmp_path / "nope"),
+            "--policy",
+            "model",
+            "--no-browser",
+        ]
+    )
+    assert code == EXIT_USAGE
+    assert "--weights" in capsys.readouterr().err
+
+
+def test_a_pages_directory_with_no_pages_is_a_usage_error_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    code = main(
+        [
+            "autofill",
+            "agentic",
+            "--pages",
+            str(empty),
+            "--out",
+            str(tmp_path / "nope"),
+            "--policy",
+            "heuristic",
+            "--no-browser",
+        ]
+    )
+    assert code == EXIT_USAGE
+    assert "generate" in capsys.readouterr().err
+
+
 def test_a_missing_corpus_is_a_usage_error_not_a_traceback(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

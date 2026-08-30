@@ -54,13 +54,19 @@ mode that caused a 12 percent type I error. A p value that is quietly
 miscalibrated is worse than no p value, because it spends credibility that
 nothing later can recover.
 
-### Benjamini Hochberg at 10 percent, not Bonferroni
+### Benjamini Hochberg at a 5 percent false discovery rate, not Bonferroni
 
 Training metrics are strongly correlated. Bonferroni assumes worst case
 dependence and buys nothing here: on the fifteen p values in the original paper
 it rejects three where the step up procedure rejects four. **What would change my
 mind:** a use case where a single false discovery is genuinely catastrophic, at
 which point Bonferroni's conservatism is the point.
+
+The rate was described as 10 percent through 1.0.0 and was not the number
+deciding anything: the gate compared the adjusted p against alpha, which was
+0.05, and the rate was inert. 1.1.0 made the rate operative and set its default
+to 0.05, so the decision made at defaults is the decision that was always being
+made and the sentence describing it is now true.
 
 ### Spearman, not ANOVA or a regression
 
@@ -172,9 +178,14 @@ The count goes into the experiment metadata.
 
 ### Self contained HTML, with the Plotly runtime inlined
 
-The file is about 5.9 MB and survives being emailed, copied to a bucket, or
+The demo's file is about 6 MB and survives being emailed, copied to a bucket, or
 opened on a laptop with no network. Rejected: a CDN link, which turns a report
 into something that expires.
+
+The runtime is inlined only when there are figures to draw. A report with no
+plottable metric used to carry the whole 4.86 MB bundle for nothing; it is now
+under 100 KB, which matters because that is the shape of a report from a sweep
+that went wrong.
 
 ### The chart draws the spread across seeds as a band
 

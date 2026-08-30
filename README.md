@@ -309,6 +309,7 @@ of the below, plus an API reference rendered from the docstrings themselves.
 | [Ecosystem](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/) | The three sibling repositories, the shared taxonomy and the name collision |
 | [Engineering log](https://olajide-badejo.github.io/ML-Experiment-Triage/ENGINEERING_LOG/) | Dated entries behind the debug report |
 | [Changelog](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/CHANGELOG.md) | Every behaviour change, with a section addressed to consumers |
+| [Build record](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/PROGRESS.md) | Phase by phase, with the checks run at each gate |
 
 ---
 

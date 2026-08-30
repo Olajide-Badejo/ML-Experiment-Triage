@@ -63,6 +63,14 @@ one after every edit. `make test-unit`, `nox -s test -- -m "not slow"` and
 Run the gates themselves with `make test-stats` before pushing anything that
 touches `triage/analysis/`.
 
+**Documentation.** `nox -s docs-site -- serve` previews the site with live
+reload; `nox -s docs-site` builds it the way CI does, with every warning an
+error. The API reference is generated from the docstrings, so a rename that
+leaves `docs/api.md` pointing at a name that no longer exists fails that build.
+Numbers are a separate matter: `nox -s docs -- --check` fails if any document
+disagrees with `triage/calibration.py`, and `nox -s docs` regenerates them. Do
+not type a measured number into a document by hand.
+
 ## What the build will refuse
 
 `make all` runs these in order and stops at the first failure.
@@ -85,6 +93,10 @@ touches `triage/analysis/`.
    installs it into two throwaway environments: one with `[cli]`, which has to
    ingest a log and write a report, and one bare, which has to import and do
    statistics with numpy and scipy alone.
+
+CI adds two more that `make all` does not: `nox -s docs -- --check`, which
+refuses a published number that has drifted from `triage/calibration.py`, and
+`nox -s docs-site`, which refuses a documentation site with any warning in it.
 
 ## The rule that matters most
 

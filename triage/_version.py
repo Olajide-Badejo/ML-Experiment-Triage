@@ -14,4 +14,4 @@ would have to be installed to build a wheel.
 from __future__ import annotations
 
 #: Bumped by the release, and by nothing else.
-VERSION = "1.0.0"
+VERSION = "1.1.0"

@@ -806,6 +806,14 @@ class Store:
                 "SELECT COALESCE(SUM(LENGTH(steps_blob) + LENGTH(values_blob)), 0) AS b "
                 "FROM metrics"
             ).fetchone()
+            # Counted separately rather than folded into `runs`, because they
+            # are not runs and cannot be compared like ones. Counted at all
+            # because leaving them out made a successful ingest of an outcomes
+            # file report "0 runs, 0 series, 0 points", which is a lie by
+            # omission about work the tool had just done.
+            cross_sectional = self.connection.execute(
+                "SELECT COUNT(*) AS runs, COALESCE(SUM(n_rows), 0) AS rows FROM outcomes"
+            ).fetchone()
         points = int(row["points"])
         compressed = int(stored["b"])
         raw = points * 12  # int64 step plus float32 value per point
@@ -813,6 +821,8 @@ class Store:
             "runs": runs,
             "series": int(row["series"]),
             "points": points,
+            "outcome_runs": int(cross_sectional["runs"]),
+            "outcome_rows": int(cross_sectional["rows"]),
             "compressed_bytes": compressed,
             "compression_ratio": (raw / compressed) if compressed else 0.0,
             "database_bytes": self.path.stat().st_size if self.path.exists() else 0,

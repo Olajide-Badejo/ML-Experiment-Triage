@@ -465,9 +465,14 @@ def run_ingest(args: argparse.Namespace) -> int:
             f"which are dropped rather than compared",
             file=sys.stderr,
         )
+    cross_sectional = (
+        f", {stats['outcome_runs']} outcome file(s) holding {stats['outcome_rows']:,} rows"
+        if stats["outcome_runs"]
+        else ""
+    )
     print(
-        f"database: {stats['runs']} runs, {stats['series']} series, {stats['points']:,} points, "
-        f"{stats['database_bytes'] / 1024:.0f} KB on disk "
+        f"database: {stats['runs']} runs, {stats['series']} series, {stats['points']:,} points"
+        f"{cross_sectional}, {stats['database_bytes'] / 1024:.0f} KB on disk "
         f"({stats['compression_ratio']:.1f}x compression on the series)"
     )
     return EXIT_RUNS_FAILED if result.failed else EXIT_OK

@@ -339,6 +339,18 @@ def test_the_undeclared_sweep_ingests_only_with_the_outcomes_parsers(
         assert store.load_outcomes("sweep_results").n_rows == 16
 
 
+def test_the_database_summary_counts_the_outcomes_it_holds(
+    fixture_root: Path, temp_database: Path
+) -> None:
+    """ "0 runs, 0 series" after a successful ingest is a lie by omission."""
+    with Store(temp_database) as store:
+        ingest(fixture_root / "outcomes", store, show_progress=False)
+        stats = store.statistics()
+    assert stats["runs"] == 0
+    assert stats["outcome_runs"] == 1
+    assert stats["outcome_rows"] == 48
+
+
 def test_the_outcomes_flag_is_what_the_command_line_calls_it(
     fixture_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

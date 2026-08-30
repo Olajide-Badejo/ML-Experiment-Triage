@@ -373,16 +373,23 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
     environment.filters["signed_pct"] = lambda value: f"{value:+.2f}"
     environment.filters["p"] = _format_p
 
+    # Keyed off what the database holds, not off what could be compared. Keying
+    # figures and inventory columns off FINDINGS meant a metric nobody could
+    # test against the baseline, which is precisely the case a reader most needs
+    # to look at, silently had no curve and no column at all.
+    tags = sorted({tag for run in context.experiments for tag in run.tags if run.has(tag)})
+    compared = {finding.result.tag for finding in context.triage.findings}
     figures = {
         tag: build_metric_figure(
             context.experiments, tag, context.baseline, context.comparison_config, index
         )
-        for index, tag in enumerate(sorted({result.tag for result in context.triage.findings}))
+        for index, tag in enumerate(tags)
     }
 
     html = environment.get_template("report.html").render(
         context=context,
         figures=figures,
+        compared=compared,
         runs=summarise_runs(context.experiments, context.comparison_config),
         # Fetched only when there is something for it to draw. `get_plotlyjs`
         # reads the bundle off disk, so this also keeps an empty report cheap

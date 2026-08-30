@@ -285,3 +285,55 @@ def test_a_report_with_figures_still_inlines_the_runtime(tmp_path: Path) -> None
     assert len(html) > 1_000_000
     assert "Plotly.newPlot(" in html
     assert "<script src=" not in html
+
+
+# ------------------------------------ D24: every metric in the database
+
+
+def baseline_is_missing_a_metric() -> list[Experiment]:
+    """A metric only the candidate logged, so no comparison can be built on it."""
+    runs = []
+    for index in range(3):
+        runs.append(make_run(f"base-{index}", "base", index, ["val/loss"], noise_seed=index))
+        runs.append(
+            make_run(
+                f"cand-{index}",
+                "cand",
+                index,
+                ["val/loss", "val/extra"],
+                offset=0.4,
+                noise_seed=100 + index,
+            )
+        )
+    return runs
+
+
+def test_a_metric_with_no_finding_still_gets_a_curve(tmp_path: Path) -> None:
+    """D24: figures were keyed off findings, so an uncompared metric vanished.
+
+    A metric the baseline never logged cannot be compared against the baseline,
+    which is exactly when a reader most wants to see what it did.
+    """
+    html = render_html(tmp_path, baseline_is_missing_a_metric(), "base")
+
+    assert len(GRAPH_DIV.findall(html)) == 2, "both metrics in the database get a curve"
+    assert "val/extra" in html
+
+
+def test_a_metric_with_no_finding_says_why(tmp_path: Path) -> None:
+    html = render_html(tmp_path, baseline_is_missing_a_metric(), "base")
+    assert "not compared against the baseline" in markup_of(html)
+
+
+def test_the_inventory_covers_every_metric_and_marks_the_gaps(tmp_path: Path) -> None:
+    html = render_html(tmp_path, baseline_is_missing_a_metric(), "base")
+    markup = markup_of(html)
+
+    inventory = markup.split("Run inventory")[1]
+    assert inventory.count("val/extra") >= 1, "the column is keyed off the union of tags"
+    assert "&mdash;" in inventory, "the baseline has no value for that metric and says so"
+
+
+def test_a_report_with_no_metrics_at_all_says_so(tmp_path: Path) -> None:
+    path = render(build([], "base"), tmp_path / "empty.html")
+    assert "no metric" in path.read_text(encoding="utf-8").lower()

@@ -224,11 +224,24 @@ footer dd { margin: 0; }
 {% for tag, figure in figures.items() %}
 <h3>{{ tag }}</h3>
 <div class="figure">{{ figure | safe }}</div>
+{% if tag not in compared %}
+<div class="note">
+  <strong>{{ tag }} was not compared against the baseline.</strong>
+  It is drawn here because it is in the database, but no verdict above rests on it: either the
+  baseline never logged it, or no condition carrying it could support a calibrated test. The curve
+  is a description of what happened, not a claim about it.
+</div>
+{% endif %}
 <p class="caption">
   Each line is the mean across seeds of a {{ context.comparison_config.smoothing_window }} point
-  moving average; the band is the full range across seeds of that condition. The shaded region on the
-  right is the final window the statistic is taken over. Where two bands overlap, the conditions are
-  not separated by more than their own run to run noise, whatever the lines appear to do.
+  moving average; the band is the full range across seeds of that condition, drawn only where those
+  seeds have data. The shaded region on the right is the final window the statistic is taken over.
+  Where two bands overlap, the conditions are not separated by more than their own run to run noise,
+  whatever the lines appear to do.
+</p>
+{% else %}
+<p class="caption">
+  No metric in this database carries a series to chart, so there is nothing to draw.
 </p>
 {% endfor %}
 

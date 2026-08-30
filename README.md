@@ -9,13 +9,64 @@
 <p align="center">
   <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/actions/workflows/ci.yml">
     <img alt="CI" src="https://github.com/Olajide-Badejo/ML-Experiment-Triage/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="Python 3.13" src="https://img.shields.io/badge/python-3.13-2a78d6">
-  <img alt="Tests 303" src="https://img.shields.io/badge/tests-303%20passing-1baf7a">
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/">
+    <img alt="Documentation" src="https://img.shields.io/badge/docs-mkdocs%20material-2a78d6"></a>
+  <img alt="Python 3.12 and 3.13" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-2a78d6">
 <!-- calibration:badge -->
   <img alt="Type I error 4.53 percent" src="https://img.shields.io/badge/measured%20type%20I-4.53%25%20vs%205%25%20nominal-1baf7a">
 <!-- /calibration:badge -->
   <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-52514e"></a>
 </p>
+
+---
+
+## Install
+
+```bash
+pip install ml-experiment-triage
+```
+
+The core install is **numpy and scipy, and nothing else**: that is the statistics API, the
+JSONL parser and the MLflow parser. Everything heavier is an extra, so a project that wants a
+permutation test does not also install pandas, plotly, jinja2 and tensorboard.
+
+```bash
+pip install "ml-experiment-triage[cli]"   # the command line tool, reports included
+pip install "ml-experiment-triage[all]"   # and the browser driven demo
+```
+
+### The command line, in three lines
+
+```bash
+triage ingest  path/to/runs --database triage.db
+triage compare --database triage.db --baseline my_baseline_variant
+triage report  --database triage.db --baseline my_baseline_variant --output report.html
+```
+
+One directory per run, with an optional `config.json`. Runs that differ only in their `seed`
+are grouped into one condition automatically, which is what makes the strong comparison mode
+available. `triage demo` does the whole thing over a synthetic sweep in a temporary directory,
+so a fresh install can demonstrate itself with no clone.
+
+### The library, in fifteen lines
+
+```python
+from triage import Store, compare_all, classify, rank, RegressionConfig
+
+with Store("triage.db") as store:
+    results = compare_all(store.load_all(), baseline="lr0.0010_bs32")
+
+config = RegressionConfig()
+for finding in rank(classify(results, config)):
+    print(finding.candidate, finding.tag, finding.verdict, finding.adjusted_p)
+
+for refusal in results.refusals:
+    print("not compared:", refusal.candidate, refusal.tag, refusal.reason)
+```
+
+The last three lines are the half most tools leave out: a comparison that could not be made is
+a record on `results.refusals`, not a silent absence. Full walkthrough in the
+[library tutorial](https://olajide-badejo.github.io/ML-Experiment-Triage/library/).
 
 ---
 
@@ -75,8 +126,10 @@ advance, runs the real comparison over them, and counts how often it is wrong.
 | Null p value uniformity | 0.0580, 0.0993, 0.2407, 0.4847, 1500 cases | within 3 standard errors |
 <!-- /calibration:headline -->
 
-Reproduce all of it with `make test-stats`, in <!-- calibration:statsclock -->110 s<!-- /calibration:statsclock --> on the machine
-below. It is deterministic.
+Reproduce all of it with `nox -s test_stats`, in <!-- calibration:statsclock -->110 s<!-- /calibration:statsclock --> on the machine
+below. It is deterministic. Every number published anywhere in this repository is rendered from
+`triage/calibration.py` by `scripts/render_calibration_docs.py`, and CI fails if a document and
+the measurement disagree.
 
 ### The designs the test is not exact in
 
@@ -118,9 +171,9 @@ of the whole null distribution.
 
 ## What it produces
 
-Run `make demo` and the tool synthesises 31 runs across 7 conditions in three different log
-formats, ingests them, compares every condition against the baseline, and writes a single self
-contained HTML file.
+`triage demo` synthesises 31 runs across 7 conditions in three different log formats, ingests
+them, compares every condition against the baseline, and writes a single self contained HTML
+file.
 
 <p align="center">
   <img width="820" alt="The generated HTML report, showing the summary tiles, the verdict table ranked by severity with mode badges and confidence intervals, the attached caveats, and the overlaid metric curves." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/html-report.png">
@@ -189,17 +242,73 @@ spread rather than within run measurement noise. The statistic itself uses a nin
 
 ---
 
-## Reports
+## The reference workload: browser autofill
+
+A tool that ranks training runs needs a training run of its own to rank. So this repository
+carries one real machine learning problem end to end: classifying browser form fields into
+WHATWG autocomplete tokens, across locales whose address formats disagree. It exercises every
+axis the tool advertises at once, and it runs on CPU in seconds.
+
+The last stage points the trained classifier at real pages in headless Chrome, fills them under
+a calibrated fill or skip policy, and reads every value back out of the DOM to score it:
+
+<p align="center">
+  <img width="820" alt="The demo's checkout page, filled. Nineteen inputs across an account, a shipping and a payment section, each holding the synthetic profile value for the type the model predicted: an example.com address, a US address, and the documented test card number 4242 4242 4242 4242." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/agentic-demo.png">
+</p>
+
+Six pages, two locales, 71 fields. The n gram model fills 64 of them at a fill accuracy of
+1.0000; the keyword baseline fills 30 at 0.8667; a local 12B LLM fills 42 at 0.9286 and takes
+six seconds a field where the numpy model takes microseconds. Those task metrics are then
+compared **by this tool, through the ordinary `ingest` and `compare` verbs with no autofill
+specific flag**: the model beats the rules baseline by +151.40 percent on reward, adjusted
+p 0.0002.
+
+Everything about it, including a measured finding that goes against the design (the fill or skip
+policy loses to always filling on a split where the classifier is 98.5 percent accurate), is in
+[the autofill page](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/). The
+[local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) documents the
+retrieval ablation and why there is no vector database.
+
+---
+
+## Used by
+
+**[`Autofill_audit`](https://github.com/Olajide-Badejo/Autofill_audit) is a real consumer.** It
+is a Playwright driven form field auditor with a 392 rule engine, a calibrated ONNX model and an
+optional local LLM, and it depends on this package for its statistics: one importer, one module,
+with an AST test that fails if a second one appears. Its five filed issues are the consumer
+contract this release closes, and they are the reason the core install is numpy and scipy alone.
+
+**[`PyTorch-Performance-and-Health-Toolkit`](https://github.com/Olajide-Badejo/PyTorch-Performance-and-Health-Toolkit)
+is an interop partner, not a dependent.** It does not import this package and cannot easily: its
+Python floor is 3.11 and this one's is 3.12. What connects the two is that it is a second,
+independent producer of training logs, which is the only real test of whether these parsers work
+on somebody else's format rather than on their own fixtures. Its JSONL schema v2 now ingests
+directly, header lines, string `"NaN"` and all, and its grounding design for LLM output is
+adopted here with credit.
+
+Both, and the namespace collision between them, are written up in
+[the ecosystem page](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/).
+
+---
+
+## Documentation
+
+**[The documentation site](https://olajide-badejo.github.io/ML-Experiment-Triage/)** carries all
+of the below, plus an API reference rendered from the docstrings themselves.
 
 | Document | What is in it |
 |---|---|
 | **[Main report (PDF, 17 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report/main.pdf)** | Background, exact methodology for both modes, implementation, measured results, discussion and limitations |
 | **[Debug report (PDF, 6 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf)** | Nine problems hit during the build, each with symptom, root cause, the options considered, the fix and its verification |
-| [Methodology](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/methodology.md) | The statistics written out for a sceptical reader |
-| [Design decisions](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/DESIGN_DECISIONS.md) | What was chosen, what was rejected, and what would change my mind |
-| [Local LLM layer](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/llm.md) | The Ollama models, the retrieval design, the measured ablation and why there is no vector database |
-| [Engineering log](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/ENGINEERING_LOG.md) | Dated entries behind the debug report |
-| [Build record](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/PROGRESS.md) | Phase by phase, with the checks run at each gate |
+| [Methodology](https://olajide-badejo.github.io/ML-Experiment-Triage/methodology/) | The statistics written out for a sceptical reader |
+| [Library tutorial](https://olajide-badejo.github.io/ML-Experiment-Triage/library/) | Calling the statistics from your own code |
+| [Design decisions](https://olajide-badejo.github.io/ML-Experiment-Triage/DESIGN_DECISIONS/) | What was chosen, what was rejected, and what would change my mind |
+| [The autofill vertical](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/) | The reference workload: taxonomy, generator, model, policy, agentic demo |
+| [Local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) | The Ollama models, the retrieval design, the measured ablation and why there is no vector database |
+| [Ecosystem](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/) | The three sibling repositories, the shared taxonomy and the name collision |
+| [Engineering log](https://olajide-badejo.github.io/ML-Experiment-Triage/ENGINEERING_LOG/) | Dated entries behind the debug report |
+| [Changelog](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/CHANGELOG.md) | Every behaviour change, with a section addressed to consumers |
 
 ---
 
@@ -241,29 +350,6 @@ flowchart LR
 comparison takes milliseconds and can be rerun freely. Re-ingesting an unchanged source does no
 work, and an interrupted ingest loses at most the run in flight.
 
----
-
-## Quick start
-
-```bash
-make env       # Python 3.13 venv, pinned dependencies
-make demo      # synthesise 31 runs, ingest, compare, write the HTML report
-make test-unit # the inner loop: pytest -m "not slow", everything but the gates
-make test      # the full suite, including the calibration gates
-make all       # everything from a clean tree, including both PDFs
-```
-
-The recipes live in `noxfile.py` and the Makefile forwards to it, so `nox -l`
-lists the same work and runs it without Make on any platform.
-
-Against your own runs, one directory per run with an optional `config.json`:
-
-```bash
-triage ingest  path/to/runs --database triage.db
-triage compare --database triage.db --baseline my_baseline_variant
-triage report  --database triage.db --baseline my_baseline_variant --output report.html
-```
-
 **Exit codes**, so a CI gate can tell the cases apart. `triage --help` prints the same table.
 
 | Code | Meaning |
@@ -293,8 +379,8 @@ runs/
     metrics.jsonl                     # {"step": 0, "val/loss": 2.30}
 ```
 
-Runs that differ only in their `seed` are grouped into one condition automatically, which is
-what makes the strong comparison mode available.
+A run's identity is its path relative to the ingest root, so two `seed0` directories under
+different sweeps are two runs and not one.
 
 </details>
 
@@ -345,6 +431,11 @@ the null, which is what the null already asserts.
 Two or more runs on both sides selects the strong mode; anything less falls back. The choice is
 made by what data exists, never by which produces the smaller p value.
 
+**A third mode, for evaluations rather than curves.** `paired_permutation` compares two
+conditions scored on the same units, swapping labels within a unit and swapping whole clusters
+together where the units are correlated. It takes the statistic as a callable, because the
+quantity being compared is often not a mean of anything.
+
 **Two gates for a regression.** An adjusted p at or below the false discovery rate **and** a
 relative effect of at least 2%. With enough data a meaningless 0.05% change becomes statistically
 significant, so pairing significance with a visible practical threshold is the difference between
@@ -356,7 +447,8 @@ the baseline, and dividing by zero downgrades a real regression to nothing.
 Bonferroni: training metrics
 are strongly correlated and Bonferroni assumes worst case dependence. On the fifteen p
 values in the original 1995 paper it rejects three where the step up procedure rejects four, and
-the implementation here is tested against exactly that example.
+the implementation here is tested against exactly that example. There is one family per
+comparison mode, so a weak mode p value never sits in a strong mode denominator.
 
 ---
 
@@ -383,6 +475,9 @@ Documented, tested, and printed next to the results rather than buried.
 - **MLflow is read from disk, not through its API.** Artifacts, model registry entries and
   remote tracking servers are out of scope: what is read is a local `mlflow.db` or `mlruns/`
   tree, which is what a comparison of training curves needs and all of it.
+- **Weights and Biases local files are not read.** Their offline directory format is an
+  undocumented binary transaction log; the supported path is a user side CSV export into the
+  CSV parser.
 
 ---
 
@@ -398,6 +493,12 @@ length was one autocorrelation time, at which neighbouring block means are still
 fix that mattered most was making the mode **refuse** below eight blocks rather than shortening
 blocks to fit, since shortening is precisely the failure.
 
+**Then it did it again.** The published calibration was measuring one design out of six: equal
+counts, equal spreads. Adding the unbalanced and heteroscedastic arms found a raw mean difference
+statistic running at 17.92% type I error on a 7 against 3 design, which the studentized statistic
+brought to 12.92%. That number is published as it is rather than smoothed over, and the tool
+warns on the design that produces it.
+
 **Three test failures turned out to be the test's fault, not the code's.** In each case the
 temptation was to loosen the assertion until it passed; in each case the right move was to work
 out what the code was actually doing and assert that precisely. One of them turned a bug report
@@ -409,54 +510,86 @@ reproducibility claim unverifiable in practice.
 
 ---
 
-## Measured wall clock
+## Developing on the repo
+
+The user path is `pip install`. Development and CI install the committed PEP 751 `pylock.toml`,
+which is the exact resolution every number this project publishes was measured under.
+
+```bash
+nox -s env          # a .venv from pylock.toml, plus this package editable
+nox                 # lint, typecheck and the test suite: what CI runs first
+nox -s test -- -m "not slow"   # the inner loop, everything but the calibration gates
+nox -s test_stats   # the calibration gates, with their measurements printed
+nox -s docs-site    # build the documentation site, strict
+nox -s package      # build the wheel and prove it installs and runs somewhere new
+```
+
+`noxfile.py` is the canonical runner on every platform and `nox -l` lists every session. The
+Makefile is a thin wrapper that forwards to it, so `make env`, `make test`, `make demo` and
+`make all` do the same work for anyone who has GNU Make. `make all` from a clean tree builds the
+environment, lints, type checks, runs the full suite including the calibration gates,
+regenerates the demo sweep and database, and compiles both PDFs, with no manual step.
+
+`CONTRIBUTING.md` covers the commit hooks, what the build will refuse, and the rule that matters
+most. `pre-commit install` is optional: a contributor without it gets the same answer from CI a
+few minutes later.
+
+### Measured wall clock
 
 Intel Core i7-14700K, 32 GB, Windows 11 Pro. Everything runs on CPU; the GPU in this machine is
-not used at any point.
+used only by the optional local LLM layer.
 
 | Step | Time |
 |---|---|
-| `make test-stats`, the calibration suite, about <!-- calibration:comparisons -->23,900<!-- /calibration:comparisons --> synthetic comparisons | 60 s |
-| `make test`, the full suite, 303 tests | 130 s |
-| `make demo`, synthesise 31 runs, ingest, compare, report | 18 s |
+| `nox -s test_stats`, the calibration suite, about <!-- calibration:comparisons -->23,900<!-- /calibration:comparisons --> synthetic comparisons | <!-- calibration:statsclock -->110 s<!-- /calibration:statsclock --> |
+| `nox -s test`, the full suite at 1.1.0, 882 tests | 310 s |
+| `nox -s demo`, synthesise 31 runs, ingest, compare, report | 31 s |
+| `nox -s demo-autofill`, generate, sweep, evaluate, ingest, compare, report | 6 s at the quick sizes, LLM step skipped |
 | `make all` from a clean tree | 137 s, measured at 1.0.0 and due a re-measure at release |
 | `make all` from a fresh clone, including creating the environment | 205 s, measured at 1.0.0 |
 
 Measured, not estimated. The last row is the one that matters: `git clone` followed by
 `make all` produces every artifact in this repository, including both PDFs, with no manual step.
 
----
-
-## Repository layout
+### Repository layout
 
 ```text
 triage/            the library
-  core/            Experiment model and SQLite store
-  parsers/         TensorBoard, MLflow, CSV and JSONL readers
+  core/            Experiment and Outcomes models, SQLite store
+  parsers/         TensorBoard, MLflow, CSV, JSONL and outcomes readers
   analysis/        comparison, regression flagging, sensitivity
   report/          self contained HTML reporting
+  autofill/        the reference workload: taxonomy, generator, model, policy, agentic
+  llm/             the local Ollama layer: client, embeddings, annotator, summarizer, ask
   calibration.py   the measured error rates, as the single source
   synthetic.py     controlled curve generator with known ground truth
 tests/
-  unit/            96 tests: parsers, store, model, gates, sensitivity
+  unit/            parsers, store, model, gates, sensitivity, the consumer contract
+  property/        Hypothesis properties over the statistical core
   statistics/      the calibration gates
   integration/     the CLI end to end over the synthetic sweep
-examples/          the synthetic sweep and the demo workflow
-docs/              methodology, design decisions, engineering log
+examples/          the synthetic sweep, the demo workflow, the autofill chain
+docs/              the mkdocs site: method, decisions, autofill, LLM, ecosystem, log
 report/            main report source and PDF
 report_debug/      debug report source and PDF
-scripts/           dash guard, PDF build, asset and image generation
+scripts/           dash guard, PDF build, calibration rendering, asset generation
 ```
 
 ---
 
 ## Requirements
 
-Python 3.13 (3.12 works). Users install with pip and get the ranges declared in
-`pyproject.toml`; development and CI install the committed PEP 751 `pylock.toml`, which is the
-resolution every number this project publishes was measured under. `make env` builds that
-environment with uv, and `pip install -r pylock.toml` works too on pip 25.1 and later. A TeX
-installation is needed only to rebuild the PDFs, which are committed. Everything runs on CPU.
+Python 3.12 or 3.13. Users install with pip and get the ranges declared in `pyproject.toml`;
+development and CI install the committed PEP 751 `pylock.toml`, which is the resolution every
+number this project publishes was measured under. `nox -s env` builds that environment with uv,
+and `pip install -r pylock.toml` works too on pip 25.1 and later. A TeX installation is needed
+only to rebuild the PDFs, which are committed. Everything runs on CPU, apart from the optional
+local LLM layer, which uses whatever Ollama is configured with.
+
+## Citing this work
+
+`CITATION.cff` in the repository root carries the metadata, and GitHub renders it as a "Cite
+this repository" button.
 
 ## Licence
 

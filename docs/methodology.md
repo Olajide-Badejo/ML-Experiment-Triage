@@ -103,10 +103,13 @@ segments of the same stationary process.
 **Test.** Split each final window into contiguous blocks, take the block means,
 and permute the block labels between the two runs.
 
-**Block length.** Three times the estimated integrated autocorrelation time,
+**Block length.** Four times the estimated integrated autocorrelation time,
 estimated on each window separately and the larger taken. Both halves of that
 sentence were forced by measurement, and section 7 records what happened when
-they were not.
+they were not. The multiplier was three through v1.0.0, fixed against a tau that
+was itself estimated wrongly; re swept against the corrected estimate it is the
+knee of two curves at once, the type I error and the rate at which short runs
+are refused.
 
 **Precondition, enforced.** The window must hold at least eight such blocks. If
 it does not, the tool raises an error naming the remedy rather than shortening
@@ -230,9 +233,16 @@ The first full run of the calibration suite measured the window block mode at a
    that scatters neighbours across both groups then narrows the null. Three tau
    put the measured error back on nominal.
 
-That second fix created the third decision. Once a block is three tau, a short
+That second fix created the third decision. Once a block is several tau, a short
 run may not contain enough of them, and the obvious remedy of shortening the
 block is precisely the failure above. So the mode refuses instead.
+
+The multiplier moved again in 1.1.0, from three to four, once tau was being
+estimated correctly and the sweep could be redone against it: measured over 2000
+null cases a point, the type I error runs 8.85, 7.02, 6.28, 6.09 and 6.03
+percent at two through six tau while the refusal rate on 4000 step runs runs 0,
+6, 20, 40 and 78 percent. Four is where both curves flatten, and past it the
+refusals cost more than the calibration gains.
 
 None of this was visible by reading the code. All of it was visible in about a
 minute of measurement, which is the argument for having the calibration suite at

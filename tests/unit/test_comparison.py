@@ -401,16 +401,21 @@ def test_the_block_length_follows_the_raw_windows_autocorrelation() -> None:
 
     A nine point moving average makes any series look autocorrelated over about
     nine points, so on white noise tau came out near 9 instead of near 1, the
-    block tripled to about 27, and the mode refused every realistically sized
-    run: two 400 step runs hold a 40 point window, which is one such block. The
-    autocorrelation that matters belongs to the data, so it is measured on the
-    raw window.
+    block grew with it to about 36, and the mode refused every realistically
+    sized run: two 400 step runs hold a 40 point window, which is one such
+    block. The autocorrelation that matters belongs to the data, so it is
+    measured on the raw window.
+
+    The run is 800 steps rather than 400 because the block is four tau, not
+    three: forty window points hold enough short blocks to test with only at
+    the older multiplier, and this test is about where tau is estimated, not
+    about how many blocks a short window can spare.
     """
     rng = np.random.default_rng(410)
-    spec = CurveSpec(n_steps=400, rho=0.0, seed_sigma=0.0)
+    spec = CurveSpec(n_steps=800, rho=0.0, seed_sigma=0.0)
     baseline, candidate = null_pair(spec, n_seeds=1, rng=rng)
     result = compare_window_block(baseline[0], candidate[0], "val/loss", CONFIG)
-    assert result.block_length <= 6, "white noise should not need a long block"
+    assert result.block_length <= 8, "white noise should not need a long block"
     assert result.n_baseline >= 8
 
 

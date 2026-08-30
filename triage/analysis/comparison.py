@@ -120,7 +120,7 @@ MODE_PAIRED_CLUSTER = "paired_cluster"
 # fewest blocks per run the window block mode will accept. Both numbers were
 # set by measurement rather than taste: see `block_length` and the calibration
 # suite in `tests/statistics`.
-BLOCK_TAU_MULTIPLIER = 3.0
+BLOCK_TAU_MULTIPLIER = 4.0
 MIN_BLOCKS_PER_RUN = 8
 
 #: Labels for the modes this module implements. The vocabulary is OPEN: a
@@ -462,11 +462,24 @@ def block_length(windows: list[np.ndarray]) -> int:
     change at the join, which the estimator reads as long range dependence and
     which inflates tau by roughly a factor of two.
 
-    Second, the block is three times tau, not one. At one tau the block means
+    Second, the block is several times tau, not one. At one tau the block means
     are still visibly correlated with their neighbours, and a permutation that
     scatters neighbouring blocks across both groups then produces a null
     distribution narrower than the truth, which is precisely how a test becomes
-    anticonservative. Three tau puts the measured type I back on nominal.
+    anticonservative.
+
+    The multiplier itself was swept once the tau estimate was fixed, because the
+    old value of three had been chosen against the old, inflated estimate.
+    Measured type I error against refusals, 2000 null cases a point: two tau
+    8.85 percent, three tau 7.02, four tau 6.28, five tau 6.09, six tau 6.03.
+    The rate is asymptotic at about 6, so four tau buys three quarters of what
+    is available and every longer block buys almost nothing; what longer blocks
+    do cost is refusals, since a longer block means fewer of them fit in a
+    window. On runs of 4000 steps at a typical autocorrelation the mode refuses
+    6 percent of comparisons at three tau, 20 percent at four, 40 percent at
+    five and 78 percent at six. Four is the knee of both curves, and it is the
+    one number here that a reader should expect to move again if the window
+    statistic changes.
     """
     tau = max(integrated_autocorrelation_time(window) for window in windows)
     return max(2, math.ceil(BLOCK_TAU_MULTIPLIER * tau))
@@ -812,8 +825,8 @@ def compare_window_block(
     both are segments of the same stationary process.
 
     Assumptions: each window is stationary; dependence decays within one block
-    length, taken as three times the integrated autocorrelation time estimated
-    on the RAW window. The blocks themselves are cut from the smoothed window,
+    length, taken as `BLOCK_TAU_MULTIPLIER` times the integrated autocorrelation
+    time estimated on the RAW window. The blocks themselves are cut from the smoothed window,
     because the smoothed window mean is the statistic being compared, and the
     ragged tail is dropped from the START so that the most recent points, the
     ones the final window exists to look at, are the ones that survive.

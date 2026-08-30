@@ -45,7 +45,7 @@
       "tag": "val/loss",
       "mode": "window_block",
       "verdict": "improvement",
-      "relative_effect_pct": -16.6359,
+      "relative_effect_pct": -16.6452,
       "p_value": 0.0001,
       "adjusted_p": 0.0001
     },
@@ -63,7 +63,7 @@
       "tag": "val/accuracy",
       "mode": "window_block",
       "verdict": "significant but below the practical threshold",
-      "relative_effect_pct": 1.1266,
+      "relative_effect_pct": 1.1287,
       "p_value": 0.0001,
       "adjusted_p": 0.0001
     },

@@ -21,6 +21,7 @@ from triage.llm.ask import (
     INTENTS,
     AnswerContext,
     Chunk,
+    build_context,
     build_prompt,
     chunk_markdown,
     collect_prose,
@@ -294,3 +295,132 @@ def test_no_prose_at_all_is_not_an_error(tmp_path: Path, temp_database: Path) ->
     assert result.refused is False
     assert result.sources == ()
     assert result.text.startswith("The database holds 2 runs")
+
+
+# ----------------------------------------------- the computed answer context
+#
+# The half of this module that decides whether an answer is worth anything.
+# Every number in a generated answer comes from here, so what matters is that
+# the figures are the ones the analysis layer would report and that a figure it
+# declined to compute never enters the table at all.
+
+
+def replicated(path: Path, baseline_mean: float = 0.80, candidate_mean: float = 0.90) -> None:
+    """Two conditions of five seeds each.
+
+    Five and not three, because with three a side the smallest attainable p
+    value is 0.1, which is above alpha, and the comparison layer correctly
+    reports every finding as inadmissible rather than as an improvement. That is
+    the tool being right; it just makes a poor fixture for a test about what a
+    verdict context holds.
+    """
+    with Store(path) as store:
+        for variant, mean in (("baseline", baseline_mean), ("candidate", candidate_mean)):
+            for seed in range(5):
+                rng = np.random.default_rng(hash((variant, seed)) % 2**32)
+                steps = np.arange(60, dtype=np.int64)
+                store.upsert(
+                    Experiment(
+                        run_id=f"{variant}_seed{seed}",
+                        source_path=f"/logs/{variant}_seed{seed}",
+                        source_format="jsonl",
+                        config={"variant": variant, "learning_rate": 0.1, "seed": seed},
+                        metrics={
+                            "val/accuracy": MetricSeries(
+                                tag="val/accuracy",
+                                steps=steps,
+                                values=rng.normal(mean, 0.004, 60).astype(np.float32),
+                            )
+                        },
+                    ),
+                    source_hash=f"{variant}{seed}",
+                )
+
+
+def test_the_verdict_context_carries_the_findings_the_tool_would_report(
+    temp_database: Path,
+) -> None:
+    replicated(temp_database)
+    with Store(temp_database) as store:
+        context = build_context(store, detect_intent("which conditions improved?"), "baseline")
+
+    rendered = context.render()
+    assert "Against baseline:" in rendered
+    assert "candidate on val/accuracy" in rendered
+    values = context.table().values
+    assert values["comparisons"] == 1.0
+    assert values["improvements"] == 1.0
+    assert 0.0 < values["candidate on val/accuracy: p"] <= 1.0
+
+
+def test_the_refusal_context_counts_what_was_not_compared(temp_database: Path) -> None:
+    """A single seed condition cannot be compared, and that is a result."""
+    replicated(temp_database)
+    with Store(temp_database) as store:
+        # Three points on the metric the baseline logs: comparable in principle,
+        # far too short for any windowed statistic, which is exactly the case
+        # the comparison layer records a refusal for rather than answering.
+        store.upsert(
+            Experiment(
+                run_id="stub_seed0",
+                source_path="/logs/stub",
+                source_format="jsonl",
+                config={"variant": "stub", "seed": 0},
+                metrics={
+                    "val/accuracy": MetricSeries(
+                        tag="val/accuracy",
+                        steps=np.arange(3, dtype=np.int64),
+                        values=np.linspace(0.5, 0.6, 3, dtype=np.float32),
+                    )
+                },
+            ),
+            source_hash="stub",
+        )
+        context = build_context(store, detect_intent("what did it refuse?"), "baseline")
+
+    assert "refused" in context.render()
+    assert context.table().values["comparisons refused"] >= 1.0
+
+
+def test_the_sensitivity_context_never_prints_a_p_value_it_did_not_compute(
+    temp_database: Path,
+) -> None:
+    """Two conditions cannot support a correlation p value, and it says so."""
+    replicated(temp_database)
+    with Store(temp_database) as store:
+        context = build_context(store, detect_intent("is the learning rate sensitive?"), "baseline")
+
+    rendered = context.render()
+    assert "sensitivity" in rendered.lower() or "Hyperparameter" in rendered
+    if "not computable" in rendered:
+        assert not any(label.endswith(": p") for label in context.table().values)
+
+
+def test_a_verdict_question_with_a_baseline_is_answered_and_grounded(
+    tmp_path: Path, temp_database: Path
+) -> None:
+    root = prose_tree(tmp_path)
+    replicated(temp_database)
+    fake = transport("One condition improved. A second condition improved by 4000 percent.")
+    with Store(temp_database) as store:
+        result = ask_question(
+            OllamaClient(transport=fake),
+            store,
+            "which conditions improved?",
+            root,
+            baseline="baseline",
+        )
+
+    assert result.refused is False
+    assert result.intent == "verdicts"
+    assert result.n_dropped == 1
+    assert "4000" not in result.text
+    assert "One condition improved." in result.text
+
+
+def test_an_intent_that_needs_a_baseline_says_which_flag_is_missing(
+    temp_database: Path,
+) -> None:
+    replicated(temp_database)
+    with Store(temp_database) as store, pytest.raises(ValueError, match="--baseline"):
+        build_context(store, detect_intent("what regressed?"), None)

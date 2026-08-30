@@ -85,7 +85,8 @@ def scaled_t(
     if df <= 2:
         raise ValueError(f"tail_df must be above 2 for the variance to exist; got {df}")
     draw = rng.standard_t(df, size)
-    return draw * (sigma / np.sqrt(df / (df - 2.0)))
+    scaled: np.ndarray | float = draw * (sigma / np.sqrt(df / (df - 2.0)))
+    return scaled
 
 
 def ar1_noise(
@@ -137,7 +138,8 @@ def generate_curve(spec: CurveSpec, rng: np.random.Generator) -> np.ndarray:
     else:
         offset = float(np.asarray(scaled_t(rng, spec.tail_df, spec.seed_sigma)))
     noise = ar1_noise(spec.n_steps, spec.rho, spec.noise_sigma, rng, spec.tail_df)
-    return trajectory + offset + noise
+    curve: np.ndarray = trajectory + offset + noise
+    return curve
 
 
 def generate_run(

@@ -498,11 +498,15 @@ def build_metric_figure(
     # function of the database and the seed. Plotly writes this id straight into
     # an HTML attribute and into a JavaScript string literal without escaping
     # either, so what goes in has to already be safe in both.
-    return figure.to_html(
-        full_html=False,
-        include_plotlyjs=False,
-        div_id=f"figure-{index}-{_slug(tag)}",
-        config={"displaylogo": False},
+    # `str(...)` rather than a cast: plotly ships no type information, so the
+    # return is Any, and this function's contract is that it hands back HTML.
+    return str(
+        figure.to_html(
+            full_html=False,
+            include_plotlyjs=False,
+            div_id=f"figure-{index}-{_slug(tag)}",
+            config={"displaylogo": False},
+        )
     )
 
 

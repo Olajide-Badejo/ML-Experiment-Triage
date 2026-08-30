@@ -138,6 +138,36 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
 
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["triage"]
+# Unreachable code is a defect rather than a style question here, with one
+# structural exception: the `else` branch of every `if TYPE_CHECKING` block
+# that binds a lazy module (E1) is unreachable BY CONSTRUCTION, since mypy
+# reads TYPE_CHECKING as true. Turning this on would flag those four bindings
+# and nothing else, so it stays off and the lazy bindings stay honest.
+warn_unreachable = false
+
+# These packages ship no type information, so mypy cannot see into them. Listed
+# one by one rather than as a global `ignore_missing_imports`, so that a new
+# untyped dependency is a decision somebody makes rather than a silence they
+# inherit. Nothing here suppresses a finding about this project's own code:
+# `triage` itself is checked under --strict with no per module exceptions.
+[[tool.mypy.overrides]]
+module = [
+    "pandas",
+    "pandas.*",
+    "plotly",
+    "plotly.*",
+    "scipy",
+    "scipy.*",
+    "tensorboard.*",
+    "tqdm",
+    "tqdm.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

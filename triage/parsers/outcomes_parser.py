@@ -36,6 +36,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from triage.core.outcomes import Outcomes
 from triage.parsers.base import (
     ParseError,
@@ -207,7 +209,7 @@ class OutcomesParser(Parser):
     @staticmethod
     def _columns(
         records: list[dict[str, Any]],
-    ) -> tuple[dict[str, list[float]], dict[str, list[Any]]]:
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Sort every key into a measurement or a group key, over all rows.
 
         Over ALL rows rather than the first one. Inferring a schema from
@@ -232,14 +234,20 @@ class OutcomesParser(Parser):
             seen = [record[name] for record in records if record.get(name) is not None]
             numeric[name] = bool(seen) and all(_is_measurement(value) for value in seen)
 
-        fields: dict[str, list[float]] = {}
-        groups: dict[str, list[Any]] = {}
+        # Built as arrays here rather than as lists that `Outcomes` converts,
+        # so that what this returns is the type `Outcomes` declares it takes.
+        # The conversion in `__post_init__` is idempotent over both of these.
+        fields: dict[str, np.ndarray] = {}
+        groups: dict[str, np.ndarray] = {}
         for name in names:
             if numeric[name]:
-                fields[name] = [
-                    float(record[name]) if record.get(name) is not None else float("nan")
-                    for record in records
-                ]
+                fields[name] = np.asarray(
+                    [
+                        float(record[name]) if record.get(name) is not None else float("nan")
+                        for record in records
+                    ],
+                    dtype=np.float64,
+                )
             else:
-                groups[name] = [record.get(name) for record in records]
+                groups[name] = np.asarray([record.get(name) for record in records], dtype=object)
         return fields, groups

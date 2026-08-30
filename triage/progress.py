@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Iterable, Iterator
-from typing import Any
+from typing import Any, cast
 
 
 def is_terminal() -> bool:
@@ -35,12 +35,18 @@ def is_terminal() -> bool:
 
 
 def tqdm_class() -> type[Any] | None:
-    """The tqdm class, or None when tqdm is not installed."""
+    """The tqdm class, or None when tqdm is not installed.
+
+    A function rather than a module level import so that the absence is decided
+    at the moment a bar is wanted, and so that a test can substitute a fake bar
+    without reaching into an import that may not have happened.
+    """
     try:
         from tqdm import tqdm
     except ImportError:
         return None
-    return tqdm
+    # tqdm ships no type information, so mypy reads the imported name as Any.
+    return cast("type[Any]", tqdm)
 
 
 def track[T](

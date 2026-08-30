@@ -195,7 +195,12 @@ class JsonlParser(Parser):
         tag_key = _pick(schema_record, TAG_COLUMNS)
         value_key = _pick(schema_record, VALUE_COLUMNS)
         wall_key = _pick(schema_record, WALL_COLUMNS)
-        long_form = tag_key is not None and value_key is not None
+        # The pair, not a boolean. Holding the two column names together with
+        # the decision that they exist means the branch below cannot be entered
+        # with one of them missing, which a `long_form: bool` allowed on paper.
+        long_form: tuple[str, str] | None = (
+            (tag_key, value_key) if tag_key is not None and value_key is not None else None
+        )
 
         counts = {"records_without_step": 0, "records_without_tag": 0}
         collected: dict[str, list[tuple[int, float, float | None]]] = {}
@@ -208,11 +213,12 @@ class JsonlParser(Parser):
             wall = record.get(wall_key) if wall_key else None
             wall_value = float(wall) if isinstance(wall, (int, float)) else None
 
-            if long_form:
-                value = _as_float(record.get(value_key))
+            if long_form is not None:
+                tag_column, value_column = long_form
+                value = _as_float(record.get(value_column))
                 if value is None:
                     continue
-                raw_tag = record.get(tag_key)
+                raw_tag = record.get(tag_column)
                 if raw_tag is None:
                     # Without a tag there is nothing to call the series, and
                     # naming it `None` (which is what used to happen) invents a

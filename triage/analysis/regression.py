@@ -130,7 +130,18 @@ class RegressionConfig:
         """Whether this comparison's effect is large enough to be worth acting on."""
         if self.practical_threshold_absolute is not None:
             return bool(abs(result.effect) >= self.practical_threshold_absolute)
-        return bool(abs(result.relative_effect_pct) >= self.practical_threshold_pct)
+        relative = self.practical_threshold_pct
+        if relative is None:
+            # `__post_init__` requires exactly one of the two thresholds, so
+            # this is reachable only by an instance built past it (frozen
+            # dataclasses can still be written through `object.__setattr__`).
+            # Comparing against None would raise a TypeError from inside the
+            # ranking loop, naming neither the config nor the reason.
+            raise ValueError(
+                "no practical threshold is set: exactly one of "
+                "practical_threshold_pct or practical_threshold_absolute is required"
+            )
+        return bool(abs(result.relative_effect_pct) >= relative)
 
 
 @dataclass(frozen=True)

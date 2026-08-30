@@ -1,38 +1,83 @@
 """Three verbs: `ingest`, `compare`, `report`.
 
     triage ingest experiments/results/demo_sweep --database triage.db
-    triage compare --database triage.db --baseline lr0.001_bs32
-    triage report  --database triage.db --baseline lr0.001_bs32 --output report.html
+    triage compare --database triage.db --baseline lr0.0010_bs32
+    triage report  --database triage.db --baseline lr0.0010_bs32 --output report.html
 
 `ingest` is the only verb that touches log files. `compare` and `report` read
 the database, so they are fast enough to rerun freely, and both are pure
 functions of the database plus the recorded permutation seed.
+
+**Exit codes mean one thing each.** Exit 1 used to mean both "some runs failed
+to parse" and "this tool crashed", which is exactly the distinction a CI gate
+needs to make; and `compare` exited 0 having performed zero comparisons, so a
+gate could pass because nothing was tested. The table is in `EXIT_CODES` and
+printed by `--help`.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from triage import __version__
 from triage.analysis.comparison import (
     ComparisonConfig,
     ComparisonError,
     ComparisonRefusal,
+    ComparisonResult,
     compare_all,
 )
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
-from triage.analysis.sensitivity import analyse
+from triage.analysis.sensitivity import SensitivityResult, analyse
 from triage.calibration import SUMMARY
+from triage.core.experiment import Experiment, SeriesError
 from triage.core.store import Store, StoreError
 from triage.ingest import ingest
+from triage.parsers import ParseError
 
 DEFAULT_DATABASE = "triage.db"
 
 #: Accepted values of `--log-level`, lowest detail last so `--help` reads in
 #: the order a reader would raise it.
 LOG_LEVELS = ("debug", "info", "warning", "error")
+
+EXIT_OK = 0
+EXIT_CRASH = 1
+EXIT_USAGE = 2
+EXIT_RUNS_FAILED = 3
+EXIT_NO_COMPARISONS = 4
+
+#: What each exit code means, printed in `--help` because a caller writing a CI
+#: gate should not have to read this file to find out. One meaning per code:
+#: exit 1 covered two of them and a job could not tell a crash from a result.
+EXIT_CODES: dict[int, str] = {
+    EXIT_OK: "success",
+    EXIT_CRASH: "a bug in triage: an unexpected exception, with its traceback",
+    EXIT_USAGE: "a usage error or a failure this tool foresaw, reported as `error: ...`",
+    EXIT_RUNS_FAILED: "the work was done, but at least one run failed to parse",
+    EXIT_NO_COMPARISONS: "the run finished having performed zero comparisons",
+}
+
+#: The exceptions the CLI answers for. Anything outside this list is a bug in
+#: this package rather than a fact about the input, and it keeps its traceback
+#: and exit 1 for exactly that reason. `KeyError` is here despite being a
+#: builtin because the store and the experiment model both raise it as a
+#: not found signal; `_message` below unwraps its repr quoting.
+HANDLED_ERRORS = (
+    ComparisonError,
+    SeriesError,
+    ParseError,
+    StoreError,
+    OSError,
+    sqlite3.Error,
+    KeyError,
+)
 
 
 def configure_logging(level: str) -> None:
@@ -65,13 +110,80 @@ def configure_logging(level: str) -> None:
 CALIBRATION_NOTE = SUMMARY
 
 
+def bounded_float(
+    low: float | None = None,
+    high: float | None = None,
+    low_inclusive: bool = False,
+    high_inclusive: bool = True,
+) -> Callable[[str], float]:
+    """An argparse `type=` that refuses a number outside a parameter's domain.
+
+    Every numeric flag on this tool has a domain, and none of them were checked:
+    `--alpha 2.0 --fdr -1 --permutations -5` were all accepted in silence, and
+    what they produced was not an error but a wrong answer, which is far worse.
+    `--window-fraction 5` did raise, eight frames down and as a traceback.
+
+    Validation belongs at the parse boundary because that is the only place that
+    can name the flag the user typed. The bounds are the domain of the quantity,
+    not a judgement about good values: a false discovery rate of 1.0 is a
+    perfectly meaningful instruction to accept everything, and is allowed.
+    """
+
+    def parse(raw: str) -> float:
+        try:
+            value = float(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{raw!r} is not a number") from None
+        if low is not None and (value < low if low_inclusive else value <= low):
+            edge = "at or above" if low_inclusive else "above"
+            raise argparse.ArgumentTypeError(f"must be {edge} {low:g}, got {value:g}")
+        if high is not None and (value > high if high_inclusive else value >= high):
+            edge = "at or below" if high_inclusive else "below"
+            raise argparse.ArgumentTypeError(f"must be {edge} {high:g}, got {value:g}")
+        return value
+
+    return parse
+
+
+def bounded_int(low: int, high: int | None = None) -> Callable[[str], int]:
+    """The same, for a count. `low` is inclusive, because counts start at one."""
+
+    def parse(raw: str) -> int:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{raw!r} is not a whole number") from None
+        if value < low:
+            raise argparse.ArgumentTypeError(f"must be at or above {low}, got {value}")
+        if high is not None and value > high:
+            raise argparse.ArgumentTypeError(f"must be at or below {high}, got {value}")
+        return value
+
+    return parse
+
+
+#: A probability: strictly inside zero, up to and including one. Zero is
+#: excluded because a gate no result can clear is not a gate.
+probability = bounded_float(low=0.0, high=1.0)
+
+
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--database",
         default=DEFAULT_DATABASE,
         help=f"path to the triage database (default: {DEFAULT_DATABASE})",
     )
-    parser.add_argument("--quiet", action="store_true", help="suppress progress bars, for CI logs")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help=(
+            "for CI logs: no progress bars and no count summary. Everything else "
+            "always prints, because everything else is either a result (the verdict "
+            "table, the caveats, the refusals, the report path) or the provenance "
+            "of one (the gates, the families, the statistic, the permutation seed), "
+            "and a number without its provenance is not something this tool emits"
+        ),
+    )
     parser.add_argument(
         "--log-level",
         default="warning",
@@ -91,25 +203,27 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tags", nargs="*", default=None, help="metrics to compare (default: all)")
     parser.add_argument(
         "--window-fraction",
-        type=float,
+        type=bounded_float(low=0.0, high=1.0),
         default=ComparisonConfig.window_fraction,
-        help="final window as a fraction of the run",
+        help="final window as a fraction of the run, in (0, 1]",
     )
     parser.add_argument(
         "--window-minimum",
-        type=int,
+        # Two, not one: a "window" of a single point has no spread, so every
+        # statistic computed over it is that point and every interval is empty.
+        type=bounded_int(low=2),
         default=ComparisonConfig.window_minimum,
-        help="smallest final window in points",
+        help="smallest final window in points (at least 2)",
     )
     parser.add_argument(
         "--permutations",
-        type=int,
+        type=bounded_int(low=1),
         default=ComparisonConfig.n_permutations,
-        help="resamples when exhaustive enumeration is too large",
+        help="resamples when exhaustive enumeration is too large (at least 1)",
     )
     parser.add_argument(
         "--alpha",
-        type=float,
+        type=probability,
         default=RegressionConfig.alpha,
         help=(
             "admissibility bound: a design whose smallest attainable p value exceeds "
@@ -119,7 +233,7 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--practical-threshold",
-        type=float,
+        type=bounded_float(low=0.0, low_inclusive=True, high=None),
         default=None,
         help=(
             "practical gate, as a relative percent (default: "
@@ -128,7 +242,7 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--practical-threshold-absolute",
-        type=float,
+        type=bounded_float(low=0.0, low_inclusive=True, high=None),
         default=None,
         help=(
             "practical gate in the metric's own units instead of as a percentage, "
@@ -139,7 +253,7 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--fdr",
-        type=float,
+        type=probability,
         default=RegressionConfig.false_discovery_rate,
         help=(
             "Benjamini Hochberg false discovery rate, which is the statistical gate: "
@@ -149,9 +263,11 @@ def add_analysis_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--seed",
-        type=int,
+        # numpy's `default_rng` refuses a negative seed, so a negative one here
+        # would have failed inside the first permutation rather than at the flag.
+        type=bounded_int(low=0),
         default=ComparisonConfig.seed,
-        help="permutation seed, printed in every report",
+        help="permutation seed, printed in every report (a non negative integer)",
     )
     parser.add_argument(
         "--higher-is-better",
@@ -229,12 +345,20 @@ def configs_from(args: argparse.Namespace) -> tuple[ComparisonConfig, Regression
     )
 
 
+def exit_code_table() -> str:
+    """The exit codes, as `--help` prints them."""
+    rows = "\n".join(f"  {code}  {meaning}" for code, meaning in sorted(EXIT_CODES.items()))
+    return f"exit codes:\n{rows}\n"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="triage",
         description=__doc__,
+        epilog=exit_code_table(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"triage {__version__}")
     subparsers = parser.add_subparsers(dest="verb", required=True)
 
     ingest_parser = subparsers.add_parser(
@@ -288,18 +412,42 @@ def run_ingest(args: argparse.Namespace) -> int:
         f"{stats['database_bytes'] / 1024:.0f} KB on disk "
         f"({stats['compression_ratio']:.1f}x compression on the series)"
     )
-    return 1 if result.failed else 0
+    return EXIT_RUNS_FAILED if result.failed else EXIT_OK
 
 
-def analyse_database(
-    args: argparse.Namespace,
-) -> tuple[TriageReport, list, list, tuple[ComparisonRefusal, ...]]:
-    """The whole analysis for one database, including what it refused to do.
+@dataclass
+class Analysis:
+    """Everything one analysis pass produced, including what it refused to do.
 
-    The refusals travel out of here beside the findings because both outputs
-    have to name them. A comparison this tool declined to make is the thing it
-    most wants to be trusted for, and for one release it was the thing most
-    easily missed: `compare_all` caught the refusal and moved on.
+    The refusals travel beside the findings because both outputs have to name
+    them. A comparison this tool declined to make is the thing it most wants to
+    be trusted for, and for one release it was the thing most easily missed:
+    `compare_all` caught the refusal and moved on.
+
+    The two configurations are carried here rather than rebuilt by each caller.
+    `run_compare` and `run_report` each called `configs_from(args)` a second time
+    to print what they had just analysed with, which is two chances to print a
+    configuration that is not the one that ran.
+    """
+
+    report: TriageReport
+    experiments: list[Experiment]
+    results: list[ComparisonResult]
+    refusals: tuple[ComparisonRefusal, ...]
+    comparison_config: ComparisonConfig
+    regression_config: RegressionConfig
+    #: Empty when the caller asked for no sensitivity pass. `compare` does not
+    #: print a sensitivity table, and it used to compute the whole one anyway
+    #: and throw it away: a Spearman permutation test per parameter per tag,
+    #: paid for on every invocation of the verb people run most.
+    sensitivity: list[SensitivityResult] = field(default_factory=list)
+
+
+def analyse_database(args: argparse.Namespace, sensitivity: bool = True) -> Analysis:
+    """Compare every condition in one database against the baseline.
+
+    `sensitivity=False` skips the hyperparameter sensitivity pass, which only
+    the HTML report renders.
     """
     comparison_config, regression_config = configs_from(args)
     # Read only, and that is a correctness property rather than tidiness. A read
@@ -317,20 +465,36 @@ def analyse_database(
     # the findings positionally; severity order, which is what a reader wants
     # to see first, is asked for here.
     findings = rank(classify(results, regression_config))
-    sensitivity = analyse(experiments, args.tags, comparison_config)
     report = TriageReport(findings=findings, config=regression_config, baseline=args.baseline)
-    return report, sensitivity, experiments, results.refusals
+    return Analysis(
+        report=report,
+        experiments=experiments,
+        results=list(results),
+        refusals=results.refusals,
+        comparison_config=comparison_config,
+        regression_config=regression_config,
+        sensitivity=(analyse(experiments, args.tags, comparison_config) if sensitivity else []),
+    )
 
 
 def run_compare(args: argparse.Namespace) -> int:
-    report, _sensitivity, _experiments, refusals = analyse_database(args)
-    comparison_config, regression_config = configs_from(args)
+    analysis = analyse_database(args, sensitivity=False)
+    report = analysis.report
+    refusals = analysis.refusals
+    comparison_config = analysis.comparison_config
+    regression_config = analysis.regression_config
 
-    print(f"\n{report.summary()}")
+    # `--quiet` removes the count summary and nothing else, and the boundary is
+    # ground rule 3 rather than taste: everything below states how a number in
+    # the table was arrived at, so suppressing any of it would print numbers
+    # without their provenance, which is the one thing this tool does not do.
+    # The summary is the one line that states nothing the table does not.
+    if not args.quiet:
+        print(f"\n{report.summary()}")
     print(f"gates: {regression_config.describe()}")
-    # An adjusted p value is only readable beside the family it was adjusted in,
-    # and this tool now corrects one family per comparison mode rather than
-    # pooling two different claims about the world into one denominator.
+    # An adjusted p value is only readable beside the family it was adjusted
+    # in, and this tool now corrects one family per comparison mode rather
+    # than pooling two different claims about the world into one denominator.
     print(f"families: {report.family_note()}")
     print(f"statistic: {comparison_config.describe()}\n")
 
@@ -359,43 +523,86 @@ def run_compare(args: argparse.Namespace) -> int:
             print(f"  - no comparison for {refusal.describe()}")
 
     print(f"\npermutation seed {comparison_config.seed}; rerunning reproduces these numbers.")
-    return 0
+    return no_comparisons_code(report)
+
+
+def no_comparisons_code(report: TriageReport) -> int:
+    """`EXIT_NO_COMPARISONS` when nothing was compared, otherwise success.
+
+    A gate that passes because nothing was tested is worse than one that fails,
+    and this tool exited 0 in exactly that case: three conditions too short for
+    any calibrated test produced an empty table, a cheerful exit, and a green
+    build. The refusals are printed above whatever this returns; the code is so
+    that a CI job does not have to read them to notice.
+    """
+    if report.findings:
+        return EXIT_OK
+    print(
+        "no comparisons were performed: nothing in this database could be compared "
+        "against the baseline on any metric. Any refusals are listed above"
+    )
+    return EXIT_NO_COMPARISONS
 
 
 def run_report(args: argparse.Namespace) -> int:
     from triage.report.html_report import build_context, render
 
-    report, sensitivity, experiments, refusals = analyse_database(args)
-    comparison_config, regression_config = configs_from(args)
+    analysis = analyse_database(args)
 
     context = build_context(
-        experiments=experiments,
-        triage=report,
-        sensitivity=sensitivity,
+        experiments=analysis.experiments,
+        triage=analysis.report,
+        sensitivity=analysis.sensitivity,
         baseline=args.baseline,
         database=str(Path(args.database)),
-        comparison_config=comparison_config,
-        regression_config=regression_config,
+        comparison_config=analysis.comparison_config,
+        regression_config=analysis.regression_config,
         calibration=CALIBRATION_NOTE,
-        refusals=refusals,
+        refusals=analysis.refusals,
         title=args.title,
     )
     output = render(context, args.output)
     size_kb = output.stat().st_size / 1024
     print(f"report: {output} ({size_kb:.0f} KB, self contained)")
-    print(f"  {report.summary()}")
-    return 0
+    if not args.quiet:
+        print(f"  {analysis.report.summary()}")
+    return no_comparisons_code(analysis.report)
+
+
+#: Verb to handler. A module level dict rather than a local one so a test can
+#: substitute a handler and drive the error boundary directly.
+HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "ingest": run_ingest,
+    "compare": run_compare,
+    "report": run_report,
+}
+
+
+def message_of(error: BaseException) -> str:
+    """The text of an exception, without a `KeyError`'s repr quoting.
+
+    `str(KeyError("no run 'x'"))` is `repr` of the argument, so a message
+    written for a reader came out wrapped in quotes: `error: "no run 'x'"`.
+    Every other exception's `str` is the message itself.
+    """
+    if isinstance(error, KeyError) and error.args:
+        return str(error.args[0])
+    return str(error)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_logging(args.log_level)
-    handlers = {"ingest": run_ingest, "compare": run_compare, "report": run_report}
     try:
-        return handlers[args.verb](args)
-    except (ComparisonError, StoreError, FileNotFoundError, KeyError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
+        return HANDLERS[args.verb](args)
+    # Everything this tool can foresee about its input, and nothing else. An
+    # exception outside this list is a bug here rather than a fact about the
+    # data, so it keeps its traceback and the interpreter's own exit 1, which
+    # is what `EXIT_CRASH` means and why it no longer shares a code with "some
+    # runs failed to parse".
+    except HANDLED_ERRORS as error:
+        print(f"error: {message_of(error)}", file=sys.stderr)
+        return EXIT_USAGE
 
 
 if __name__ == "__main__":

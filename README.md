@@ -257,6 +257,19 @@ triage compare --database triage.db --baseline my_baseline_variant
 triage report  --database triage.db --baseline my_baseline_variant --output report.html
 ```
 
+**Exit codes**, so a CI gate can tell the cases apart. `triage --help` prints the same table.
+
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | a bug in triage: an unexpected exception, with its traceback |
+| 2 | a usage error, or a failure the tool foresaw, reported as `error: ...` |
+| 3 | the work was done, but at least one run failed to parse |
+| 4 | the run finished having performed zero comparisons |
+
+Code 4 is the one worth wiring into a gate: a `compare` that compared nothing used to exit 0,
+so a build could go green because every comparison had been refused.
+
 <details>
 <summary>Expected layout for your own runs</summary>
 

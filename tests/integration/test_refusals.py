@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from triage.cli import main
+from triage.cli import EXIT_NO_COMPARISONS, main
 from triage.core.store import Store
 from triage.synthetic import CurveSpec, generate_condition
 
@@ -41,7 +41,11 @@ def database(tmp_path: Path) -> Path:
 def test_the_terminal_output_names_the_condition_it_could_not_compare(
     database: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main(["compare", "--database", str(database), "--baseline", BASELINE, "--quiet"]) == 0
+    # Exit 4, not 0: the only candidate condition here was refused, so this run
+    # performed zero comparisons. D22 gave that its own code, because a CI gate
+    # that goes green having tested nothing is worse than one that fails.
+    code = main(["compare", "--database", str(database), "--baseline", BASELINE, "--quiet"])
+    assert code == EXIT_NO_COMPARISONS
     printed = capsys.readouterr().out
     assert "caveats:" in printed
     assert REFUSED in printed
@@ -53,21 +57,21 @@ def test_the_report_names_the_condition_it_could_not_compare(
     database: Path, tmp_path: Path
 ) -> None:
     output = tmp_path / "report.html"
-    assert (
-        main(
-            [
-                "report",
-                "--database",
-                str(database),
-                "--baseline",
-                BASELINE,
-                "--output",
-                str(output),
-                "--quiet",
-            ]
-        )
-        == 0
+    code = main(
+        [
+            "report",
+            "--database",
+            str(database),
+            "--baseline",
+            BASELINE,
+            "--output",
+            str(output),
+            "--quiet",
+        ]
     )
+    # The report is still written, and it is the report that names the refusal;
+    # the code says the run compared nothing (D22).
+    assert code == EXIT_NO_COMPARISONS
     html = output.read_text(encoding="utf-8")
     assert "Comparisons not made" in html
     assert REFUSED in html

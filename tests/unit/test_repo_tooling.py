@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import check_no_dashes, make_fixtures
+from scripts import check_no_dashes, clean, make_fixtures
 
 # Written as escapes so this file never contains the characters under test, and
 # so the guard passing over this file is not itself the thing being asserted.
@@ -137,3 +137,61 @@ def test_the_fixture_check_reads_the_event_file_rather_than_hashing_it(tmp_path:
     truncated.write_text("", encoding="utf-8")
     assert make_fixtures.differences(copied) != []
     assert event_file.read_bytes() == original
+
+
+def test_the_cleaner_refuses_to_delete_the_environment_it_is_running_in() -> None:
+    """D34. `make distclean` asked the venv python to delete its own venv.
+
+    On Windows the running `python.exe` is locked, so the tree is left standing
+    with pieces missing. `ignore_errors=True` swallowed that and the script
+    printed the removal as done, which is the worst of the three possible
+    outcomes: the next `make env` reuses a half deleted environment.
+    """
+    refusal = clean.venv_refusal(Path(sys.prefix))
+    assert refusal is not None
+    assert "running" in refusal
+
+
+def test_the_cleaner_will_delete_a_virtual_environment_it_is_not_inside(tmp_path: Path) -> None:
+    assert clean.venv_refusal(tmp_path / "some-other-venv") is None
+
+
+def test_the_cleaner_reports_only_what_it_actually_removed(tmp_path: Path) -> None:
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    removed: list[str] = []
+    failed: list[str] = []
+
+    clean.remove(gone, tmp_path, removed, failed)
+
+    assert (removed, failed) == (["gone"], [])
+    assert not gone.exists()
+
+
+def test_the_cleaner_reports_a_removal_that_did_not_happen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A locked directory is a failure, not a success with a warning suppressed."""
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    monkeypatch.setattr(clean.shutil, "rmtree", lambda *args, **kwargs: None)
+    removed: list[str] = []
+    failed: list[str] = []
+
+    clean.remove(locked, tmp_path, removed, failed)
+
+    assert removed == []
+    assert failed == ["locked"]
+    assert locked.exists()
+
+
+def test_the_cleaner_exits_non_zero_when_something_survived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "report").mkdir()
+    (tmp_path / "report" / "figures").mkdir()
+    monkeypatch.setattr(clean, "ROOT", tmp_path)
+    monkeypatch.setattr(clean.shutil, "rmtree", lambda *args, **kwargs: None)
+
+    assert clean.main([]) == 1
+    assert "could not be removed" in capsys.readouterr().out

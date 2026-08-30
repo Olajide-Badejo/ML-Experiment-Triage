@@ -520,9 +520,16 @@ exact over the 1,024 arrangements of your 10 templates, with `min_attainable_p`
 
 The refusal half is as deliberate as the acceptance: `compare_window_block` and
 anything windowed refuse an `Outcomes` input by construction, with a message
-naming `paired_permutation` as the right tool. A `probe_native_ingestion`
-scenario should flip from "refused" to "supported"; the refusal path still
-triggers for windowed modes, and there is a test asserting both.
+naming `paired_permutation` as the right tool.
+
+**The `probe_native_ingestion` SCENARIO is now supported. Your function is not
+going to notice on its own.** It names `JsonlParser`, and `JsonlParser` still
+refuses a step free file deliberately: the new path is `OutcomesParser`, a
+different class, and nothing about this release changes what the one you call
+does. So `test_the_harness_claims_the_run_log_and_cannot_read_it` still passes
+against the installed 1.1.0 wheel, exactly as you wrote it to. Pointing the
+probe at `OutcomesParser` is one import line, it is yours to make, and until it
+is made your `analysis.json` will keep recording the refusal.
 
 #### Issue #2: paired permutation with clustered resampling
 

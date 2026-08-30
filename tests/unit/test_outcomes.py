@@ -150,7 +150,12 @@ def test_the_fixture_holds_many_fields_per_form(outcomes: Outcomes) -> None:
 
 
 def test_the_consumer_schema_is_recognised_without_being_asked(consumer_run: Path) -> None:
-    """Their `probe_native_ingestion` flips from refused to supported."""
+    """The scenario their `probe_native_ingestion` probes is now supported.
+
+    Their function is not, and will not be until they change it: it names
+    `JsonlParser`, which still refuses a step free file on purpose. What changed
+    is that a parser which reads that file now exists and is tried first.
+    """
     assert OutcomesParser().can_parse(consumer_run)
     # And the JSONL parser still claims it first by suffix and still cannot read
     # it, which is why the outcomes parser sits ahead of it in DEFAULT_PARSERS.

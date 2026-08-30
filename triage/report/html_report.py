@@ -17,6 +17,7 @@ the verdict table below them.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,7 +26,7 @@ from typing import Any
 
 import numpy as np
 import plotly.graph_objects as go
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader
 from plotly.offline import get_plotlyjs
 
 from triage.analysis.comparison import (
@@ -59,6 +60,27 @@ GRID = "#e1e0d9"
 AXIS = "#c3c2b7"
 
 MAX_PLOT_POINTS = 1200
+
+#: Everything a figure div id may contain. Metric tags arrive from CSV headers,
+#: JSONL keys and TensorBoard tags, so they are third party data and are
+#: whitelisted rather than blacklisted on the way into an HTML attribute.
+UNSAFE_IN_SLUG = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _slug(text: str) -> str:
+    """A metric tag reduced to characters that cannot end an HTML attribute."""
+    return UNSAFE_IN_SLUG.sub("-", text)
+
+
+def _plotly_text(text: str) -> str:
+    """Escape a label on its way into a Plotly `name` or `hovertemplate`.
+
+    Plotly does not render these as plain text. It runs them through a converter
+    that interprets a documented subset of HTML, so an unescaped `<` in a metric
+    tag is markup inside the chart even though the JSON payload around it is
+    escaped. Ampersand first, or the escaping would eat its own output.
+    """
+    return text.replace("&", "&amp;").replace("<", "&lt;")
 
 
 @dataclass
@@ -126,10 +148,18 @@ def build_metric_figure(
     tag: str,
     baseline_key: str,
     config: ComparisonConfig,
+    index: int = 0,
 ) -> str:
-    """Overlaid smoothed curves per condition, with the seed spread as a band."""
+    """Overlaid smoothed curves per condition, with the seed spread as a band.
+
+    `index` is the position of this figure on the page. It prefixes the div id
+    so that two tags whose slugs collide, `val/loss` and `val loss` for
+    instance, still get distinct ids without the id having to carry any
+    character from the tag that an HTML attribute cannot hold.
+    """
     variants = group_by_variant(experiments)
     figure = go.Figure()
+    safe_tag = _plotly_text(tag)
 
     ordered = [baseline_key] + [key for key in variants if key != baseline_key]
     colour_index = 0
@@ -159,12 +189,12 @@ def build_metric_figure(
                     line={"width": 0},
                     hoverinfo="skip",
                     showlegend=False,
-                    name=f"{variant_key} range",
+                    name=f"{_plotly_text(variant_key)} range",
                 )
             )
 
         line_x, line_y = _downsample(grid, mean)
-        label = f"{variant_key}{' (baseline)' if is_baseline else ''}"
+        label = f"{_plotly_text(variant_key)}{' (baseline)' if is_baseline else ''}"
         figure.add_trace(
             go.Scatter(
                 x=line_x,
@@ -173,7 +203,7 @@ def build_metric_figure(
                 name=f"{label}, {seeds} seed{'s' if seeds != 1 else ''}",
                 line={"color": colour, "width": 2, "dash": "dot" if is_baseline else "solid"},
                 hovertemplate=(
-                    f"<b>{label}</b><br>step %{{x:,.0f}}<br>{tag} %{{y:.4f}}<extra></extra>"
+                    f"<b>{label}</b><br>step %{{x:,.0f}}<br>{safe_tag} %{{y:.4f}}<extra></extra>"
                 ),
             )
         )
@@ -217,16 +247,18 @@ def build_metric_figure(
         "title_font": {"color": MUTED_INK, "size": 12},
     }
     figure.update_xaxes(title_text="training step", **axis_style)
-    figure.update_yaxes(title_text=tag, **axis_style)
+    figure.update_yaxes(title_text=safe_tag, **axis_style)
 
     # An explicit div id matters more than it looks. Left to itself Plotly mints
     # a fresh UUID per figure, which makes two runs over identical data produce
     # different files and quietly breaks the promise that a report is a pure
-    # function of the database and the seed.
+    # function of the database and the seed. Plotly writes this id straight into
+    # an HTML attribute and into a JavaScript string literal without escaping
+    # either, so what goes in has to already be safe in both.
     return figure.to_html(
         full_html=False,
         include_plotlyjs=False,
-        div_id=f"figure-{tag.replace('/', '-').replace(' ', '-')}",
+        div_id=f"figure-{index}-{_slug(tag)}",
         config={"displaylogo": False},
     )
 
@@ -274,7 +306,11 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
     """Write the single file report and return where it landed."""
     environment = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
-        autoescape=select_autoescape(["html"]),
+        # Unconditional rather than by file extension. Every value this template
+        # interpolates is either third party data or derived from it, and an
+        # autoescape rule that depends on what a template file is named is a
+        # rule that silently stops applying when somebody renames one.
+        autoescape=True,
         trim_blocks=True,
         lstrip_blocks=True,
     )
@@ -284,9 +320,9 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
 
     figures = {
         tag: build_metric_figure(
-            context.experiments, tag, context.baseline, context.comparison_config
+            context.experiments, tag, context.baseline, context.comparison_config, index
         )
-        for tag in sorted({result.tag for result in context.triage.findings})
+        for index, tag in enumerate(sorted({result.tag for result in context.triage.findings}))
     }
 
     html = environment.get_template("report.html").render(

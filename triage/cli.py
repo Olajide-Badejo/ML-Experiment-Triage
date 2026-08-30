@@ -1,12 +1,15 @@
-"""Three verbs: `ingest`, `compare`, `report`.
+"""Four verbs: `ingest`, `compare`, `report`, `demo`.
 
     triage ingest experiments/results/demo_sweep --database triage.db
     triage compare --database triage.db --baseline lr0.0010_bs32
     triage report  --database triage.db --baseline lr0.0010_bs32 --output report.html
+    triage demo
 
 `ingest` is the only verb that touches log files. `compare` and `report` read
 the database, so they are fast enough to rerun freely, and both are pure
-functions of the database plus the recorded permutation seed.
+functions of the database plus the recorded permutation seed. `demo` runs all
+three over a synthetic sweep whose ground truth is known, in a temporary
+directory, so a fresh `pip install` can show what the tool does.
 
 **Exit codes mean one thing each.** Exit 1 used to mean both "some runs failed
 to parse" and "this tool crashed", which is exactly the distinction a CI gate
@@ -18,9 +21,11 @@ printed by `--help`.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import sqlite3
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -393,6 +398,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_parser.add_argument("--title", default="ML Experiment Triage", help="report heading")
 
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="synthesise the sweep in a temporary directory and report on it end to end",
+        description=(
+            "Generate a synthetic sweep whose ground truth is known, ingest it, compare "
+            "every condition against the baseline and write the HTML report. Nothing is "
+            "left behind but the report, unless --keep says otherwise."
+        ),
+    )
+    demo_parser.add_argument(
+        "--output",
+        default="triage_demo_report.html",
+        help="where to write the demo report (default: triage_demo_report.html)",
+    )
+    demo_parser.add_argument(
+        "--keep",
+        metavar="DIR",
+        default=None,
+        help=(
+            "keep the synthesised sweep and its database under DIR instead of a "
+            "temporary directory that is deleted afterwards"
+        ),
+    )
+    demo_parser.add_argument(
+        "--quiet", action="store_true", help="no progress bars and no count summary"
+    )
+    demo_parser.add_argument(
+        "--log-level", default="warning", choices=LOG_LEVELS, help=argparse.SUPPRESS
+    )
+
     return parser
 
 
@@ -592,12 +627,93 @@ def run_report(args: argparse.Namespace) -> int:
     return no_comparisons_code(analysis.report)
 
 
+def run_demo(args: argparse.Namespace) -> int:
+    """Synthesise the sweep, ingest it, and report on it, in one command.
+
+    This exists so that `pip install ml-experiment-triage && triage demo` shows
+    somebody what the tool does. Before it, the demo was a `make` target over a
+    script in `examples/`, which is to say it was available only to somebody who
+    had already cloned the repository, which is to say only to somebody who had
+    already decided to trust it.
+
+    The sweep and the database go in a temporary directory that is removed
+    afterwards, because they are 31 runs of scaffolding and the report is the
+    output. `--keep` puts them somewhere durable instead, which is what to reach
+    for when the interesting thing is the database rather than the page.
+
+    The analysis is not reimplemented here: the same `run_report` the `report`
+    verb uses is called with the same arguments it would have been given, so the
+    demo cannot quietly diverge from the tool it is demonstrating.
+    """
+    from triage.demo import BASELINE, CONDITIONS, KNOWN_BEST, generate
+
+    with contextlib.ExitStack() as stack:
+        if args.keep:
+            workspace = Path(args.keep)
+            workspace.mkdir(parents=True, exist_ok=True)
+        else:
+            workspace = Path(
+                stack.enter_context(tempfile.TemporaryDirectory(prefix="triage_demo_"))
+            )
+        sweep = workspace / "demo_sweep"
+        database = workspace / "triage.db"
+
+        if not args.quiet:
+            print(
+                f"demo: synthesising {sum(c.n_seeds for c in CONDITIONS)} runs across "
+                f"{len(CONDITIONS)} conditions in three log formats under {sweep}"
+            )
+        generate(sweep, show_progress=not args.quiet)
+
+        ingest_args = argparse.Namespace(
+            path=str(sweep),
+            database=str(database),
+            force=False,
+            outcomes=False,
+            quiet=args.quiet,
+        )
+        code = run_ingest(ingest_args)
+        if code != EXIT_OK:
+            return code
+
+        report_args = argparse.Namespace(
+            database=str(database),
+            baseline=BASELINE,
+            tags=None,
+            window_fraction=ComparisonConfig.window_fraction,
+            window_minimum=ComparisonConfig.window_minimum,
+            permutations=ComparisonConfig.n_permutations,
+            alpha=RegressionConfig.alpha,
+            practical_threshold=None,
+            practical_threshold_absolute=None,
+            fdr=RegressionConfig.false_discovery_rate,
+            seed=ComparisonConfig.seed,
+            higher_is_better=None,
+            lower_is_better=None,
+            output=args.output,
+            title="ML Experiment Triage demo",
+            quiet=args.quiet,
+        )
+        code = run_report(report_args)
+
+    if not args.quiet:
+        # The ground truth, printed after the verdicts rather than before them,
+        # so a reader sees what the tool concluded and then what was true.
+        print(
+            f"\nthe sweep was built with {KNOWN_BEST} as the real winner and "
+            f"{BASELINE} as the baseline; the report above was produced without "
+            f"either of those facts"
+        )
+    return code
+
+
 #: Verb to handler. A module level dict rather than a local one so a test can
 #: substitute a handler and drive the error boundary directly.
 HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "ingest": run_ingest,
     "compare": run_compare,
     "report": run_report,
+    "demo": run_demo,
 }
 
 

@@ -46,7 +46,11 @@ from triage.cli import EXIT_OK
 from triage.cli import main as triage
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUT = ROOT / "experiments" / "autofill_demo"
+#: Under `experiments/results/`, which `.gitignore` already covers and
+#: `nox -s clean` already removes. A demo that left a hundred megabytes of
+#: untracked run directories in the working tree would be a hygiene problem
+#: somebody else had to notice.
+DEFAULT_OUT = ROOT / "experiments" / "results" / "autofill_demo"
 
 #: How many fields the demo generates. Smaller than the 4000 the published
 #: numbers were measured at, because this exists to be run by somebody who has

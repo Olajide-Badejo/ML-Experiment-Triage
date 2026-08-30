@@ -10,6 +10,10 @@ asked for.
 
 from __future__ import annotations
 
+import email.message
+import io
+import urllib.error
+
 import pytest
 from llm_fakes import TAGS, FakeTransport
 
@@ -178,3 +182,54 @@ def test_the_health_report_is_read_once_and_cached() -> None:
     instance.digest_of("embeddinggemma:300m")
 
     assert transport.n_calls == 1
+
+
+# ------------------------------------------------- a server that says no
+#
+# An `HTTPError` is an `OSError`, so before these tests a server that answered
+# 400 was reported as "no Ollama at localhost" and sent the reader off to
+# restart a service that was running. The real one does exactly this when an
+# embedding batch is too large for it; see docs/ENGINEERING_LOG.md.
+
+
+def http_error(code: int, body: bytes) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        url="http://localhost:11434/api/embed",
+        code=code,
+        msg="refused",
+        hdrs=email.message.Message(),
+        fp=io.BytesIO(body),
+    )
+
+
+def test_a_refused_request_is_not_reported_as_a_missing_service() -> None:
+    body = b'{"error":"Post \\"http://127.0.0.1:59907/tokenize\\": connection refused"}'
+    transport = FakeTransport({"/api/embed": http_error(400, body)})
+
+    with pytest.raises(LlmProtocolError) as error:
+        client(transport).embed(["a"], model="embeddinggemma:300m")
+
+    message = str(error.value)
+    assert "HTTP 400" in message
+    assert "tokenize" in message, "the server's own explanation has to survive"
+    assert "restarting it will not help" in message
+    assert "ollama serve" not in message
+
+
+def test_a_404_is_a_missing_model_and_says_how_to_get_one() -> None:
+    transport = FakeTransport({"/api/chat": http_error(404, b'{"error":"model not found"}')})
+
+    with pytest.raises(LlmUnavailableError) as error:
+        client(transport).chat("hi")
+
+    assert "ollama pull" in str(error.value)
+    assert "model not found" in str(error.value)
+
+
+def test_an_error_body_that_is_not_json_is_still_reported() -> None:
+    transport = FakeTransport({"/api/chat": http_error(502, b"<html>bad gateway</html>")})
+
+    with pytest.raises(LlmProtocolError) as error:
+        client(transport).chat("hi")
+
+    assert "bad gateway" in str(error.value)

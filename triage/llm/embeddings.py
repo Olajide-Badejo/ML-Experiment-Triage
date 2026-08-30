@@ -52,10 +52,17 @@ BGE_M3 = "bge-m3"
 
 #: How many texts go out in one `/api/embed` request. The endpoint takes an
 #: array and the batch is the unit, which is the point: one request per string
-#: would spend the whole wall clock on round trips. The chunk exists only to
-#: bound one request's size, and at this corpus size the whole train split is
-#: two or three requests rather than three thousand.
-DEFAULT_BATCH_SIZE = 512
+#: would spend the whole wall clock on round trips.
+#:
+#: **The number is measured, not chosen.** Ollama 0.32.14 with
+#: `embeddinggemma:300m` on this machine serves batches up to about 288 inputs
+#: and answers HTTP 400 above roughly 300, with the runner reporting that its
+#: own tokenizer subprocess has gone: the embedding runner crashes and restarts,
+#: and the next smaller batch succeeds again. Verified repeatedly at 300, 512
+#: and 900, each time with a 128 batch succeeding immediately afterwards
+#: (docs/ENGINEERING_LOG.md). 128 is comfortably under the boundary and still
+#: makes the whole training split three requests rather than nine hundred.
+DEFAULT_BATCH_SIZE = 128
 
 
 @dataclass(frozen=True)

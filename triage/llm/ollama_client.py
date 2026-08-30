@@ -102,6 +102,32 @@ def urllib_transport(url: str, payload: bytes | None, timeout: float) -> bytes:
     return bytes(body)
 
 
+def _server_message(error: urllib.error.HTTPError) -> str:
+    """Ollama's own explanation of a refusal, or its status line.
+
+    The body of an Ollama error is `{"error": "..."}` and it is far more useful
+    than the status: the 400 that motivated this said the embedding runner had
+    died, which is a fact about the batch that was sent and not about anything
+    the status code could express. Reading it can itself fail, on a body already
+    consumed or one that is not JSON, and a diagnostic that raises while
+    reporting an error is worse than a vague one.
+    """
+    try:
+        raw = error.read()
+    except Exception:
+        # Deliberately every exception: this function's whole job is to explain
+        # another failure, and one that raised while doing so would replace a
+        # message a reader can act on with a traceback from the reporting path.
+        return error.reason if isinstance(error.reason, str) else str(error)
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw[:200].decode("utf-8", errors="replace") or str(error)
+    if isinstance(decoded, dict) and "error" in decoded:
+        return str(decoded["error"])
+    return raw[:200].decode("utf-8", errors="replace")
+
+
 @dataclass(frozen=True)
 class ModelInfo:
     """One model the server has locally, with the digest that keys a cache."""
@@ -173,6 +199,24 @@ class OllamaClient:
         send = self.transport if self.transport is not None else urllib_transport
         try:
             body = send(url, encoded, self.timeout)
+        # An `HTTPError` FIRST, and the order is the whole point of this pair.
+        # It subclasses `URLError` which subclasses `OSError`, so a server that
+        # answered 400 used to be reported as "no Ollama at localhost", which
+        # sent a reader off to restart a service that was running perfectly and
+        # said nothing about the request that had actually been refused. This
+        # was found by running the real thing (docs/ENGINEERING_LOG.md).
+        except urllib.error.HTTPError as error:
+            detail = _server_message(error)
+            if error.code == 404:
+                raise LlmUnavailableError(
+                    f"{url} answered 404: {detail}. That is usually a model this server does "
+                    f"not have; `ollama list` shows what it has and `ollama pull` fetches one"
+                ) from error
+            raise LlmProtocolError(
+                f"{url} answered HTTP {error.code}: {detail}. The server is running and "
+                f"refused this request, so restarting it will not help; the message above "
+                f"is Ollama's own"
+            ) from error
         except (urllib.error.URLError, OSError) as error:
             raise LlmUnavailableError(
                 f"no Ollama at {self.host} ({error}). Start it with `ollama serve`, or point "

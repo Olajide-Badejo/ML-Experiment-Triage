@@ -531,6 +531,13 @@ against the installed 1.1.0 wheel, exactly as you wrote it to. Pointing the
 probe at `OutcomesParser` is one import line, it is yours to make, and until it
 is made your `analysis.json` will keep recording the refusal.
 
+**And that refusal string changed shape.** `JsonlParser` now prefixes its
+message with the file names it read, so `records carry no step field; expected
+one of step, global_step, iteration, iter, epoch` is now `run.jsonl: no record
+carries a step field; expected one of step, global_step, iteration, iter,
+epoch`. Your assertion is `"step" in detail` and survives, but you store the
+detail verbatim, so the stored artifact differs between 1.0.0 and 1.1.0.
+
 #### Issue #2: paired permutation with clustered resampling
 
 **Added**, as `triage.paired_permutation`:

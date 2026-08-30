@@ -167,19 +167,24 @@ class FeatureMatrix:
     def take(self, rows: np.ndarray) -> FeatureMatrix:
         """The same matrix restricted to `rows`, in the order given.
 
-        Used by the bootstrap in `evaluate.py`, where a resample draws rows with
-        replacement and the layout has to be rebuilt rather than sliced.
+        Two callers need this on a hot path: the trainer reshuffles the whole
+        training split once per epoch, and the bootstrap in `evaluate.py` draws
+        a resample with replacement. Both would be a Python loop over rows if
+        this were written the obvious way, so the gather is built vectorised: the
+        destination row of every nonzero, then its offset inside that row, then
+        one fancy index into the source. Rows may repeat, which is what makes it
+        usable for a resample rather than only for a permutation.
         """
         rows = np.asarray(rows, dtype=np.int64)
-        lengths = (self.indptr[rows + 1] - self.indptr[rows]).astype(np.int64)
+        lengths = self.indptr[rows + 1] - self.indptr[rows]
         indptr = np.zeros(rows.size + 1, dtype=np.int64)
         np.cumsum(lengths, out=indptr[1:])
-        indices = np.empty(int(indptr[-1]), dtype=np.int32)
-        for position, source in enumerate(rows):
-            indices[indptr[position] : indptr[position + 1]] = self.row(int(source))
+        destination_row = np.repeat(np.arange(rows.size, dtype=np.int64), lengths)
+        within_row = np.arange(int(indptr[-1]), dtype=np.int64) - indptr[destination_row]
+        source = self.indptr[rows][destination_row] + within_row
         return FeatureMatrix(
             indptr=indptr,
-            indices=indices,
+            indices=self.indices[source],
             classes=self.classes[rows],
             n_features=self.n_features,
         )

@@ -149,6 +149,71 @@ def test_the_section_renders_the_same_bytes_twice(section: AutofillSection, tmp_
     assert first.read_bytes() == second.read_bytes()
 
 
+def test_the_policy_comparison_loads_beside_the_calibration(section: AutofillSection) -> None:
+    names = [row["name"] for row in section.policies]
+    assert names == ["never_fill", "always_fill", "global_threshold", "per_type_threshold"]
+    assert section.chosen_policy == "per_type_threshold"
+    assert section.thompson is not None
+    assert section.policy_in_sample is True
+    assert "contextual bandit" not in section.policy_reward  # it is the reward line, not prose
+    assert section.chosen_policy_row is not None
+    assert section.always_fill_row is not None
+
+
+def test_the_report_shows_the_expected_correction_cost_beside_raw_accuracy(
+    section: AutofillSection, tmp_path: Path
+) -> None:
+    """5.3 (c): the chosen policy's expected user correction cost is on the page."""
+    html = render(_context(section), tmp_path / "report.html").read_text(encoding="utf-8")
+    chosen = section.chosen_policy_row
+    assert chosen is not None
+    assert "Fill or skip: the decision policy" in html
+    assert "contextual bandit" in html
+    assert "Correction cost" in html
+    assert f"{chosen['correction_cost']:.4f}" in html
+    assert f"{chosen['expected_reward']:.4f}" in html
+    assert "(chosen)" in html
+
+
+def test_the_report_says_the_offline_evaluation_needs_no_estimator(
+    section: AutofillSection, tmp_path: Path
+) -> None:
+    html = render(_context(section), tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "no importance sampling estimator is needed" in html
+
+
+def test_the_report_shows_the_bandit_beating_always_filling(
+    section: AutofillSection, tmp_path: Path
+) -> None:
+    """Acceptance criterion 3, the policy half, as the report renders it."""
+    chosen = section.chosen_policy_row
+    always = section.always_fill_row
+    assert chosen is not None and always is not None
+    assert chosen["expected_reward"] > always["expected_reward"]
+    assert chosen["correction_cost"] < always["correction_cost"]
+    html = render(_context(section), tmp_path / "report.html").read_text(encoding="utf-8")
+    assert f"{always['correction_cost']:.4f}" in html
+
+
+def test_the_thompson_row_reports_its_regret(section: AutofillSection, tmp_path: Path) -> None:
+    html = render(_context(section), tmp_path / "report.html").read_text(encoding="utf-8")
+    assert section.thompson is not None
+    assert "thompson sampling (online)" in html
+    assert f"{section.thompson['regret_per_decision']:.4f}" in html
+
+
+def test_a_calibration_without_a_policy_renders_no_policy_table(
+    section: AutofillSection, tmp_path: Path
+) -> None:
+    """An evaluation from before this section existed still renders."""
+    from dataclasses import replace
+
+    stripped = replace(section, policies=(), thompson=None, chosen_policy="")
+    html = render(_context(stripped), tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "Autofill calibration" in html
+    assert "Fill or skip" not in html
+
+
 def test_the_section_survives_a_round_trip_through_json(section: AutofillSection) -> None:
     restored = AutofillSection.from_dict(json.loads(json.dumps(section.to_dict())))
     assert restored == section

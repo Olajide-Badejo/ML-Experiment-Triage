@@ -204,6 +204,37 @@ class AutofillSection:
     engines: tuple[dict[str, Any], ...] = ()
     locale: str = ""
     split: str = ""
+    #: One row per fill or skip policy, from `policy.json`. Empty when the
+    #: evaluation ran without a model, which produces no calibrated confidence
+    #: for a decision layer to read and therefore no policy to report.
+    policies: tuple[dict[str, Any], ...] = ()
+    #: The policy the evaluation exported for the agentic demo.
+    chosen_policy: str = ""
+    #: The online simulation's summary row, or `None` when there is no policy.
+    thompson: dict[str, Any] | None = None
+    #: Whether the thresholds were fitted on the rows they are scored on. A
+    #: caption that did not say so would be quoting an unbeatable number.
+    policy_in_sample: bool = False
+    policy_fit_split: str = ""
+    #: The reward function as one line, written by the evaluation rather than
+    #: reconstructed here.
+    policy_reward: str = ""
+
+    @property
+    def chosen_policy_row(self) -> dict[str, Any] | None:
+        """The exported policy's row, for a caption that quotes its numbers."""
+        return self._policy_row(self.chosen_policy)
+
+    @property
+    def always_fill_row(self) -> dict[str, Any] | None:
+        """The naive product, which is what the chosen policy is read against."""
+        return self._policy_row("always_fill")
+
+    def _policy_row(self, name: str) -> dict[str, Any] | None:
+        for row in self.policies:
+            if row.get("name") == name:
+                return row
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,10 +250,17 @@ class AutofillSection:
             "engines": [dict(row) for row in self.engines],
             "locale": self.locale,
             "split": self.split,
+            "policies": [dict(row) for row in self.policies],
+            "chosen_policy": self.chosen_policy,
+            "thompson": None if self.thompson is None else dict(self.thompson),
+            "policy_in_sample": self.policy_in_sample,
+            "policy_fit_split": self.policy_fit_split,
+            "policy_reward": self.policy_reward,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutofillSection:
+        thompson = data.get("thompson")
         return cls(
             temperature=float(data["temperature"]),
             ece_pre=float(data["ece_pre"]),
@@ -236,6 +274,12 @@ class AutofillSection:
             engines=tuple(dict(row) for row in data.get("engines", ())),
             locale=str(data.get("locale", "")),
             split=str(data.get("split", "")),
+            policies=tuple(dict(row) for row in data.get("policies", ())),
+            chosen_policy=str(data.get("chosen_policy", "")),
+            thompson=None if thompson is None else dict(thompson),
+            policy_in_sample=bool(data.get("policy_in_sample", False)),
+            policy_fit_split=str(data.get("policy_fit_split", "")),
+            policy_reward=str(data.get("policy_reward", "")),
         )
 
 
@@ -280,8 +324,24 @@ def load_autofill_section(path: str | Path) -> AutofillSection | None:
         locale = str(report.get("locale", ""))
         split = str(report.get("split", ""))
 
+    # The decision layer, from the file `policy.py` exported. Its absence is a
+    # legitimate half of the output too: an evaluation of the heuristic has no
+    # calibrated confidence for a policy to threshold.
+    decisions: dict[str, Any] = {}
+    policy_file = calibration_file.parent / "policy.json"
+    if policy_file.exists():
+        payload = json.loads(policy_file.read_text(encoding="utf-8"))
+        decisions = {
+            "policies": payload.get("policies", ()),
+            "chosen_policy": payload.get("chosen", ""),
+            "thompson": payload.get("thompson"),
+            "policy_in_sample": payload.get("in_sample", False),
+            "policy_fit_split": payload.get("fit_split", ""),
+            "policy_reward": payload.get("reward_note", ""),
+        }
+
     return AutofillSection.from_dict(
-        {**summary, "engines": engines, "locale": locale, "split": split}
+        {**summary, "engines": engines, "locale": locale, "split": split, **decisions}
     )
 
 

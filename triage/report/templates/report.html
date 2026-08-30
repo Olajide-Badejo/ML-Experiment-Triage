@@ -445,6 +445,82 @@ footer dd { margin: 0; }
   heuristic's. The latency column is the measured mean per field, not a per field timing.
 </p>
 {% endif %}
+
+{% if context.autofill.policies %}
+<h3>Fill or skip: the decision policy</h3>
+<p class="caption">
+  A wrong fill costs the user more than no fill, so whether to fill a field at all is its own
+  decision, modelled here as a <strong>contextual bandit</strong> over (predicted type, calibrated
+  confidence, locale) with the two actions fill and skip. A bandit and not reinforcement learning:
+  nothing one field's decision does changes the next field's context. Reward:
+  {{ context.autofill.policy_reward }}, in units of one correct fill. Every number below is
+  computed exactly rather than estimated, because the corpus is fully labelled and both arms of
+  every row are therefore known: no importance sampling estimator is needed and none is used.
+</p>
+<div class="scroll">
+<table>
+  <caption class="named">Expected reward and expected user correction cost, per field</caption>
+  <thead>
+    <tr>
+      <th scope="col">Policy</th>
+      <th class="num" scope="col">Fill rate</th>
+      <th class="num" scope="col">Expected reward</th>
+      <th class="num" scope="col">Correction cost</th>
+      <th class="num" scope="col">Accuracy of the fills</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in context.autofill.policies %}
+    <tr>
+      <td>{{ row.name }}{% if row.name == context.autofill.chosen_policy %} (chosen){% endif %}</td>
+      <td class="num">{{ "%.4f" | format(row.fill_rate) }}</td>
+      <td class="num">{{ "%.4f" | format(row.expected_reward) }}</td>
+      <td class="num">{{ "%.4f" | format(row.correction_cost) }}</td>
+      <td class="num">{% if row.fill_accuracy is none %}none filled{% else %}{{ "%.4f" | format(row.fill_accuracy) }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  {% if context.autofill.thompson %}
+    <tr>
+      <td>thompson sampling (online)</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.thompson.fill_rate) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.thompson.expected_reward) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.thompson.correction_cost) }}</td>
+      <td class="num">learned online</td>
+    </tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% if context.autofill.chosen_policy_row and context.autofill.always_fill_row %}
+<p class="caption">
+  This is the number to read beside the raw accuracy above: accuracy counts fields, correction cost
+  counts what the user has to undo. Filling every field costs
+  {{ "%.4f" | format(context.autofill.always_fill_row.correction_cost) }} per field; the chosen
+  {{ context.autofill.chosen_policy }} policy costs
+  {{ "%.4f" | format(context.autofill.chosen_policy_row.correction_cost) }} and earns
+  {{ "%.4f" | format(context.autofill.chosen_policy_row.expected_reward) }} against
+  {{ "%.4f" | format(context.autofill.always_fill_row.expected_reward) }}. The thresholds were
+  fitted on the {{ context.autofill.policy_fit_split }} split{% if context.autofill.policy_in_sample %},
+  which is also the split scored here: a threshold cannot lose on the rows it was fitted to, so this
+  is the in sample number, and <code>--split test</code> is the version of the claim that costs
+  something{% endif %}.
+</p>
+{% endif %}
+{% if context.autofill.thompson %}
+<p class="caption">
+  The last row is the same decision learned <em>online</em>, one field at a time, by Thompson
+  sampling over {{ context.autofill.thompson.n_cells }} context cells, with a Gaussian posterior on
+  each cell's mean reward. It updates only on the fills, because a skip teaches a bandit nothing,
+  and that partial feedback is the whole difference between it and the rows above. Over
+  {{ context.autofill.thompson.n_rows }} decisions it gave up
+  {{ "%.1f" | format(context.autofill.thompson.cumulative_regret) }} of reward against the best
+  fixed policy ({{ context.autofill.thompson.best_fixed }}), which is
+  {{ "%.4f" | format(context.autofill.thompson.regret_per_decision) }} per decision: that gap is
+  the price of learning the policy rather than being handed it, and it is measured rather than
+  bounded. The run is deterministic under seed {{ context.autofill.thompson.config.seed }}.
+</p>
+{% endif %}
+{% endif %}
 {% endif %}
 
 </main>

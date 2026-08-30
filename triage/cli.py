@@ -397,6 +397,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--output", default="triage_report.html", help="where to write the HTML report"
     )
     report_parser.add_argument("--title", default="ML Experiment Triage", help="report heading")
+    report_parser.add_argument(
+        "--autofill",
+        metavar="DIR",
+        default=None,
+        help=(
+            "an output directory from `triage autofill evaluate`. Adds the reference "
+            "workload's calibration section: expected and maximum calibration error "
+            "before and after temperature scaling, and the reliability diagram. A "
+            "directory with no calibration file adds nothing and is not an error"
+        ),
+    )
 
     demo_parser = subparsers.add_parser(
         "demo",
@@ -737,9 +748,21 @@ def no_comparisons_code(report: TriageReport) -> int:
 
 
 def run_report(args: argparse.Namespace) -> int:
-    from triage.report.html_report import build_context, render
+    from triage.report.html_report import build_context, load_autofill_section, render
 
     analysis = analyse_database(args)
+
+    # `getattr` because `run_demo` assembles its own namespace, and a report of
+    # the classic sweep has no autofill evaluation to attach.
+    autofill_dir = getattr(args, "autofill", None)
+    autofill = load_autofill_section(autofill_dir) if autofill_dir else None
+    if autofill_dir and autofill is None:
+        print(
+            f"note: {autofill_dir} holds no calibration.json, so the report carries no "
+            f"autofill section. `triage autofill evaluate --policy heuristic` writes none: "
+            f"a rule engine has no probabilities to calibrate",
+            file=sys.stderr,
+        )
 
     context = build_context(
         experiments=analysis.experiments,
@@ -752,6 +775,7 @@ def run_report(args: argparse.Namespace) -> int:
         calibration=CALIBRATION_NOTE,
         refusals=analysis.refusals,
         title=args.title,
+        autofill=autofill,
     )
     output = render(context, args.output)
     size_kb = output.stat().st_size / 1024

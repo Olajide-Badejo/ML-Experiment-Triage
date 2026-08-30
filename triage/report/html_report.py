@@ -24,6 +24,7 @@ raises `MissingExtraError` naming the extra if it is absent.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -178,6 +179,112 @@ def _plotly_text(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
 
 
+@dataclass(frozen=True)
+class AutofillSection:
+    """The reference workload's calibration numbers, as plain data.
+
+    Plain data, and read from the JSON `triage autofill evaluate` wrote, so that
+    the reporting layer imports nothing from `triage.autofill` and the numbers on
+    the page are the ones that were measured rather than a second computation
+    that could disagree with them. The file is the contract; this is its shape.
+    """
+
+    temperature: float
+    ece_pre: float
+    ece_post: float
+    mce_pre: float
+    mce_post: float
+    n_bins: int
+    n_rows: int
+    #: `(mean confidence, accuracy, count)` per bin, before and after scaling.
+    bins_pre: tuple[tuple[float, float, int], ...] = ()
+    bins_post: tuple[tuple[float, float, int], ...] = ()
+    #: One row per scored engine, from `evaluation.json`. Empty when only the
+    #: calibration file was found, which is a legitimate half of the output.
+    engines: tuple[dict[str, Any], ...] = ()
+    locale: str = ""
+    split: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "temperature": self.temperature,
+            "ece_pre": self.ece_pre,
+            "ece_post": self.ece_post,
+            "mce_pre": self.mce_pre,
+            "mce_post": self.mce_post,
+            "n_bins": self.n_bins,
+            "n_rows": self.n_rows,
+            "bins_pre": [list(item) for item in self.bins_pre],
+            "bins_post": [list(item) for item in self.bins_post],
+            "engines": [dict(row) for row in self.engines],
+            "locale": self.locale,
+            "split": self.split,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AutofillSection:
+        return cls(
+            temperature=float(data["temperature"]),
+            ece_pre=float(data["ece_pre"]),
+            ece_post=float(data["ece_post"]),
+            mce_pre=float(data["mce_pre"]),
+            mce_post=float(data["mce_post"]),
+            n_bins=int(data["n_bins"]),
+            n_rows=int(data["n_rows"]),
+            bins_pre=tuple(_bin_triples(data.get("bins_pre", ()))),
+            bins_post=tuple(_bin_triples(data.get("bins_post", ()))),
+            engines=tuple(dict(row) for row in data.get("engines", ())),
+            locale=str(data.get("locale", "")),
+            split=str(data.get("split", "")),
+        )
+
+
+def _bin_triples(rows: Any) -> list[tuple[float, float, int]]:
+    """Bins as `(confidence, accuracy, count)`, from either spelling.
+
+    The calibration file writes them as objects, and `to_dict` writes them back
+    as triples, so a section that has been round tripped through JSON has to read
+    the same either way.
+    """
+    triples: list[tuple[float, float, int]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            triples.append((float(row["confidence"]), float(row["accuracy"]), int(row["count"])))
+        else:
+            confidence, accuracy, count = row
+            triples.append((float(confidence), float(accuracy), int(count)))
+    return triples
+
+
+def load_autofill_section(path: str | Path) -> AutofillSection | None:
+    """Read an evaluation output directory, or `None` when there is nothing there.
+
+    An absence is not an error: `--autofill` pointed at a directory that holds no
+    calibration file means the evaluation ran with the heuristic policy, which
+    produces no probabilities to calibrate. A report that refused to render over
+    that would be refusing over a legitimate result.
+    """
+    directory = Path(path)
+    calibration_file = directory if directory.is_file() else directory / "calibration.json"
+    if not calibration_file.exists():
+        return None
+    payload = json.loads(calibration_file.read_text(encoding="utf-8"))
+    summary = dict(payload.get("calibration", payload))
+
+    engines: tuple[dict[str, Any], ...] = ()
+    locale = split = ""
+    evaluation = calibration_file.parent / "evaluation.json"
+    if evaluation.exists():
+        report = json.loads(evaluation.read_text(encoding="utf-8"))
+        engines = tuple(dict(row) for _, row in sorted(report.get("engines", {}).items()))
+        locale = str(report.get("locale", ""))
+        split = str(report.get("split", ""))
+
+    return AutofillSection.from_dict(
+        {**summary, "engines": engines, "locale": locale, "split": split}
+    )
+
+
 @dataclass
 class ReportContext:
     """Everything the template needs, assembled once and passed in whole."""
@@ -196,6 +303,10 @@ class ReportContext:
     #: A report that shows only what could be computed is not a report of what
     #: was asked for.
     refusals: tuple[ComparisonRefusal, ...] = ()
+    #: The reference workload's probability calibration, when the caller passed
+    #: one. `None` renders nothing at all, so a report of an ordinary sweep is
+    #: byte identical to what it was before this section existed.
+    autofill: AutofillSection | None = None
 
     @property
     def sensitivity_caveat(self) -> str:
@@ -510,6 +621,79 @@ def build_metric_figure(
     )
 
 
+def build_reliability_figure(section: AutofillSection) -> str:
+    """A reliability diagram: predicted confidence against measured accuracy.
+
+    The diagonal is perfect calibration, and it is drawn first so that the two
+    curves read against it rather than against each other. A point ABOVE the
+    diagonal is a model that is better than it claims; a point below is one that
+    is worse, which is the direction that costs a decision layer money.
+
+    The bins hold equal MASS rather than equal width (see
+    `triage.autofill.calibration`), so the points are unevenly spaced along the
+    x axis on purpose: that spacing is where the model's confidences actually
+    live, and equal width bins would hide it by putting most of the data in one.
+    """
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=[0.0, 1.0],
+            y=[0.0, 1.0],
+            mode="lines",
+            name="perfect calibration",
+            line={"color": AXIS, "width": 1, "dash": "dot"},
+            hoverinfo="skip",
+        )
+    )
+    for label, bins, colour in (
+        ("before scaling", section.bins_pre, SERIES_COLOURS[1]),
+        ("after scaling", section.bins_post, SERIES_COLOURS[0]),
+    ):
+        figure.add_trace(
+            go.Scatter(
+                x=[confidence for confidence, _, _ in bins],
+                y=[accuracy for _, accuracy, _ in bins],
+                mode="lines+markers",
+                name=label,
+                line={"color": colour, "width": 2},
+                marker={"color": colour, "size": 7},
+                customdata=[count for _, _, count in bins],
+                hovertemplate=(
+                    "confidence %{x:.3f}<br>accuracy %{y:.3f}<br>%{customdata} rows<extra></extra>"
+                ),
+            )
+        )
+    figure.update_layout(
+        template="plotly_white",
+        height=380,
+        margin={"l": 60, "r": 20, "t": 10, "b": 50},
+        paper_bgcolor=SURFACE,
+        plot_bgcolor=SURFACE,
+        font={"color": MUTED_INK},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        xaxis={
+            "title": "mean predicted confidence in the bin",
+            "range": [0.0, 1.02],
+            "gridcolor": GRID,
+            "linecolor": AXIS,
+        },
+        yaxis={
+            "title": "measured accuracy in the bin",
+            "range": [0.0, 1.02],
+            "gridcolor": GRID,
+            "linecolor": AXIS,
+        },
+    )
+    return str(
+        figure.to_html(
+            full_html=False,
+            include_plotlyjs=False,
+            div_id="figure-reliability",
+            config={"displaylogo": False},
+        )
+    )
+
+
 def _window_start(
     experiments: list[Experiment], tag: str, config: ComparisonConfig
 ) -> float | None:
@@ -583,15 +767,22 @@ def render(context: ReportContext, output_path: str | Path) -> Path:
         for index, tag in enumerate(tags)
     }
 
+    reliability = (
+        build_reliability_figure(context.autofill)
+        if context.autofill is not None and context.autofill.bins_pre
+        else ""
+    )
+
     html = environment.get_template("report.html").render(
         context=context,
         figures=figures,
         compared=compared,
         runs=summarise_runs(context.experiments, context.comparison_config),
+        reliability=reliability,
         # Fetched only when there is something for it to draw. `get_plotlyjs`
         # reads the bundle off disk, so this also keeps an empty report cheap
         # to build and not merely cheap to store.
-        plotly_js=plotly_offline.get_plotlyjs() if figures else "",
+        plotly_js=plotly_offline.get_plotlyjs() if figures or reliability else "",
         n_runs=len(context.experiments),
     )
     output = Path(output_path)
@@ -638,6 +829,10 @@ def build_context(
     calibration: dict[str, str] = SUMMARY,
     refusals: Sequence[ComparisonRefusal] = (),
     title: str = "ML Experiment Triage",
+    # Optional and defaulted off, so every existing caller renders exactly the
+    # page it rendered before (D27: the report is a byte identical function of
+    # the database, and a new section is exactly what quietly breaks that).
+    autofill: AutofillSection | None = None,
     # The one input that is not the database. Left to the wall clock the report
     # cannot be a pure function of what it was built from, so a caller who needs
     # it to be says what moment to stamp; `SOURCE_DATE_EPOCH` does the same for
@@ -656,4 +851,5 @@ def build_context(
         regression_config=regression_config,
         calibration=calibration,
         refusals=tuple(refusals),
+        autofill=autofill,
     )

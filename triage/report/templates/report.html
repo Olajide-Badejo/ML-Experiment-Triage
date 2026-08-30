@@ -359,6 +359,94 @@ footer dd { margin: 0; }
 <p class="caption">{{ context.sensitivity_caveat }}</p>
 {% endif %}
 
+{% if context.autofill %}
+<h2>Autofill calibration</h2>
+<p class="caption">
+  The reference workload's predicted probabilities, measured on
+  {{ context.autofill.n_rows }} rows of the
+  {{ context.autofill.locale or 'whole' }} {{ context.autofill.split or 'evaluation' }} split.
+  This section is about how much the model's confidence is worth, which is a different question
+  from how often it is right: a decision layer that skips a field below a confidence threshold is
+  reading these numbers, and an uncalibrated 0.9 is not a usable 0.9.
+</p>
+<div class="scroll">
+<table>
+  <caption class="named">Calibration error before and after temperature scaling</caption>
+  <thead>
+    <tr>
+      <th scope="col">Measure</th>
+      <th class="num" scope="col">Before</th>
+      <th class="num" scope="col">After</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Expected calibration error</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.ece_pre) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.ece_post) }}</td>
+    </tr>
+    <tr>
+      <td>Maximum calibration error</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.mce_pre) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.mce_post) }}</td>
+    </tr>
+    <tr>
+      <td>Fitted temperature</td>
+      <td class="num">1.000</td>
+      <td class="num">{{ "%.3f" | format(context.autofill.temperature) }}</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+{% if reliability %}
+<div class="figure" role="img"
+     aria-label="Reliability diagram: mean predicted confidence against measured accuracy in each of {{ context.autofill.n_bins }} equal mass bins, before and after temperature scaling, against a diagonal marking perfect calibration. The same numbers are in the table above.">{{ reliability | safe }}</div>
+{% endif %}
+<p class="caption">
+  {{ context.autofill.n_bins }} bins of equal mass, not of equal width. A trained classifier's
+  confidences pile up near one, so equal width bins would put most of the data in the top bin and
+  estimate the rest from a handful of rows each. Temperature scaling is one scalar fitted on the
+  validation split; it cannot change a single prediction, because dividing every logit by the same
+  positive number leaves the argmax where it was, so accuracy and macro F1 below are the same
+  either side of it.
+</p>
+{% if context.autofill.engines %}
+<div class="scroll">
+<table>
+  <caption class="named">Engines scored on this split</caption>
+  <thead>
+    <tr>
+      <th scope="col">Engine</th>
+      <th class="num" scope="col">Rows</th>
+      <th class="num" scope="col">Accuracy</th>
+      <th class="num" scope="col">Macro F1</th>
+      <th class="num" scope="col">ECE</th>
+      <th class="num" scope="col">Latency (us/field)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in context.autofill.engines %}
+    <tr>
+      <td>{{ row.engine }}</td>
+      <td class="num">{{ row.n_rows }}</td>
+      <td class="num">{{ "%.4f" | format(row.accuracy) }}</td>
+      <td class="num">{{ "%.4f" | format(row.macro_f1) }}</td>
+      <td class="num">{{ "%.4f" | format(row.ece) }}</td>
+      <td class="num">{{ "%.1f" | format(row.mean_latency_us) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  The rule engine's confidences are TIERS rather than estimates: which rule fired, not how likely
+  it is to be right. Its calibration error is the point being made rather than a defect being
+  reported, and it is why the decision layer reads the model's probabilities and not the
+  heuristic's. The latency column is the measured mean per field, not a per field timing.
+</p>
+{% endif %}
+{% endif %}
+
 </main>
 
 <footer>

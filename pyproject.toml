@@ -169,6 +169,12 @@ warn_unreachable = false
 # `triage` itself is checked under --strict with no per module exceptions.
 [[tool.mypy.overrides]]
 module = [
+    # The screenshot recompression of D35a, which the agentic demo does when an
+    # imaging library happens to be installed and skips when there is none. It
+    # is deliberately not a declared dependency of any extra: the capture is at
+    # scale 1 either way, which is most of the saving.
+    "PIL",
+    "PIL.*",
     "pandas",
     "pandas.*",
     "plotly",
@@ -189,6 +195,10 @@ markers = [
     # machine without a local Ollama and therefore every CI runner. `pytest -m
     # ollama` is how it is run deliberately, once before a release.
     "ollama: tests that talk to a real local Ollama, skipped when there is none",
+    # Section 5.4. Skipped automatically when no Chromium is installed, which is
+    # every CI runner that has not asked for one. `pytest -m browser` runs them
+    # deliberately; the `--no-browser` half of the same demo runs everywhere.
+    "browser: tests that drive a real headless Chrome, skipped when there is none",
 ]
 # A deprecation is an error, and the exceptions are named by the module that
 # emits them. The blanket `ignore::DeprecationWarning` this replaces silenced

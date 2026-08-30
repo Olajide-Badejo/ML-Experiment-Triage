@@ -1,0 +1,58 @@
+# Section 7 item 5. What CI refuses, refused before the commit exists.
+#
+# The hooks here are the fast half of `nox -s lint`: the formatter, the linter
+# and the dash guard, plus two hygiene checks. The slow half (mypy, the test
+# suite, the calibration gates) deliberately stays in CI and in `make all`,
+# because a commit hook that takes three minutes is a commit hook people learn
+# to pass `--no-verify` to, and a gate that is routinely bypassed is worse than
+# one that was never claimed.
+#
+# `pre-commit install` wires it up; see CONTRIBUTING.md. Nothing here is
+# required: CI runs the same checks, so a contributor without pre-commit gets
+# the same answer a few minutes later rather than a different one.
+#
+# The ruff revision is pinned to the version in `pylock.toml`. The two have to
+# agree: the formatter's output is version dependent, so a hook running a
+# different ruff from the one in `nox -s lint` would rewrite files that CI then
+# reports as unformatted, which is the worst possible way to find out.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff-format
+      - id: ruff-check
+        args: [--fix]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+        # D35g's scope argument applied to a formatter. A fixture records what
+        # some other system wrote: MLflow's file store puts a param's value in a
+        # file with no trailing newline, and appending one here would change the
+        # bytes the fixture exists to be and fail the fixture check that follows
+        # it. The same reasoning keeps the dash guard out of data files.
+        exclude: ^tests/fixtures/
+
+  - repo: local
+    hooks:
+      # Ground rule 1, and the one check in this repository that no off the
+      # shelf hook provides. It scopes itself to what git would ship and to
+      # prose rather than data (D35g), so it takes no file list: handing it the
+      # staged paths would narrow it to a subset of what it is a claim about.
+      #
+      # `language: system` rather than an isolated environment, and that is safe
+      # here only because the guard imports nothing but the standard library: it
+      # therefore gives the same answer under whichever interpreter happens to
+      # be on PATH. The fixture check next to it in `nox -s lint` needs numpy
+      # and tensorboard, so it is NOT here: an isolated hook environment holding
+      # the tensorboard stack would cost more to build than the check saves, and
+      # `nox -s lint` and CI both run it.
+      - id: dash-guard
+        name: no em dashes or en dashes in prose
+        entry: python scripts/check_no_dashes.py
+        args: ["."]
+        language: system
+        pass_filenames: false

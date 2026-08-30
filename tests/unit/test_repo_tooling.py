@@ -9,6 +9,7 @@ to the person reading its output.
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 import tomllib
@@ -214,6 +215,22 @@ def test_the_locked_versions_satisfy_the_declared_ranges() -> None:
         assert Version(locked[name]) in specifier, (
             f"{name} is locked at {locked[name]}, which does not satisfy {specifier}"
         )
+
+
+def test_the_commit_hook_runs_the_same_ruff_the_lock_installs() -> None:
+    """A formatter is only a gate if there is one of it.
+
+    `ruff format` output is version dependent, so a commit hook running a
+    different ruff from `nox -s lint` would rewrite files that CI then reports
+    as unformatted: a loop the contributor cannot get out of by doing what
+    either tool told them. pre-commit pins its hook repository by revision and
+    the lock pins the package, and nothing but this holds the two together.
+    """
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    match = re.search(r"astral-sh/ruff-pre-commit\s*\n\s*rev:\s*v?([0-9][^\s]*)", config)
+
+    assert match is not None, "the ruff hook repository is not pinned to a revision"
+    assert match.group(1) == locked_versions()["ruff"]
 
 
 def test_the_cleaner_refuses_to_delete_the_environment_it_is_running_in() -> None:

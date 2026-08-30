@@ -28,6 +28,15 @@ Changelog; versions follow semantic versioning.
   float32 array, and parser fuzzing with hostile tag text (D3, D28). Two
   profiles: `fast` runs inside the ordinary suite, and `nox -s test_property`
   reruns them at `thorough`. Hypothesis is a development dependency only.
+* **A `.pre-commit-config.yaml`,** so that what CI refuses is refused before the
+  commit exists: ruff format, ruff check, the dash guard scoped as it always was
+  (D35g), `check-yaml` and `end-of-file-fixer`. The slow gates stay in CI, and
+  `end-of-file-fixer` is kept away from `tests/fixtures/` for the same reason
+  the dash guard is: a fixture records the bytes another system wrote, and
+  MLflow's file store writes a param value with no trailing newline. The ruff
+  revision is pinned to the locked version and a test holds them in step.
+  `pre-commit install` is documented in CONTRIBUTING.md and is optional:
+  a contributor without it gets the same answer from CI a few minutes later.
 * **Six new calibration arms, covering the designs a permutation test is not
   exact in.** Unequal spreads at 5v5, 3v7 and 7v3 (7.83, 2.08 and 12.92 percent
   type I at a nominal 5, against 8.25, 1.08 and 17.92 for the raw mean

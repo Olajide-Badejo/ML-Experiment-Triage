@@ -34,6 +34,24 @@ it is. `--upgrade` is the deliberate opposite, and it owes the calibration suite
 a rerun before it is committed, because a moved numpy or scipy is a moved
 measurement.
 
+## Commit hooks
+
+```bash
+pre-commit install     # once, after make env
+pre-commit run --all-files
+```
+
+Optional and worth it: the hooks are the fast half of `nox -s lint` (ruff
+format, ruff check, the dash guard) plus `check-yaml` and `end-of-file-fixer`,
+so the things CI refuses get refused before the commit exists. mypy, the test
+suite and the calibration gates stay out of the hooks on purpose, because a
+commit hook that takes three minutes is one people learn to pass `--no-verify`
+to.
+
+The ruff revision in `.pre-commit-config.yaml` is pinned to the version in
+`pylock.toml` and a test holds the two together: a hook running a different
+ruff would rewrite files that CI then reports as unformatted.
+
 ## The inner loop
 
 **`pytest -m "not slow"` is what to run while working.** The `slow` marker is

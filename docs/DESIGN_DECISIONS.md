@@ -217,3 +217,93 @@ Path exclusion lists rot. Asking `git ls-files` does not.
 
 `make verify-demo` rebuilds from fixed seeds and checks every number to four
 decimal places. It turns "reproducible" from a claim into a failing build.
+
+## Repository practice
+
+Six practices were adopted for 1.1.0 and five were rejected. Both halves are
+here, because a list of what a project does is only half an argument: the
+omissions are the other half, and an omission that is not written down reads as
+an omission that was not noticed.
+
+### Adopted
+
+**A documentation site, built strict.** mkdocs-material on GitHub Pages, with
+mkdocstrings rendering the docstrings that already exist into an API reference
+rather than a second copy of them that can drift. `mkdocs build --strict` turns
+a warning into a failure, which is what makes a dead link a build break rather
+than a thing a reader finds. This was the most visible gap in the project: a
+statistics tool whose method is its product had its method in a Markdown file
+that only a repository visitor would ever open.
+
+**Hypothesis property tests on the statistical core.** The gates here were
+already phrased as properties, so they are encoded as ones: a permutation p
+value invariant to the order the runs arrived in, `paired_permutation` invariant
+to the order of the pairs, Benjamini Hochberg monotone in its input vector and
+matching the published 1995 example, a store round trip exact for any finite
+float32 array. Property tests on a numerical library signal that the author
+knows what could be wrong with it, which no coverage percentage does.
+
+**PyPI Trusted Publishing, with attestations.** The release job authenticates by
+OIDC through `pypa/gh-action-pypi-publish` and there is no API token anywhere in
+the repository or its secrets. PEP 740 Sigstore attestations are produced by
+default with no extra configuration, so the whole supply chain story is a
+workflow file with `id-token: write` in it. **Rejected:** hand rolling SLSA
+provenance on top, which would be a large amount of YAML restating what the
+attestation already says.
+
+**uv and a committed `pylock.toml`.** `pip install ml-experiment-triage` stays
+the user path and resolves the published ranges; development and CI install the
+PEP 751 lock, which carries the exact resolution every published number was
+measured under. A lock in a standard format with hashes beats a pinned
+`requirements.txt` that only pip could read, and moving a version becomes an
+explicit `nox -s lock -- --upgrade` that owes the calibration suite a rerun.
+
+**pre-commit.** ruff format, ruff check, the dash guard, `check-yaml` and
+`end-of-file-fixer`. It makes CI green by default rather than after a round
+trip. Optional to install: a contributor without it gets the same answer from CI
+a few minutes later, which is the property that keeps it from being a barrier.
+
+**CITATION.cff and a Zenodo DOI.** GitHub renders the citation widget from the
+CFF, and the Zenodo GitHub integration mints a DOI per release from that same
+metadata. **Rejected:** also adding a `.zenodo.json`, which would silently
+override the CFF and leave two files that have to agree.
+
+### Rejected, with reasons
+
+**Docker or a devcontainer.** This is a pure Python package whose install story
+is one `pip install` line and whose only native dependencies are numpy and
+scipy wheels. An image would add a build to maintain, a base to patch, and a
+second set of version numbers, in exchange for solving a problem the package
+does not have. **What would change my mind:** the Chrome dependency of the
+agentic demo, which is the one part of this repository where "it works on my
+machine" is a real risk. If that demo grows past a documented optional extra, it
+gets a container and nothing else does.
+
+**OpenSSF Scorecard.** Several of its checks are structurally unachievable for a
+single author project: code review by a second person, a documented security
+response process with more than one responder, a branch protection policy that
+somebody other than the author can enforce. A badge reporting a middling score
+would advertise the bus factor rather than the engineering, and gaming the
+checks that are achievable would be worse. **What would change my mind:** a
+second maintainer, at which point most of the unachievable checks become
+achievable and the score starts measuring something real.
+
+**An SBOM, or PEP 770 metadata.** Both exist to describe binary dependencies
+that a package vendors or links against, which is the case a dependency list
+cannot cover. This wheel is pure Python and vendors nothing: its SBOM would be
+its `pyproject.toml` in a longer format. **What would change my mind:** vendoring
+any compiled artifact, at which point the wheel starts containing things its
+metadata does not describe.
+
+**Mutation testing.** The worst maintenance to signal ratio available on
+numerical code. A mutation that changes a constant in a permutation loop
+produces a p value that is still a plausible number, so a surviving mutant is
+usually a question about tolerance rather than a missing test, and the runs are
+long. Hypothesis covers the same intent by stating the property directly.
+**What would change my mind:** a body of pure combinatorial code, such as the
+Benjamini Hochberg step up procedure taken alone, where mutants are decidable.
+
+**A conda-forge feedstock.** A second release channel, with its own review
+process and its own update lag, and nobody has asked for it. PyPI is where the
+one downstream consumer installs from. **What would change my mind:** a user who
+needs it, which is a cheap thing to wait for.

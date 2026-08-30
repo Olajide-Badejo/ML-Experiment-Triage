@@ -553,3 +553,104 @@ been about four times that.
 answers from `llm_responses`, made zero HTTP requests, took 0.9 s against
 434.1 s, and wrote a byte identical summary. That is the reproducibility
 property of 6.3 holding for a browser driven run as well as for a split.
+
+## 2026-08-31: cross repo verification of the built wheel
+
+Section 9 item 4 of the build specification asks for the wheel to be proved
+against its real consumer rather than against this repository's own idea of it.
+This is that run. Nothing in `triage/` and nothing in the consumer's checkout
+was changed to make any of it pass, which is the only arrangement under which
+the two disagreements below could have been found rather than papered over.
+
+**The wheel.** `nox -s package` from the v1.1.0 tree built
+`ml_experiment_triage-1.1.0-py3-none-any.whl`
+(sha256 `2d68af04fcd0cb35753dc54db7ab1d989983daf019924235634186ada051133f`,
+52 members, `triage/py.typed` among them), passed `twine check --strict`, and
+passed both smoke installs, the `[cli]` one and the bare core one.
+
+**The consumer.** `Autofill_audit` at `7e30a44`, cloned shallow into a scratch
+directory, into a fresh `py -3.14` virtual environment installed from its own
+`requirements.lock`. That lock pins us as `ml-experiment-triage @
+git+...@v1.0.0`, so the environment was first brought up on the version they
+actually consume, measured there, and only then had the wheel swapped in. The
+swap installed nothing else: `numpy>=2.5` and `scipy>=1.18` were already
+satisfied by their lock, and `pip check` found no broken requirements, which is
+E1 holding at the only place it matters.
+
+| Gate | On v1.0.0 | On the v1.1.0 wheel |
+|---|---|---|
+| `tests/unit/test_triage_bridge.py` | 14 passed, 0 failed | 14 passed, 0 failed |
+| sole importer AST gate plus the private name gate | 2 passed | 2 passed |
+| `probe_native_ingestion` on a real 2,317 row `run.jsonl` | claimed, not parsed | claimed, not parsed |
+
+**Their suite is green, and one of those greens is a finding.** They wrote
+`test_the_harness_claims_the_run_log_and_cannot_read_it` to FAIL the day we
+learned to read their file, with a comment saying the right response is to
+delete their local scaffolding rather than relax the assertion. It still
+passes, because `probe_native_ingestion` names `JsonlParser` and we deliberately
+left `JsonlParser` refusing a step free file: the new path is `OutcomesParser`,
+a different class. So the CHANGELOG sentence "a `probe_native_ingestion`
+scenario should flip from refused to supported" is true of the scenario and not
+of their function. The flip is one import line on their side and cannot happen
+without one. Their `analysis.json` also records the refusal detail verbatim, and
+that string changed: `records carry no step field; expected one of step,
+global_step, iteration, iter, epoch` became `run.jsonl: no record carries a step
+field; expected one of ...`. Their assertion is `"step" in detail`, so it
+survives, but a stored artifact of theirs will differ.
+
+**The documented join key does not work on their data.** This is the one to fix
+here. The CHANGELOG, `docs/autofill.md` and this repository's fixture all write
+the E5 example as `pair_on("form_id", "engine", "rules", "ngram")`. Run against
+`experiments/results/test/.../run.jsonl` it raises `SeriesError: 'form_id' is
+not unique within 'rules'`, and it is right to. Their schema is one row per
+classified FIELD; a form holds between 3 and 23 fields. Their real file has
+2,317 rows over 240 form ids, 270 selectors, 2,317 distinct `(form_id,
+selector)` pairs and 10 templates. The unit key is the pair, not the form.
+
+Our fixture `tests/fixtures/outcomes/autofill_run/run.jsonl` did not catch this
+because it is not the file the CHANGELOG says it is. It holds 48 rows, one per
+`(engine, form_id)`, and 11 of the 25 keys their writer emits: no `selector`, no
+`engine_describe`, no `signals`, no `finding_codes`, none of the nulls. It was
+generated from the abridged snippet in the specification rather than copied from
+their output, so it models a form as the unit of analysis, which is the one
+thing their own module docstring says the schema is not. "The fixture in this
+repository is a copy of yours, verbatim" is not accurate and the join key it
+taught is wrong for their data.
+
+Everything downstream of the key is right. With the unit spelled `form_id`
+plus `selector`, their real pair of run logs joins 2,317 rows to 2,317, and
+`paired_permutation` over `correct` clustered by `template_id` returns
+`mode="paired_cluster"`, rules 0.7678 against ngram 0.8226, p 0.00390625 exact
+over 1,024 arrangements with `min_attainable_p` 0.001953125. The parser reads
+their unmodified file whole: nested `engine_describe`, list valued `signals`
+and `finding_codes` and the nulls all land as group keys, 2,317 rows, four
+measured fields. The refusal half holds by name: `compare_window_block` and
+`compare_all` both raise `ComparisonError` naming `paired_permutation`, and
+`triage ingest` on their two run directories reports "2 added, 2 of them outcome
+files, 4,634 rows" with the same advice per run. Their own mode string
+`template_clustered_paired` now labels and serialises instead of raising
+(E3), `classify` returns in input order with `finding.result is result` (E4),
+and the absolute practical gate constructs (E2).
+
+**TPT (E6).** `experiments/results/canonical/health/healthy_steps.jsonl` from
+the sibling checkout, 2,001 lines, copied to a temp directory and ingested
+unmodified. One run, 24 series, 42,120 points, `malformed_lines: 0`,
+`records: 2001`, `records_without_step: 1`. The environment header was skipped
+and counted, exactly as E6(a) asks. `data_ms` is `null` on every row and is
+absent from the series rather than zero, which is E6(c). Two caveats worth
+writing down: no file in that checkout contains the `"NaN"`, `"Infinity"` or
+`"-Infinity"` string literals of E6(b), and none carries a second environment
+header, so both of those paths are still exercised only by our own fixtures and
+by their `docs/schema.md`. And `row_schema_version` is on every record, so it
+was read as a 2,000 point metric series whose value is always 2. Harmless, and
+noise in a tag list.
+
+**Two smaller notes.** Specification E2 asks for the old `practical_threshold`
+constructor keyword to be accepted with a deprecation warning for one minor
+version; v1.0.0's field was already `practical_threshold_pct`, so the alias we
+ship and describe in the CHANGELOG is for a spelling no release ever had.
+Harmless, and the CHANGELOG sentence overstates it. Second, `mypy --strict`
+could not be run in the scratch environment at all: its compiled extension
+fails to load from a path that deep on Windows. `triage/py.typed` is in the
+wheel and on disk in their site-packages, so E1's typing half is verified by
+presence rather than by their checker.

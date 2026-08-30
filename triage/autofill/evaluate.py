@@ -65,6 +65,13 @@ from triage.autofill.model import (
     per_class_scores,
     softmax,
 )
+from triage.autofill.policy import (
+    RewardModel,
+    ThompsonConfig,
+    compare_policies,
+    stream_from_records,
+    write_policy,
+)
 from triage.autofill.taxonomy import FIELD_TYPES, FieldType, index_of
 
 #: The schema version the consumer's rows declare, copied rather than invented.
@@ -470,6 +477,10 @@ class EvaluationPaths:
     outcomes: Path
     report: Path
     calibration: Path | None = None
+    #: The exported contextual bandit comparison, when there was a model to
+    #: calibrate. `None` for the heuristic, which has no probabilities to decide
+    #: on: see `write_evaluation`.
+    policy: Path | None = None
 
 
 def _write_run(directory: Path, curve: list[dict[str, float]], settings: dict[str, Any]) -> Path:
@@ -501,12 +512,27 @@ def write_evaluation(
     bootstrap: int,
     seed: int,
     run_id: str | None = None,
+    fit_records: list[FieldRecord] | None = None,
+    reward: RewardModel | None = None,
+    decision_policy: str = "per_type_threshold",
 ) -> EvaluationPaths:
     """Score, calibrate, resample, and write both artifact shapes.
 
     `locale` is `all` or one of the corpus locales; anything else is refused
     rather than silently scored on an empty split, which would report a macro F1
     of NaN and a verdict about nothing.
+
+    **The decision layer, when there is a model.** `policy.py`'s contextual
+    bandit is compared and exported here rather than in a verb of its own,
+    because it consumes exactly what this function already computed: the
+    calibrated confidences. `fit_records` are the rows the thresholds are
+    learned from (5.3 says the validation split); passing none fits them on the
+    rows being scored, which is recorded as `in_sample` rather than hidden.
+
+    Nothing is exported for the heuristic. Its confidences are six tiers rather
+    than probabilities, so a threshold over them is a choice between six
+    policies dressed up as a continuum, and putting that in the same table as
+    the model's would invite a comparison that means nothing.
     """
     root = Path(out_dir)
     rows = [r for r in records if locale == "all" or r.locale == locale]
@@ -546,6 +572,32 @@ def write_evaluation(
 
     scored = evaluate_engines(rows, scoring_model)
     truth = np.asarray([index_of(record.field_type) for record in rows], dtype=np.int64)
+
+    policy_path: Path | None = None
+    if scoring_model is not None:
+        engine = scored["ngram"]
+        evaluation_stream = stream_from_records(rows, engine.predicted, engine.confidence)
+        fit_rows = [
+            record for record in (fit_records or []) if locale == "all" or record.locale == locale
+        ]
+        fit_stream = evaluation_stream
+        fit_split = split
+        if fit_rows:
+            fitted, fit_confidence, _ = model_predict(scoring_model, featurise(fit_rows))
+            fit_stream = stream_from_records(fit_rows, fitted, fit_confidence)
+            splits = sorted({record.split for record in fit_rows})
+            fit_split = splits[0] if len(splits) == 1 else "+".join(splits)
+        comparison = compare_policies(
+            fit_stream,
+            evaluation_stream,
+            reward or RewardModel(),
+            fit_split=fit_split,
+            eval_split=split,
+            locale=locale,
+            chosen=decision_policy,
+            thompson=ThompsonConfig(seed=seed),
+        )
+        policy_path = write_policy(root / "policy.json", comparison)
 
     # One resample per replicate, shared by both engines: the comparison is
     # paired at the replicate level, so the difference between the engines is
@@ -623,6 +675,7 @@ def write_evaluation(
         outcomes=outcomes,
         report=report_path,
         calibration=calibration_path,
+        policy=policy_path,
     )
 
 

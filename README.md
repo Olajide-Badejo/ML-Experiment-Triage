@@ -197,6 +197,7 @@ spread rather than within run measurement noise. The statistic itself uses a nin
 | **[Debug report (PDF, 6 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf)** | Nine problems hit during the build, each with symptom, root cause, the options considered, the fix and its verification |
 | [Methodology](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/methodology.md) | The statistics written out for a sceptical reader |
 | [Design decisions](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/DESIGN_DECISIONS.md) | What was chosen, what was rejected, and what would change my mind |
+| [Local LLM layer](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/llm.md) | The Ollama models, the retrieval design, the measured ablation and why there is no vector database |
 | [Engineering log](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/docs/ENGINEERING_LOG.md) | Dated entries behind the debug report |
 | [Build record](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/PROGRESS.md) | Phase by phase, with the checks run at each gate |
 

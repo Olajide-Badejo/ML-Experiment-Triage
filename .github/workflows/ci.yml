@@ -161,6 +161,12 @@ jobs:
       - name: Run the gates
         run: python -m pytest tests/statistics -q -s
 
+      # The properties the gates are phrased as, at the thorough profile. This
+      # is the job for it: the matrix job runs the same file at the fast
+      # profile on every platform, and this one goes looking.
+      - name: Property tests, thorough profile
+        run: nox -s test_property
+
       # Written by the suite: the published table joined to what this run
       # measured. A test in the same suite asserts the two agree.
       - name: Upload the measured gates

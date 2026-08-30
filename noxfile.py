@@ -139,6 +139,30 @@ def test_stats(session: nox.Session) -> None:
 
 
 @nox.session(**IN_PROJECT_VENV)
+def test_property(session: nox.Session) -> None:
+    """The property suite at the thorough Hypothesis profile.
+
+    The suite runs in every ordinary test pass at the `fast` profile, which is
+    enough examples to catch the shape of a mistake and cheap enough that nobody
+    is tempted to skip it. This is the deep run, and it is worth doing after any
+    change to `triage/analysis/` or to the store.
+
+    The profile is chosen by the environment rather than by
+    `--hypothesis-profile`, for the reason in `tests/property/conftest.py`.
+    """
+    session.run(
+        python(session),
+        "-m",
+        "pytest",
+        "tests/property",
+        "-v",
+        *session.posargs,
+        external=True,
+        env={"HYPOTHESIS_PROFILE": "thorough"},
+    )
+
+
+@nox.session(**IN_PROJECT_VENV)
 def demo(session: nox.Session) -> None:
     """Regenerate the synthetic sweep, the demo database and the HTML report."""
     run(session, "-m", "examples.demo_workflow", *session.posargs)

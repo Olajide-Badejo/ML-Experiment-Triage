@@ -80,6 +80,17 @@ pins it, rather than choosing data that hides it. There are two of these already
 variance) and both are more useful to a reader than a clean result would have
 been.
 
+**If the claim is true of every input, write it as a property.** `tests/property/`
+holds the ones that are: permutation p values invariant to the order the runs
+arrived in, Benjamini Hochberg monotone in its input vector, a store round trip
+exact for any finite float32 series, a parser handing back the tag it was given
+whatever text that tag is made of. They run inside the ordinary suite at the
+`fast` Hypothesis profile; `nox -s test_property` reruns them at `thorough`,
+which is what to do after touching `triage/analysis/` or the store. Hypothesis
+records a failing input under `.hypothesis/` and replays it first, so a
+counterexample stays reproducible locally, but the fix belongs in the tests as
+an example rather than in that cache.
+
 ## Style
 
 * `snake_case`, `PascalCase`, `UPPER_SNAKE`. Parser classes end in `Parser`.

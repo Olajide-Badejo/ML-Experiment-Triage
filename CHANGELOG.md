@@ -19,6 +19,15 @@ Changelog; versions follow semantic versioning.
   `<database>/<run_uuid>`, which keeps run identity unique per D4. Fixtures for
   both layouts are committed and encode the same reference series as every
   other parser fixture.
+* **Hypothesis property tests over the statistical core** (`tests/property/`).
+  The gates this project publishes are already phrased as properties, so they
+  are encoded as ones: permutation p values invariant to the order the runs
+  arrived in, `paired_permutation` invariant to the order of the pairs,
+  Benjamini Hochberg order preserving and monotone in its input vector and
+  matching the published 1995 example, a store round trip exact for any finite
+  float32 array, and parser fuzzing with hostile tag text (D3, D28). Two
+  profiles: `fast` runs inside the ordinary suite, and `nox -s test_property`
+  reruns them at `thorough`. Hypothesis is a development dependency only.
 * **Six new calibration arms, covering the designs a permutation test is not
   exact in.** Unequal spreads at 5v5, 3v7 and 7v3 (7.83, 2.08 and 12.92 percent
   type I at a nominal 5, against 8.25, 1.08 and 17.92 for the raw mean

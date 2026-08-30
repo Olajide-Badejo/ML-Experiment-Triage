@@ -6,6 +6,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+# Hypothesis keeps the inputs that failed here so it can replay them first. It
+# is a per machine cache of counterexamples, not a result: what a failing
+# property proved belongs in a test or in the changelog, not in this database.
+.hypothesis/
 
 # Build and packaging output. `python -m build` writes both, and a wheel left
 # in the tree is the kind of thing that gets committed once and then installed

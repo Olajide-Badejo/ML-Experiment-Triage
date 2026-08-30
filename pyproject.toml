@@ -81,6 +81,10 @@ all = ["ml-experiment-triage[cli,agentic]"]
 dev = [
     "ml-experiment-triage[all]",
     "build>=1.2",
+    # The property suite. A development and CI dependency only: nothing this
+    # package ships imports it, and a user installing the wheel must not be
+    # asked to carry a test framework (D30).
+    "hypothesis>=6.100",
     "mypy>=1.11",
     "nox>=2024.4.15",
     "pytest>=8.0",

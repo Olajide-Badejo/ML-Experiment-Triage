@@ -391,6 +391,112 @@ the same on every run. The agentic demo loads that file; the report renders it
 with no import of `triage.autofill` in the reporting layer, so the numbers on
 the page are the ones that were measured.
 
+## The agentic demo: the same classifier, driving a browser
+
+Everything above is a number about a dataset. `triage autofill agentic` is the
+product question the dataset stands in for: given a page, how many of its fields
+get the right value typed into them, and what did the mistakes cost.
+
+The loop is one page at a time. Headless Chrome opens the generated page over
+`file://`; every input's signals are read out of the LIVE DOM with one
+`Runtime.evaluate` (attributes plus the associated label text plus the enclosing
+`fieldset`'s legend); the fields are classified by the trained model, the keyword
+heuristic or the local annotator; the exported `policy.json` decides fill or
+skip per field; the values come from a locale matched synthetic profile and are
+set with `input` and `change` dispatched the way a user agent dispatches them;
+then the page is read back and scored against the `data-truth` attribute the
+generator embedded.
+
+**The read back is a check rather than a formality.** A fill counts as correct
+only when the predicted type is the true type AND the value read out of the
+element afterwards is the value that was typed. Scoring the classifier's
+intentions instead would report a perfect run through a browser that silently
+dropped every keystroke, and "did the value land" is exactly the failure a
+browser demo is supposed to be able to see.
+
+**Synthetic, local, and nothing on the network.** The profiles are invented
+identities using the ranges reserved for the purpose: `example.com` (RFC 2606),
+the 555-0100 telephone block, and `4242 4242 4242 4242`, the card number every
+processor documents as a test number (Section 10). The pages are `file://` URLs
+in a temporary directory. There is no real site anywhere in it.
+
+![The demo's checkout page, filled. Nineteen inputs across an account, a
+shipping and a payment section, each holding the synthetic profile value for the
+type the model predicted: an example.com address, a US address, and the
+documented test card number 4242 4242 4242 4242.](../assets/images/agentic-demo.png)
+
+### Measured, in a real browser
+
+Six pages, three templates in two locales, 71 fields, filling under the
+`per_type_threshold` policy exported by the evaluation above. Chrome headless on
+Windows, one browser for all six pages.
+
+| Engine | Fields | Filled | Fill accuracy | Reward per field | Correction cost | Wall clock |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Keyword rules | 71 | 30 | 0.8667 | 0.2394 | 0.0563 | 0.7 s |
+| n gram model | 71 | 64 | **1.0000** | **0.9014** | **0.0000** | 0.8 s |
+| Local LLM, kNN k = 8 | 71 | 42 | 0.9286 | 0.4789 | 0.0423 | 434.1 s |
+
+The LLM column is `mistral-nemo:12b-instruct-2407-q4_K_M` on an RTX 5070, 6.1
+seconds a field against the numpy model's microseconds, and it comes third on
+both task metrics. That is the same ordering `docs/llm.md` measures on the
+validation split, and it is worth stating plainly rather than burying: the local
+model is a useful third condition on this task, not the best one. A second run
+of it answers from the response cache, 71 of 71, no HTTP, in 0.9 s, and writes
+byte identical results.
+
+Per page, for the model:
+
+| Page | Locale | Fields | Filled | Fill accuracy | Reward per field |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `address_book` | de_DE | 9 | 9 | 1.0000 | 1.0000 |
+| `address_book` | en_US | 10 | 7 | 1.0000 | 0.7000 |
+| `checkout` | de_DE | 18 | 16 | 1.0000 | 0.8889 |
+| `checkout` | en_US | 17 | 16 | 1.0000 | 0.9412 |
+| `registration` | de_DE | 8 | 8 | 1.0000 | 1.0000 |
+| `registration` | en_US | 9 | 8 | 1.0000 | 0.8889 |
+
+Read the two tables together. The model fills more than twice as many fields as
+the keyword baseline AND gets all of them right, which is the whole argument for
+a calibrated confidence behind a per type threshold: the policy is not trading
+coverage against correctness here, it is skipping the seven fields the model is
+not sure about and being right about the rest. The rules engine is punished
+twice over: it is wrong more often, and its six confidence TIERS cannot meet a
+threshold fitted on probabilities, so it also skips fields it would have got
+right.
+
+### The task metrics land in the ordinary tool
+
+Each `(engine, page, replicate)` is a run directory in the format `triage
+ingest` already reads, logging `task/fill_accuracy` and `task/reward`. The
+condition is the engine and the replicate index runs over `(page, resample)`
+pairs, so replicate k is the same page and the same bootstrap resample of it for
+every engine and the comparison is paired:
+
+```text
+candidate   metric               change          p      p adj  verdict
+ngram       task/reward        +151.40%     0.0001     0.0002  improvement
+llm         task/reward         +62.07%     0.0025     0.0033  improvement
+ngram       task/fill_accuracy  +28.19%     0.0001     0.0002  improvement
+llm         task/fill_accuracy  +18.44%     0.0195     0.0195  improvement
+```
+
+No autofill specific flag appears in `ingest` or `compare`, which is acceptance
+criterion 1 again, this time for the task metrics rather than for the sweep.
+
+### `--no-browser`, and why it is a real test
+
+`--no-browser` parses the same page with the standard library's `html.parser`
+and puts a dictionary where the DOM was. Everything after extraction is the same
+code: the same `PageDriver` protocol, the same classification, the same policy,
+the same scoring. That is what makes the CI run a test of the demo rather than
+of a second implementation, and the browser test asserts the join directly: the
+live DOM and the parser have to report the same fields for the same page, and
+the two runs have to produce the same score, field by field.
+
+The browser tests are marked `browser` and skip on a machine with no Chromium,
+which is the same arrangement `docs/llm.md` describes for Ollama.
+
 ## Reproducing all of it
 
 ```text
@@ -405,17 +511,19 @@ triage compare --database eval.db --baseline rules_de_DE_val --tags eval/macro_f
 triage report  --database sweep.db --baseline lr0.03_l20 --autofill eval --output autofill.html
 ```
 
-Everything above is deterministic given the seeds, with one labelled exception:
+And the demo, which needs `pip install "ml-experiment-triage[agentic]"` and a
+Chromium (`--no-browser` needs neither):
+
+```text
+triage autofill evaluate --data data --weights runs/best.npz --locale all --bootstrap 5 --out eval_all
+triage autofill agentic  --pages data/pages --out task --policy heuristic --decisions eval_all/policy.json
+triage autofill agentic  --pages data/pages --out task --policy model --weights runs/best.npz --decisions eval_all/policy.json
+triage autofill agentic  --pages data/pages --out task --policy llm --data data --decisions eval_all/policy.json --database llm.db
+triage ingest  task/runs --database task.db
+triage compare --database task.db --baseline rules
+```
+
+Everything above is deterministic given the seeds, with two labelled exceptions:
 `latency_us` in the outcomes file is a measured wall clock mean and moves with
-the machine.
-
-## Not here yet
-
-The local LLM annotator and the agentic browser demo. `triage autofill evaluate
---policy llm` is declared and refuses with "not yet implemented until part 11"
-rather than falling back to the model, because a silent fallback would report LLM
-numbers that no LLM produced.
-
-`policy.py` has landed: it is the fill or skip section above. What it is still
-waiting for is a consumer, since the exported `policy.json` is written for the
-agentic demo that does not exist yet.
+the machine, and the `llm` engine is a local model's answers, cached in
+`--database` so that a second run reproduces the first exactly.

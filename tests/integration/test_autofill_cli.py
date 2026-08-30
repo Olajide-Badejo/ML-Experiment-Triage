@@ -534,7 +534,7 @@ def test_the_agentic_demo_fills_every_page_with_no_browser(
     printed = capsys.readouterr().out
     assert "all pages" in printed
     assert "no browser" in printed
-    summary = json.loads((out / "agentic.json").read_text(encoding="utf-8"))
+    summary = json.loads((out / "agentic_rules.json").read_text(encoding="utf-8"))
     assert len(summary["pages"]) == 6
     assert {page["locale"] for page in summary["pages"]} == {"en_US", "de_DE"}
     assert {page["template"] for page in summary["pages"]} == {
@@ -650,7 +650,7 @@ def test_the_exported_policy_makes_the_demo_skip_fields(corpus: Path, tmp_path: 
             )
             == EXIT_OK
         )
-        summary = json.loads((out / "agentic.json").read_text(encoding="utf-8"))
+        summary = json.loads((out / "agentic_ngram.json").read_text(encoding="utf-8"))
         filled[name] = summary["totals"]["n_filled"]
         if decisions:
             assert summary["policy"] == "per_type_threshold"

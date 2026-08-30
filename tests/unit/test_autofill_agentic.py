@@ -361,6 +361,25 @@ def test_the_summary_carries_the_measured_table(corpus: Path, tmp_path: Path) ->
     assert summary["totals"]["fill_accuracy"] == pytest.approx(result.fill_accuracy)
 
 
+def test_two_engines_into_one_directory_keep_two_summaries(corpus: Path, tmp_path: Path) -> None:
+    """Ranking the engines means running the demo three times into one place."""
+    out = tmp_path / "shared"
+    for engine in ("rules", "ngram"):
+        result = agentic.run_demo(
+            sorted((corpus / "pages").glob("*.html")),
+            classify=heuristic,
+            policy=always_fill(),
+            reward=RewardModel(),
+            config=agentic.DemoConfig(engine=engine, browser=False, bootstrap=2),
+        )
+        agentic.write_demo(out, result)
+    assert sorted(path.name for path in out.glob("agentic_*.json")) == [
+        "agentic_ngram.json",
+        "agentic_rules.json",
+    ]
+    assert len(sorted((out / "runs").iterdir())) == 2 * 6 * 2
+
+
 def test_two_runs_of_the_demo_write_the_same_bytes(corpus: Path, tmp_path: Path) -> None:
     """Nothing here is a function of the clock except the timings, which are not written."""
     written = []

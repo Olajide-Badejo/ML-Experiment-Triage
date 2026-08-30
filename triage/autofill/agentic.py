@@ -1065,7 +1065,12 @@ def write_demo(out_dir: Path | str, result: DemoResult) -> AgenticPaths:
             )
             written.append(directory)
 
-    summary = root / "agentic.json"
+    # Named after the engine, because ranking the engines against each other
+    # means running this three times into ONE output directory: the run
+    # directories already carry the engine in their names and cannot collide,
+    # and a summary called `agentic.json` would quietly be whichever engine ran
+    # last.
+    summary = root / f"agentic_{result.engine}.json"
     summary.parent.mkdir(parents=True, exist_ok=True)
     summary.write_text(
         json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",

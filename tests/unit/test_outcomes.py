@@ -5,11 +5,18 @@ bridge handed that file to `JsonlParser` as a probe and recorded the refusal in
 `analysis.json` as a checkable finding, which was the right thing to do with a
 tool that had no shape for it. These tests hold the new shape to three claims:
 
-* their file, in the schema they filed, verbatim, ingests;
+* their file, in the row shape their writer actually emits, ingests;
 * `paired_permutation` over `correct` clustered by `template_id` produces a p
   value from it, which is the comparison they asked for;
 * the windowed modes still refuse an `Outcomes`, by construction and by name,
   because a final window of an arbitrary row order is a number with no referent.
+
+**The unit of analysis is the `(form_id, selector)` pair.** A form holds many
+fields, so `form_id` alone is not a unit and pairing on it is a defect rather
+than a shortcut. The fixture used to model one row per form, which hid that:
+it made `pair_on("form_id", ...)` pass here and raise on their real file. It
+now carries several selectors per `form_id`, and
+`test_pair_on_the_form_alone_is_refused` is the test that would have caught it.
 
 The second producer's shape (TPT's `sweep_results.jsonl`, one row per config) is
 covered here too: it is outcomes shaped, joined on `config_key`, and it needs
@@ -19,6 +26,7 @@ covered here too: it is outcomes shaped, joined on `config_key`, and it needs
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -40,22 +48,43 @@ from triage.core.outcomes import Outcomes
 from triage.ingest import ingest
 from triage.parsers import DEFAULT_PARSERS, JsonlParser, OutcomesParser, ParseError, parsers_for
 
-#: The consumer's schema, key for key, as filed in their issue. Written out here
-#: rather than read off the fixture: if the fixture drifts, this list is what
-#: notices, and drift is precisely the failure the contract exists to catch.
+#: The consumer's schema, key for key, as their writer emits it: 25 keys per
+#: row, in this order. Written out here rather than read off the fixture: if the
+#: fixture drifts, this list is what notices, and drift is precisely the failure
+#: the contract exists to catch. The abridged 11 key version this list used to
+#: hold was the specification's illustration, not their file.
 CONSUMER_KEYS = (
     "schema_version",
     "run_id",
     "engine",
+    "engine_describe",
+    "prompt_version",
+    "corpus_manifest_sha",
     "split",
     "form_id",
+    "form_family",
+    "locale",
+    "tier",
     "template_id",
+    "selector",
     "true_label",
     "pred_label",
     "correct",
     "confidence",
+    "confidence_kind",
+    "runner_up_label",
+    "runner_up_confidence",
+    "signals",
     "latency_us",
+    "declared_token",
+    "finding_codes",
+    "extraction_warnings",
 )
+
+#: Their writer puts one engine's rows in one file, in its own run directory.
+#: A paired test needs both engines in one `Outcomes`, so the two files sit in
+#: one directory here, which is the arrangement the CHANGELOG recipe describes.
+ENGINE_FILES = ("run_ngram.jsonl", "run_rules.jsonl")
 
 
 @pytest.fixture
@@ -68,14 +97,53 @@ def outcomes(consumer_run: Path) -> Outcomes:
     return OutcomesParser().parse(consumer_run)
 
 
+def pair_by_field(outcomes: Outcomes) -> tuple[Outcomes, Outcomes]:
+    """The documented join for their rows: the unit is `(form_id, selector)`.
+
+    `pair_on` takes one key, and their unit is two columns, so the composite is
+    built as a group key first. This is the spelling the CHANGELOG and
+    `docs/library.md` publish, run here on the fixture so that the published
+    recipe is executed by CI rather than only read.
+    """
+    unit = np.asarray(
+        [
+            f"{form_id}|{selector}"
+            for form_id, selector in zip(
+                outcomes.group("form_id"), outcomes.group("selector"), strict=True
+            )
+        ],
+        dtype=object,
+    )
+    paired = replace(outcomes, groups={**outcomes.groups, "field_id": unit})
+    return paired.pair_on("field_id", "engine", "rules", "ngram")
+
+
 # ------------------------------------------------------- the fixture is theirs
 
 
 def test_the_fixture_is_the_consumers_schema_key_for_key(consumer_run: Path) -> None:
-    lines = (consumer_run / "run.jsonl").read_text(encoding="utf-8").splitlines()
-    assert lines, "the fixture must not be empty"
-    for line in lines:
-        assert tuple(json.loads(line)) == CONSUMER_KEYS
+    for name in ENGINE_FILES:
+        lines = (consumer_run / name).read_text(encoding="utf-8").splitlines()
+        assert lines, f"{name} must not be empty"
+        engines = set()
+        for line in lines:
+            row = json.loads(line)
+            assert tuple(row) == CONSUMER_KEYS
+            engines.add(row["engine"])
+        assert len(engines) == 1, "their writer puts one engine's rows in one file"
+
+
+def test_the_fixture_holds_many_fields_per_form(outcomes: Outcomes) -> None:
+    """The property the old fixture lacked, and the reason it taught a bad join.
+
+    A form holds between 3 and 23 classified fields in their real corpus. A
+    fixture with one row per form makes `form_id` look like a unit key, and the
+    join built on that raises on the first real file it meets.
+    """
+    rows = list(zip(outcomes.group("form_id"), outcomes.group("selector"), strict=True))
+    assert len(set(rows)) < len(rows), "each unit is scored by both engines"
+    forms = {form_id for form_id, _ in rows}
+    assert len(forms) < len(set(rows)), "a form must carry more than one selector"
 
 
 # --------------------------------------------------------------- the parser
@@ -96,17 +164,42 @@ def test_the_consumer_schema_is_recognised_without_being_asked(consumer_run: Pat
 
 def test_the_rows_split_into_measurements_and_group_keys(outcomes: Outcomes) -> None:
     assert outcomes.n_rows == 48
-    assert outcomes.field_names == ["confidence", "correct", "latency_us"]
+    # `runner_up_confidence` is a number where there was a runner up and `null`
+    # where there was not, so it is a measurement with holes rather than a label.
+    assert outcomes.field_names == [
+        "confidence",
+        "correct",
+        "latency_us",
+        "runner_up_confidence",
+    ]
+    # Everything else is a group key, including the nested `engine_describe`, the
+    # list valued `signals` and `finding_codes`, and `prompt_version`, which is
+    # null on every row of both engines and so is a column of empty strings.
     assert outcomes.group_names == [
+        "confidence_kind",
+        "corpus_manifest_sha",
+        "declared_token",
         "engine",
+        "engine_describe",
+        "extraction_warnings",
+        "finding_codes",
+        "form_family",
         "form_id",
+        "locale",
         "pred_label",
+        "prompt_version",
         "run_id",
+        "runner_up_label",
         "schema_version",
+        "selector",
+        "signals",
         "split",
         "template_id",
+        "tier",
         "true_label",
     ]
+    assert set(outcomes.group("prompt_version")) == {""}
+    assert np.isnan(outcomes.field("runner_up_confidence")).any(), "a null is a hole"
     # `correct` is a boolean in the file and a zero or one here, because its mean
     # is an accuracy and a statistic cannot run over `True`.
     correct = outcomes.field("correct")
@@ -176,22 +269,35 @@ def test_an_undeclared_step_free_file_needs_the_flag(fixture_root: Path) -> None
 
 
 def test_pair_on_matches_the_two_engines_field_by_field(outcomes: Outcomes) -> None:
-    rules, ngram = outcomes.pair_on("form_id", "engine", "rules", "ngram")
+    rules, ngram = pair_by_field(outcomes)
     assert rules.n_rows == ngram.n_rows == 24
     np.testing.assert_array_equal(rules.group("form_id"), ngram.group("form_id"))
+    np.testing.assert_array_equal(rules.group("selector"), ngram.group("selector"))
     np.testing.assert_array_equal(rules.group("template_id"), ngram.group("template_id"))
     assert set(rules.group("engine")) == {"rules"}
     assert set(ngram.group("engine")) == {"ngram"}
 
 
+def test_pair_on_the_form_alone_is_refused(outcomes: Outcomes) -> None:
+    """The defect the old fixture hid, now caught here rather than on their data.
+
+    Their schema is one row per classified FIELD and a form holds many of them,
+    so `form_id` is not a unit key. The documented example paired on it, passed
+    against a fixture with one row per form, and raised on the first real file
+    it met. The refusal names the key, which is what makes it actionable.
+    """
+    with pytest.raises(SeriesError, match="'form_id' is not unique within 'rules'"):
+        outcomes.pair_on("form_id", "engine", "rules", "ngram")
+
+
 def test_pair_on_refuses_a_unit_that_is_not_on_both_sides(outcomes: Outcomes) -> None:
     """Dropping the unmatched rows in silence would be losing evidence."""
+    first_selector = str(outcomes.group("selector")[0])
     keep = np.flatnonzero(
-        ~((outcomes.group("engine") == "rules") & (outcomes.group("form_id") == "form-00-00"))
+        ~((outcomes.group("engine") == "rules") & (outcomes.group("selector") == first_selector))
     )
-    lopsided = outcomes.take(keep)
     with pytest.raises(SeriesError, match="have no pair"):
-        lopsided.pair_on("form_id", "engine", "rules", "ngram")
+        pair_by_field(outcomes.take(keep))
 
 
 def test_pair_on_refuses_a_unit_key_that_is_not_unique(outcomes: Outcomes) -> None:
@@ -201,7 +307,7 @@ def test_pair_on_refuses_a_unit_key_that_is_not_unique(outcomes: Outcomes) -> No
 
 def test_pair_on_names_the_values_it_can_see(outcomes: Outcomes) -> None:
     with pytest.raises(SeriesError, match="values present: ngram, rules"):
-        outcomes.pair_on("form_id", "engine", "rules", "transformer")
+        outcomes.pair_on("selector", "engine", "rules", "transformer")
 
 
 # ------------------------------------------- the comparison they asked for
@@ -215,7 +321,7 @@ def test_paired_permutation_over_correct_clustered_by_template(outcomes: Outcome
     ones. Six clusters enumerate exhaustively, so the p value is exact and its
     floor is 2 / 2**6 = 0.031.
     """
-    rules, ngram = outcomes.pair_on("form_id", "engine", "rules", "ngram")
+    rules, ngram = pair_by_field(outcomes)
     result = paired_permutation(
         rules.field("correct"),
         ngram.field("correct"),

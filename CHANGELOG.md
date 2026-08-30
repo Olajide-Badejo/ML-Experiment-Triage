@@ -475,8 +475,15 @@ tree.
 something to hand to `JsonlParser` as a probe and record the refusal of. There
 is a real model for it, `triage.core.outcomes.Outcomes`, and a real parser,
 `triage.parsers.outcomes_parser.OutcomesParser`, which recognises that schema
-and reads generic step free JSONL when asked explicitly with `--outcomes`. The
-fixture in this repository is a copy of yours, verbatim.
+and reads generic step free JSONL when asked explicitly with `--outcomes`.
+
+The fixture in this repository is not a copy of your output, and an earlier
+draft of this section said it was. It is generated, in your writer's real row
+shape: all 25 keys in your order, `engine_describe` nested, `signals` and
+`finding_codes` list valued, `prompt_version` null on every row, one engine per
+file, and several selectors under one `form_id`. The version that claimed to be
+verbatim held the 11 key illustration from the issue and one row per form, which
+is what let the join below be documented wrongly and pass its own tests.
 
 ```python
 from triage.parsers.outcomes_parser import OutcomesParser

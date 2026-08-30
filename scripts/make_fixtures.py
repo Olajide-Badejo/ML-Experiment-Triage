@@ -187,16 +187,150 @@ LABELS = ("postal-code", "email", "tel", "given-name", "cc-number")
 #: six templates can reach 0.031 and no lower: small enough to enumerate
 #: exhaustively, large enough for the result to clear alpha 0.05 at all.
 N_TEMPLATES = 6
-FIELDS_PER_TEMPLATE = 4
+
+#: `(form_family, template_id)`, one per cluster, spelled the way their corpus
+#: spells them: a family name and a two digit template within it.
+TEMPLATE_IDS = (
+    ("address", "address-03"),
+    ("checkout", "checkout-02"),
+    ("login", "login-01"),
+    ("payment", "payment-04"),
+    ("profile", "profile-05"),
+    ("signup", "signup-06"),
+)
+
+#: `(locale, tier)`, one per form within a template. Two forms per template and
+#: two fields per form is what makes `form_id` NON unique inside one engine's
+#: rows, which is the property their real file has and the reason the unit of
+#: analysis is the `(form_id, selector)` pair.
+FORM_VARIANTS = (("en-GB", "clean"), ("de-DE", "hostile"))
+FIELDS_PER_FORM = 2
+
+#: One `engine_describe` per engine, nested exactly as their writer nests it:
+#: the object is the engine's own provenance and its keys differ between the
+#: two, which is why it lands as a group key rather than as anything numeric.
+ENGINE_DESCRIBE = {
+    "rules": {
+        "engine": "rules",
+        "tool_version": "0.4.0",
+        "rule_table_version": "1.0.0",
+        "vocabulary_rules": "346",
+        "option_rules": "36",
+        "intrinsic_rules": "10",
+        "confidence_kind": "tier",
+    },
+    "ngram": {
+        "engine": "ngram",
+        "tool_version": "0.4.0",
+        "providers": "CPUExecutionProvider",
+        "intra_op_threads": "1",
+        "calibration_fitted_on": "dev",
+        "confidence_kind": "calibrated-probability",
+        "feature_width": "7986",
+        "class_count": "42",
+        "onnx_opset": "26",
+    },
+}
+
+#: The audit codes their writer attaches to a field it had to work harder on.
+#: Empty on a clean form, non empty on a hostile one, so the list valued column
+#: holds both shapes.
+HOSTILE_FINDINGS = ("MISSING_AUTOCOMPLETE", "UNLABELED_FIELD", "PLACEHOLDER_AS_LABEL")
+
+#: A corpus digest, one value on every row, as theirs carries.
+CORPUS_MANIFEST_SHA = "0" * 63 + "1"
+
+
+def _outcome_row(
+    engine: str,
+    form: dict[str, str],
+    selector: str,
+    label: str,
+    position: int,
+    correct: bool,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    """One classified field, with all 25 keys their writer emits, in their order.
+
+    The two engines disagree about more than `correct`: the rule engine reports
+    a tier confidence and usually no runner up, the model reports a calibrated
+    probability and always has one. `runner_up_confidence` is therefore a number
+    on some rows and `null` on others, which is what makes it a measurement with
+    holes rather than a label, and `prompt_version` is `null` on every row of
+    both, which is what makes it a group key of empty strings.
+    """
+    hostile = form["tier"] == "hostile"
+    others = [other for other in LABELS if other != label]
+    runner_up = others[int(rng.integers(len(others)))]
+    if engine == "rules":
+        confidence = 0.9 if correct else 0.0
+        has_runner_up = hostile and not correct
+        signals = [f"label:{label}-{form['locale'][:2]}", f"identifier:{label}-word"]
+        row_runner_up_label = runner_up if has_runner_up else None
+        row_runner_up_confidence = 0.7 if has_runner_up else None
+        predicted = label if correct else "UNKNOWN"
+        confidence_kind = "rule_tier"
+    else:
+        confidence = round(float(rng.uniform(0.55, 0.99)), 6)
+        signals = [
+            "ngram:attr:type=text",
+            f"ngram:word:L:{label}",
+            f"ngram:structure:position={position}",
+        ]
+        row_runner_up_label = runner_up
+        row_runner_up_confidence = round(float(rng.uniform(0.01, 0.4)), 6)
+        predicted = label if correct else runner_up
+        confidence_kind = "calibrated"
+    return {
+        "schema_version": "1.0.0",
+        "run_id": f"2026-02-01T00-00-00Z_{engine}_fixture",
+        "engine": engine,
+        "engine_describe": ENGINE_DESCRIBE[engine],
+        "prompt_version": None,
+        "corpus_manifest_sha": CORPUS_MANIFEST_SHA,
+        "split": "test",
+        "form_id": form["form_id"],
+        "form_family": form["form_family"],
+        "locale": form["locale"],
+        "tier": form["tier"],
+        "template_id": form["template_id"],
+        "selector": selector,
+        "true_label": label,
+        "pred_label": predicted,
+        "correct": correct,
+        "confidence": confidence,
+        "confidence_kind": confidence_kind,
+        "runner_up_label": row_runner_up_label,
+        "runner_up_confidence": row_runner_up_confidence,
+        "signals": signals,
+        "latency_us": round(float(rng.uniform(20.0, 900.0)), 6),
+        "declared_token": label,
+        "finding_codes": list(HOSTILE_FINDINGS[:2]) if hostile else [],
+        "extraction_warnings": [],
+    }
 
 
 def make_outcomes_jsonl(root: Path) -> None:
-    """`Autofill_audit`'s `run.jsonl`, in their filed schema exactly (E5).
+    """`Autofill_audit`'s run logs, in the row shape their writer really emits.
 
-    One row per classified field per engine, no step anywhere. The keys and
-    their spelling are copied from the schema in their issue and must not drift:
-    this fixture is the contract test for the shape they hand us, and a rename
-    here would pass while their file stopped parsing.
+    One row per classified FIELD per engine, no step anywhere, all 25 keys in
+    their order. The keys and their spelling must not drift: this fixture is the
+    contract test for the shape they hand us, and a rename here would pass while
+    their file stopped parsing.
+
+    **The unit of analysis is the `(form_id, selector)` pair.** A form holds
+    several fields, so `form_id` repeats within one engine's rows and is not a
+    unit key. An earlier version of this fixture wrote one row per form, which
+    made `pair_on("form_id", ...)` pass here and raise `SeriesError` on their
+    real 2,317 row file. Two forms per template and two selectors per form
+    restore the property that made the documented join wrong.
+
+    **Two files, one per engine, in one directory.** Their writer puts one
+    engine's rows in its own timestamped run directory, so no single file of
+    theirs holds a pair. Bringing the two files together into one directory is
+    what a caller does before reading them as a single `Outcomes`, and it is the
+    arrangement the CHANGELOG recipe describes, so it is the arrangement the
+    fixture ships.
 
     The two engines score the SAME fields, which is what makes the comparison a
     paired one, and the fields are clustered by `template_id`, which is what
@@ -208,35 +342,40 @@ def make_outcomes_jsonl(root: Path) -> None:
     rng = np.random.default_rng(SEED)
     directory = root / "outcomes" / "autofill_run"
     directory.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for template in range(N_TEMPLATES):
+    rows: dict[str, list[dict[str, Any]]] = {"rules": [], "ngram": []}
+    for template, (family, template_id) in enumerate(TEMPLATE_IDS[:N_TEMPLATES]):
         # Two templates the rule engine reads badly, four it reads about as well
         # as the model: a per cluster shift, which is the thing the clustered
         # swap exists to respect.
         rules_rate = 0.45 if template < 2 else 0.86
         ngram_rate = 0.90
-        for field_number in range(FIELDS_PER_TEMPLATE):
-            label = LABELS[(template + field_number) % len(LABELS)]
-            form_id = f"form-{template:02d}-{field_number:02d}"
-            for engine, rate in (("rules", rules_rate), ("ngram", ngram_rate)):
-                correct = bool(rng.random() < rate)
-                rows.append(
-                    {
-                        "schema_version": "1.0.0",
-                        "run_id": "autofill-eval-0",
-                        "engine": engine,
-                        "split": "test",
-                        "form_id": form_id,
-                        "template_id": f"template-{template:02d}",
-                        "true_label": label,
-                        "pred_label": label if correct else "off",
-                        "correct": correct,
-                        "confidence": round(float(rng.uniform(0.55, 0.99)), 4),
-                        "latency_us": round(float(rng.uniform(120.0, 900.0)), 1),
-                    }
-                )
-    text = "\n".join(json.dumps(row) for row in rows) + "\n"
-    (directory / "run.jsonl").write_text(text, encoding="utf-8")
+        for locale, tier in FORM_VARIANTS:
+            labels = [LABELS[(template + position) % len(LABELS)] for position in range(2)]
+            selectors = [f"#{family}-{label}" for label in labels]
+            form = {
+                "form_id": f"{template_id}-{locale}-{tier}-v0",
+                "form_family": family,
+                "template_id": template_id,
+                "locale": locale,
+                "tier": tier,
+            }
+            for position in range(FIELDS_PER_FORM):
+                for engine, rate in (("rules", rules_rate), ("ngram", ngram_rate)):
+                    correct = bool(rng.random() < rate)
+                    rows[engine].append(
+                        _outcome_row(
+                            engine,
+                            form,
+                            selectors[position],
+                            labels[position],
+                            position,
+                            correct,
+                            rng,
+                        )
+                    )
+    for engine, written in rows.items():
+        text = "\n".join(json.dumps(row) for row in written) + "\n"
+        (directory / f"run_{engine}.jsonl").write_text(text, encoding="utf-8")
 
 
 def make_tpt_sweep_jsonl(root: Path) -> None:

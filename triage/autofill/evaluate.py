@@ -439,7 +439,14 @@ def outcomes_rows(
     run_id: str,
     split: str,
 ) -> list[dict[str, Any]]:
-    """The consumer's E5 rows: one per field per engine, keys in their order."""
+    """E5 rows for this workload: one per field per engine, keys in their order.
+
+    These are the 11 keys the E5 issue illustrates the schema with, not the 25
+    their writer emits, and `form_id` is per field here because this generator
+    writes one field per form. Their `form_id` names the form and their unit is
+    the `(form_id, selector)` pair: see `docs/library.md` before copying the
+    `pair_on` call out of the tests below.
+    """
     rows: list[dict[str, Any]] = []
     for name in sorted(scored):
         engine = scored[name]

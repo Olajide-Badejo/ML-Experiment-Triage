@@ -485,12 +485,38 @@ file, and several selectors under one `form_id`. The version that claimed to be
 verbatim held the 11 key illustration from the issue and one row per form, which
 is what let the join below be documented wrongly and pass its own tests.
 
+**Your unit of analysis is the `(form_id, selector)` pair, not `form_id`.** A
+form holds between 3 and 23 classified fields, so `form_id` repeats inside one
+engine's rows and `pair_on("form_id", ...)` raises `SeriesError: 'form_id' is
+not unique within 'rules'`, correctly. `pair_on` takes one key, so the composite
+is built as a group key first:
+
 ```python
+from dataclasses import replace
+
 from triage.parsers.outcomes_parser import OutcomesParser
 
+# One directory holding both engines' run.jsonl files: your writer puts one
+# engine in each run directory, and a paired test needs both in one Outcomes.
 outcomes = OutcomesParser().parse(path)
-rules, ngram = outcomes.pair_on("form_id", "engine", "rules", "ngram")
+
+field_id = [
+    f"{form_id}|{selector}"
+    for form_id, selector in zip(
+        outcomes.group("form_id"), outcomes.group("selector"), strict=True
+    )
+]
+paired = replace(outcomes, groups={**outcomes.groups, "field_id": field_id})
+rules, ngram = paired.pair_on("field_id", "engine", "rules", "ngram")
 ```
+
+Run against your `p6-rules` and `p6-ngram` logs that joins 2,317 rows to 2,317
+and reads the pair whole: nested `engine_describe`, list valued `signals` and
+`finding_codes` and the nulls all land as group keys, four measured fields.
+`paired_permutation` over `correct` clustered by `template_id` then returns
+`mode="paired_cluster"`, rules 0.7678 against ngram 0.8226, and p 0.00390625
+exact over the 1,024 arrangements of your 10 templates, with `min_attainable_p`
+0.001953125.
 
 The refusal half is as deliberate as the acceptance: `compare_window_block` and
 anything windowed refuse an `Outcomes` input by construction, with a message

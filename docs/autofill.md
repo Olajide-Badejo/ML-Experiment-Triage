@@ -192,9 +192,18 @@ attain, so the separation is as complete as this design can report.
 
 ### The same claim, from the consumer's schema
 
-`evaluate.py` also writes a per field `run.jsonl` in `Autofill_audit`'s E5
-schema verbatim, which is this repository's own fixture for `OutcomesParser` and
-`paired_permutation`:
+`evaluate.py` also writes a per field `run.jsonl` in the abridged 11 key form of
+`Autofill_audit`'s E5 schema, which is what this repository's own workload has
+rows for. It is not their file: theirs carries 25 keys, and the committed
+fixture under `tests/fixtures/outcomes` is the one that models those.
+
+One difference matters to anyone copying the join out of here. This generator
+writes a `form_id` per FIELD, so `form_id` is a unit key in this table and
+`pair_on("form_id", ...)` is right for it. `Autofill_audit`'s writer emits one
+row per field under a `form_id` that names the FORM, with a `selector` naming
+the field, so their unit is the `(form_id, selector)` pair and pairing on
+`form_id` alone raises `SeriesError`. [The library page](library.md) has the
+composite spelling.
 
 | Quantity | Value |
 | --- | ---: |

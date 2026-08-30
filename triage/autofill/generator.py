@@ -510,11 +510,14 @@ class GeneratorConfig:
 class FieldRecord:
     """One form field, with every signal a classifier may look at.
 
-    `form_id` is the per FIELD identifier, spelled the way the consumer's E5
-    schema spells it: their `run.jsonl` pairs on `form_id` and clusters on
-    `template_id`, and a fixture this repository writes has to use their key
-    for their key's job. `form_key` is the page it came from, which is what the
-    split is drawn on.
+    `form_id` here is the per FIELD identifier, and the name is borrowed from
+    the consumer's E5 schema, where it is not that: their `form_id` names the
+    FORM, their `selector` names the field within it, and their unit of analysis
+    is the `(form_id, selector)` pair. This workload has one field per form, so
+    `form_id` identifies a unit here and `pair_on("form_id", ...)` is right for
+    the rows below and wrong for theirs. `template_id` is the cluster key in
+    both. `form_key` is the page it came from, which is what the split is drawn
+    on.
     """
 
     form_id: str

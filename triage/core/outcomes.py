@@ -6,16 +6,27 @@ per classified field, per example, per configuration, and the rows are not
 ordered by anything; asking for "the final window" of such a file is a category
 error, not a hard question.
 
-The consumer this model was built for writes exactly that:
+The consumer this model was built for writes exactly that, 25 keys to the row:
 
     {"schema_version": "1.0.0", "run_id": "...", "engine": "ngram",
-     "split": "test", "form_id": "...", "template_id": "...",
+     "engine_describe": {...}, "prompt_version": null,
+     "corpus_manifest_sha": "...", "split": "test", "form_id": "...",
+     "form_family": "address", "locale": "de-DE", "tier": "clean",
+     "template_id": "...", "selector": "#address-plz",
      "true_label": "postal-code", "pred_label": "postal-code",
-     "correct": true, "confidence": 0.91, "latency_us": 412.0}
+     "correct": true, "confidence": 0.91, "confidence_kind": "calibrated",
+     "runner_up_label": "...", "runner_up_confidence": 0.04,
+     "signals": [...], "latency_us": 412.0, "declared_token": "postal-code",
+     "finding_codes": [], "extraction_warnings": []}
 
 They handed that file to the JSONL parser as a probe and recorded the refusal in
 their own analysis output as a checkable finding, which was the honest thing to
 do with a tool that had no shape for it. `Outcomes` is the shape.
+
+**One row is one FIELD, so the unit of analysis is the `(form_id, selector)`
+pair.** A form holds many fields; `form_id` names the form. Pairing on it raises
+rather than guessing, which is `pair_on` doing its job, and the composite key is
+built as a group key first: see `pair_on` below.
 
 **Two kinds of column, and the difference is not cosmetic.** A *field* is a
 measurement: a float, or a boolean that is really a zero or a one. A *group* is a
@@ -194,6 +205,22 @@ class Outcomes:
         Refuses rather than guesses. A unit missing from one side, or appearing
         twice on either, is an error naming the units, because the alternatives
         are dropping evidence in silence or pairing a row with the wrong one.
+
+        **`unit` is one key, and a real unit is often two columns.** One row per
+        classified field under a `form_id` that names the form is not identified
+        by the form: `pair_on("form_id", ...)` on such a file raises, correctly.
+        Build the composite as a group key first, and pair on that:
+
+            from dataclasses import replace
+
+            field_id = [
+                f"{form}|{selector}"
+                for form, selector in zip(
+                    outcomes.group("form_id"), outcomes.group("selector"), strict=True
+                )
+            ]
+            paired = replace(outcomes, groups={**outcomes.groups, "field_id": field_id})
+            rules, ngram = paired.pair_on("field_id", "engine", "rules", "ngram")
 
         Returns `(baseline_rows, candidate_rows)` in a common unit order, ready
         for `paired_permutation` along with a cluster key taken from either.

@@ -179,8 +179,37 @@ paired test needs:
 from triage.parsers.outcomes_parser import OutcomesParser
 
 outcomes = OutcomesParser().parse(path)
-rules, ngram = outcomes.pair_on("form_id", "engine", "rules", "ngram")
+eager, compiled = outcomes.pair_on("config_key", "runner", "eager", "compiled")
 ```
+
+That is TPT's throughput sweep, where one row is one configuration and
+`config_key` names it, so the unit key is written in the file already.
+
+**Pair on the key that identifies a unit, and check that it does.** `pair_on`
+refuses a key that repeats inside one condition rather than guessing which row
+goes with which, and the commonest mistake is to reach for the identifier that
+reads like the unit rather than the one that is it. `Autofill_audit`'s rows are
+one per classified FIELD and a form holds many fields, so their unit is the
+`(form_id, selector)` pair and `pair_on("form_id", ...)` raises. `pair_on` takes
+one key, so a composite unit is built as a group key first:
+
+```python
+from dataclasses import replace
+
+field_id = [
+    f"{form_id}|{selector}"
+    for form_id, selector in zip(
+        outcomes.group("form_id"), outcomes.group("selector"), strict=True
+    )
+]
+paired = replace(outcomes, groups={**outcomes.groups, "field_id": field_id})
+rules, ngram = paired.pair_on("field_id", "engine", "rules", "ngram")
+```
+
+Both engines have to be in the one `Outcomes` for this, so both engines' files
+have to be in the one directory: a parser reads the files beside each other, and
+a writer that puts each engine in its own run directory has written half a pair
+in each.
 
 The refusal half matters as much as the acceptance: `compare_window_block` and
 anything windowed refuse an `Outcomes` input by construction, with a message

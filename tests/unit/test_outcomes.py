@@ -105,16 +105,10 @@ def pair_by_field(outcomes: Outcomes) -> tuple[Outcomes, Outcomes]:
     `docs/library.md` publish, run here on the fixture so that the published
     recipe is executed by CI rather than only read.
     """
-    unit = np.asarray(
-        [
-            f"{form_id}|{selector}"
-            for form_id, selector in zip(
-                outcomes.group("form_id"), outcomes.group("selector"), strict=True
-            )
-        ],
-        dtype=object,
-    )
-    paired = replace(outcomes, groups={**outcomes.groups, "field_id": unit})
+    forms = outcomes.group("form_id")
+    selectors = outcomes.group("selector")
+    field_id = [f"{form}|{selector}" for form, selector in zip(forms, selectors, strict=True)]
+    paired = replace(outcomes, groups={**outcomes.groups, "field_id": np.asarray(field_id)})
     return paired.pair_on("field_id", "engine", "rules", "ngram")
 
 

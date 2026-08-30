@@ -213,11 +213,10 @@ class Outcomes:
 
             from dataclasses import replace
 
+            forms = outcomes.group("form_id")
+            selectors = outcomes.group("selector")
             field_id = [
-                f"{form}|{selector}"
-                for form, selector in zip(
-                    outcomes.group("form_id"), outcomes.group("selector"), strict=True
-                )
+                f"{form}|{selector}" for form, selector in zip(forms, selectors, strict=True)
             ]
             paired = replace(outcomes, groups={**outcomes.groups, "field_id": field_id})
             rules, ngram = paired.pair_on("field_id", "engine", "rules", "ngram")

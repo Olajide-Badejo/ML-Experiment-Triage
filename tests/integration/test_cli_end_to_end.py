@@ -18,7 +18,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from examples.make_synthetic_runs import BASELINE, CONDITIONS, KNOWN_BEST, generate
+from examples.make_synthetic_runs import (
+    ACCURACY_TAG,
+    BASELINE,
+    CONDITIONS,
+    KNOWN_BEST,
+    LOSS_TAG,
+    generate,
+)
 from triage.analysis.comparison import MODE_SEED_REPLICATE, MODE_WINDOW_BLOCK, ComparisonConfig
 from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
@@ -28,6 +35,11 @@ from triage.core.store import Store
 WORST_CONDITION = "lr0.0100_bs32"
 NEGLIGIBLE_CONDITION = "lr0.0010_bs64"
 SINGLE_SEED_CONDITION = "lr0.0030_bs128"
+
+#: Every metric the sweep logs. The report draws one chart per metric and the
+#: comparison layer tests every condition on each of them, so several counts
+#: below are exactly this many times a number of conditions.
+SWEEP_TAGS = (ACCURACY_TAG, LOSS_TAG)
 
 
 @pytest.fixture(scope="session")
@@ -139,8 +151,23 @@ def test_the_single_seed_condition_uses_the_weaker_mode_and_says_so(
 
 
 def test_every_replicated_condition_uses_the_strong_mode(report: TriageReport) -> None:
+    """D36: this asserted `>= 8` where the count is knowable to the row.
+
+    A floor passes when a condition silently drops out of the table, which is
+    the failure this test exists to catch. The sweep declares its own conditions
+    and their seed counts, so the number of seed replicated findings is exactly
+    the replicated conditions other than the baseline, on every metric.
+    """
+    replicated = [
+        condition
+        for condition in CONDITIONS
+        if condition.name != BASELINE
+        and condition.n_seeds >= ComparisonConfig().min_replicates_for_seed_mode
+    ]
+    expected = len(replicated) * len(SWEEP_TAGS)
+
     strong = [finding for finding in report.findings if not finding.result.is_weak_mode]
-    assert len(strong) >= 8
+    assert len(strong) == expected == 10
     for finding in strong:
         assert finding.result.mode == MODE_SEED_REPLICATE
         assert finding.result.n_baseline == 5
@@ -313,7 +340,13 @@ def test_report_writes_a_self_contained_html_file(database: Path, tmp_path: Path
     )
     html = output.read_text(encoding="utf-8")
 
-    assert output.stat().st_size > 500_000, "the Plotly runtime should be inlined"
+    # D36: this asserted a size over 500 KB where the real file is 5.9 MB, which
+    # is a threshold that an empty report full of nothing but the inlined
+    # runtime also cleared. What matters is that the charts are there and that
+    # there is one per metric, so that is what is counted.
+    assert "Plotly.newPlot(" in html, "the inlined runtime draws the charts"
+    graph_divs = re.findall(r'<div id="figure-\d+-[^"]*" class="plotly-graph-div"', html)
+    assert len(graph_divs) == len(SWEEP_TAGS), "one chart per metric in the database"
 
     # Self contained means nothing is fetched when the page loads. Searching the
     # whole file for a URL would be the wrong test and fails on a correct
@@ -327,7 +360,11 @@ def test_report_writes_a_self_contained_html_file(database: Path, tmp_path: Path
     external = re.findall(r'(?:src|href)\s*=\s*["\']https?://', markup)
     assert not external, f"the report markup references {len(external)} external resources"
     assert KNOWN_BEST in html
-    assert "WEAKER CLAIM" in html or "weaker" in html
+    # D36: this accepted the weaker word behind an `or`, so it passed on the
+    # lede paragraph alone and never once looked at a table row. The badge is
+    # what marks a result as the weaker claim, and the sweep's one single seed
+    # condition has to carry it on every metric.
+    assert html.count('<span class="badge weak">') == len(SWEEP_TAGS)
     assert "Permutation seed" in html
     assert str(ComparisonConfig().seed) in html
     assert "Spearman" in html

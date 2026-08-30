@@ -14,8 +14,8 @@
 # calibration gates, regenerates the demo sweep and database, and compiles both
 # PDFs. No step needs manual intervention.
 
-.PHONY: all help env lint fmt check-style check-fixtures typecheck test \
-        test-unit test-stats test-integration demo verify-demo assets \
+.PHONY: all help env lock lint fmt check-style check-fixtures typecheck test \
+        test-unit test-stats test-property test-integration demo verify-demo assets \
         calibration-docs check-calibration-docs html report report-debug \
         images pdfs package clean distclean
 
@@ -34,11 +34,13 @@ BASELINE := lr0.0010_bs32
 
 help:
 	@echo "Targets (each forwards to a nox session; run 'nox -l' for the full list):"
-	@echo "  env             create .venv and install pinned requirements"
+	@echo "  env             create .venv and install the locked toolchain"
+	@echo "  lock            recompile pylock.toml from pyproject.toml"
 	@echo "  lint            ruff format check, ruff lint, dash guard, fixture check"
 	@echo "  typecheck       mypy --strict over the package"
 	@echo "  test            full suite including calibration (slowest step)"
 	@echo "  test-unit       the inner loop: everything but the calibration gates"
+	@echo "  test-property   the property suite at the thorough Hypothesis profile"
 	@echo "  demo            regenerate the synthetic sweep, database and HTML report"
 	@echo "  assets          regenerate report figures and tables from the database"
 	@echo "  calibration-docs render the measured calibration numbers into the Markdown"
@@ -68,10 +70,13 @@ all:
 # own interpreter would be one more moving part for no gain.
 env:
 	$(BASE_PY) -m venv .venv
-	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -r requirements.txt
-	$(PY) -m pip install -e . --no-deps
+	$(PY) -m pip install --upgrade pip uv
+	$(PY) -m uv pip install --python $(PY) -r pylock.toml
+	$(PY) -m uv pip install --python $(PY) -e . --no-deps
 	$(PY) -c "import sys; print('environment ready on Python', sys.version.split()[0])"
+
+lock:
+	$(NOX) -s lock
 
 lint:
 	$(NOX) -s lint
@@ -98,6 +103,9 @@ test-unit:
 
 test-stats:
 	$(NOX) -s test_stats
+
+test-property:
+	$(NOX) -s test_property
 
 test-integration:
 	$(NOX) -s test -- tests/integration -v

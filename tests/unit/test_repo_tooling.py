@@ -11,11 +11,18 @@ from __future__ import annotations
 
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from scripts import check_no_dashes, clean, make_fixtures
+
+ROOT = Path(__file__).resolve().parents[2]
 
 # Written as escapes so this file never contains the characters under test, and
 # so the guard passing over this file is not itself the thing being asserted.
@@ -137,6 +144,76 @@ def test_the_fixture_check_reads_the_event_file_rather_than_hashing_it(tmp_path:
     truncated.write_text("", encoding="utf-8")
     assert make_fixtures.differences(copied) != []
     assert event_file.read_bytes() == original
+
+
+# ------------------------------------------------------- the dependency lock
+
+
+def locked_versions() -> dict[str, str]:
+    """`{name: version}` out of the committed PEP 751 lock."""
+    with (ROOT / "pylock.toml").open("rb") as handle:
+        lock = tomllib.load(handle)
+    assert lock["lock-version"] == "1.0", lock["lock-version"]
+    return {
+        canonicalize_name(package["name"]): str(package["version"]) for package in lock["packages"]
+    }
+
+
+def declared_requirements() -> dict[str, SpecifierSet]:
+    """`{name: specifier}` for every package `pyproject.toml` asks for.
+
+    The self referencing extras (`ml-experiment-triage[all]`) are dropped: they
+    compose this project's own extras and are not packages a lock could hold.
+    """
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        project = tomllib.load(handle)["project"]
+    declared = list(project["dependencies"])
+    for extra in project["optional-dependencies"].values():
+        declared.extend(extra)
+    found: dict[str, SpecifierSet] = {}
+    for text in declared:
+        requirement = Requirement(text)
+        name = canonicalize_name(requirement.name)
+        if name == canonicalize_name(project["name"]):
+            continue
+        found[name] = requirement.specifier
+    return found
+
+
+def test_the_lock_holds_every_dependency_this_project_declares() -> None:
+    """The lock is what CI installs, so a gap in it is a gap in what was tested.
+
+    `pylock.toml` replaced `requirements.txt` at 1.1.0 (Section 7 item 4). It is
+    compiled from the `dev` extra, which composes every other extra, so anything
+    declared anywhere in `pyproject.toml` has to be in it. A dependency added to
+    the declarations and not to the lock would install for a user and be absent
+    from every job that proves the thing works.
+    """
+    locked = locked_versions()
+
+    missing = sorted(name for name in declared_requirements() if name not in locked)
+
+    assert missing == [], f"declared but not locked: {missing}. Run `nox -s lock`"
+    # The tools the gates are made of, named rather than counted, so that
+    # dropping one out of the dev extra fails here and not in CI.
+    assert {"hypothesis", "mypy", "nox", "pytest", "ruff", "uv"} <= set(locked)
+
+
+def test_the_locked_versions_satisfy_the_declared_ranges() -> None:
+    """D30. A floor is a claim about what was installed, so it has to hold.
+
+    The declared floors are the versions the calibration was measured against,
+    and the lock is what the measurement actually ran under. If those two ever
+    disagree, one of them is a fiction, and this says which.
+    """
+    locked = locked_versions()
+
+    for name, specifier in declared_requirements().items():
+        if not str(specifier) or name not in locked:
+            continue
+        assert Version(locked[name]) in specifier, (
+            f"{name} is locked at {locked[name]}, which does not satisfy {specifier}"
+        )
 
 
 def test_the_cleaner_refuses_to_delete_the_environment_it_is_running_in() -> None:

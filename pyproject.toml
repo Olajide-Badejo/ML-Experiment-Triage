@@ -91,6 +91,11 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.16",
     "twine>=5.0",
+    # The resolver that produces `pylock.toml` and the installer that reads it
+    # back. Declared here so that the lock covers the tool that wrote it, and so
+    # `pip install ml-experiment-triage[dev]` is still a complete development
+    # environment for somebody who does not have uv on their machine yet.
+    "uv>=0.9",
 ]
 
 [project.scripts]

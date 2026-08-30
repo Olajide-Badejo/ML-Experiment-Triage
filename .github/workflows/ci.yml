@@ -6,6 +6,12 @@ name: CI
 #
 # The jobs answer different questions, which is why they are separate:
 #
+# Every job but `ranges` and `core-only` installs the committed PEP 751
+# `pylock.toml` with uv, which is the resolution every number this project
+# publishes was measured under. Those two install from the declared ranges with
+# pip on purpose: that is what a user types, and it is the only thing that finds
+# out what the ranges actually resolve to (D30).
+#
 #   lint / typecheck  is the source in the shape this project keeps it in
 #   test              does it work, on every platform and Python it claims
 #   calibration       does its 5 percent still mean 5 percent
@@ -54,14 +60,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       # poppler-utils supplies pdftotext, which the dash guard uses to check the
       # text inside the committed PDFs and not merely their sources.
@@ -87,14 +95,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       - name: Type check the package
         run: nox -s typecheck
@@ -118,14 +128,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       # The floor is below the 94 percent this currently measures rather than
       # at it. A coverage gate that sits on the current number turns every
@@ -147,14 +159,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       # `-s` so the measured rates are printed into the log. They are the
       # result, and a green tick that does not say 4.53 percent is worth less.
@@ -187,14 +201,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       - name: Demo workflow
         run: python -m examples.demo_workflow --quiet
@@ -214,10 +230,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    # Deliberately does NOT install requirements.txt. Every other job pins, so
-    # the declared ranges in pyproject.toml had never been resolved by anything
-    # and were a guess written as a fact (D30). This job is the only thing that
-    # finds out what `pip install ml-experiment-triage[dev]` actually gets.
+    # Deliberately does NOT install the lock, and uses pip rather than uv. Every
+    # other job installs the resolution in pylock.toml, so the declared ranges in
+    # pyproject.toml had never been resolved by anything and were a guess written
+    # as a fact (D30). This job is the only thing that finds out what
+    # `pip install ml-experiment-triage[dev]` actually gets, and pip is what a
+    # user will type, so pip is what is tested here.
     steps:
       - uses: actions/checkout@v4
 
@@ -304,14 +322,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       - name: Build, check and smoke test the wheel
         run: nox -s package
@@ -336,14 +356,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install the pinned toolchain
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pylock.toml
+
+      - name: Install the locked toolchain
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install -e . --no-deps
+          uv pip install --system -r pylock.toml
+          uv pip install --system -e . --no-deps
 
       # Recommends are left on deliberately. The documents need pgfplots and its
       # fillbetween library, booktabs, microtype and hyperref, and trimming

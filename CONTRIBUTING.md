@@ -3,7 +3,7 @@
 ## Getting set up
 
 ```bash
-make env       # Python 3.13 venv with the pinned requirements
+make env       # Python 3.13 venv from the committed lock
 make test-unit # the inner loop: everything but the calibration gates, about 50 s
 make test      # the full suite, calibration included, about 3 minutes
 ```
@@ -11,6 +11,28 @@ make test      # the full suite, calibration included, about 3 minutes
 `noxfile.py` holds the actual recipes and the Makefile forwards to it, so
 `nox -s test -- -m "not slow"` and `make test-unit` are the same command and
 either works on any platform. `nox -l` lists every session.
+
+## Dependencies
+
+**Users install with pip and get ranges; development installs a lock.** The
+ranges are declared in `pyproject.toml` and the `ranges` CI job is what finds
+out what they resolve to. Development and every other CI job install
+`pylock.toml`, a committed PEP 751 lock: the versions in it are the ones every
+number this project publishes was measured under.
+
+```bash
+nox -s lock                 # recompile after adding a dependency
+nox -s lock -- --upgrade    # move the versions, on purpose
+```
+
+uv writes and reads the lock, and `make env` bootstraps it with pip. Nothing is
+uv only: `pip install -r pylock.toml` works on pip 25.1 and later.
+
+Recompiling is idempotent, because uv reads the existing lock as a preference
+source: adding one dependency changes that dependency and leaves the rest where
+it is. `--upgrade` is the deliberate opposite, and it owes the calibration suite
+a rerun before it is committed, because a moved numpy or scipy is a moved
+measurement.
 
 ## The inner loop
 

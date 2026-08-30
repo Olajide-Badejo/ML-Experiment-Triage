@@ -64,6 +64,18 @@ Changelog; versions follow semantic versioning.
 
 ### Changed
 
+* **The development toolchain is a committed PEP 751 `pylock.toml`, resolved and
+  installed with uv, and `requirements.txt` is gone.** *Addressed to
+  contributors only: nothing about installing this package changes.* `pip
+  install ml-experiment-triage` remains the user path and resolves the ranges in
+  `pyproject.toml`, which the `ranges` CI job still exercises with pip. Every
+  other CI job installs the lock, which carries exactly the resolution
+  `requirements.txt` held, in a standard format with hashes and markers for
+  every platform in the matrix. `nox -s lock` recompiles it and is idempotent,
+  because uv reads the existing lock as a preference source; `nox -s lock --
+  --upgrade` is how versions move, and moving numpy or scipy owes the
+  calibration suite a rerun. Dependabot covers `pyproject.toml` and the
+  workflows and deliberately does not cover the lock, which it cannot read.
 * **The window block mode's block length is four autocorrelation times, not
   three.** *Addressed to anyone comparing single runs:* p values from the weak
   mode move slightly and short runs are refused more often. The multiplier had

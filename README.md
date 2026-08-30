@@ -451,8 +451,11 @@ scripts/           dash guard, PDF build, asset and image generation
 
 ## Requirements
 
-Python 3.13 (3.12 works) and the pinned packages in `requirements.txt`. A TeX installation is
-needed only to rebuild the PDFs, which are committed. Everything runs on CPU.
+Python 3.13 (3.12 works). Users install with pip and get the ranges declared in
+`pyproject.toml`; development and CI install the committed PEP 751 `pylock.toml`, which is the
+resolution every number this project publishes was measured under. `make env` builds that
+environment with uv, and `pip install -r pylock.toml` works too on pip 25.1 and later. A TeX
+installation is needed only to rebuild the PDFs, which are committed. Everything runs on CPU.
 
 ## Licence
 

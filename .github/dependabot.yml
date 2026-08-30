@@ -1,10 +1,16 @@
 version: 2
 
 # Two ecosystems, because this repository has two kinds of pin that go stale in
-# different ways. `pip` covers requirements.txt, which is the resolution every
-# measured number in this project was produced under; `github-actions` covers
-# the workflow, where an unpinned major version is how a green build starts
-# failing for reasons unconnected to the code.
+# different ways. `pip` covers the declarations in pyproject.toml, whose ranges
+# are what a user resolves against; `github-actions` covers the workflow, where
+# an unpinned major version is how a green build starts failing for reasons
+# unconnected to the code.
+#
+# It does NOT cover `pylock.toml`. Dependabot has no PEP 751 support, and a lock
+# it could not read is a lock it cannot half update: the versions in there are
+# the ones every published number was measured under, so moving one is
+# `nox -s lock -- --upgrade` followed by a rerun of the calibration suite, which
+# is a decision rather than a pull request to merge on a Monday.
 #
 # Weekly rather than daily. A statistics library that publishes measured error
 # rates has to rerun its calibration suite against a new numpy or scipy before

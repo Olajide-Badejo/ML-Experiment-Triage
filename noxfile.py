@@ -16,8 +16,8 @@ here and the Makefile became a wrapper that forwards to these sessions.
 **Every session but `package` runs in the project's own `.venv`** rather than in
 a virtual environment nox creates, and falls back to the interpreter nox itself
 is running under when there is no `.venv`, which is the shape of a CI runner.
-The environment is built once by `nox -s env` from the pinned
-`requirements.txt`, and the point of pinning is that every session sees the same
+The environment is built once by `nox -s env` from the committed PEP 751
+`pylock.toml`, and the point of a lock is that every session sees the same
 versions; letting nox resolve a fresh set per session would mean the tests and
 the calibration gates ran against something other than what is recorded.
 
@@ -86,22 +86,57 @@ def run(session: nox.Session, *arguments: str) -> None:
 
 @nox.session(**IN_PROJECT_VENV)
 def env(session: nox.Session) -> None:
-    """Create `.venv` and install the pinned requirements plus this package."""
+    """Create `.venv` and install the locked toolchain plus this package.
+
+    uv is bootstrapped with pip because pip is what a fresh interpreter has, and
+    then uv installs `pylock.toml`. The lock is the PEP 751 standard format and
+    pip 25.1 and later can install it too, so nothing here is uv only; uv is
+    used because it is what resolves the lock in the first place and because it
+    is several times faster on an environment this size.
+    """
     base = sys.executable
     if not VENV.exists():
         session.run(base, "-m", "venv", str(VENV), external=True)
     interpreter = str(venv_python(VENV))
-    session.run(interpreter, "-m", "pip", "install", "--upgrade", "pip", external=True)
-    session.run(interpreter, "-m", "pip", "install", "-r", "requirements.txt", external=True)
-    # `--no-deps`, because requirements.txt is the pinned resolution and pip
-    # would otherwise be free to move something to satisfy the ranges as well.
-    session.run(interpreter, "-m", "pip", "install", "-e", ".", "--no-deps", external=True)
+    session.run(interpreter, "-m", "pip", "install", "--upgrade", "pip", "uv", external=True)
+    session.run(
+        interpreter, "-m", "uv", "pip", "install", "--python", interpreter,
+        "-r", "pylock.toml", external=True,
+    )  # fmt: skip
+    # `--no-deps`, because the lock IS the resolution and an installer would
+    # otherwise be free to move something to satisfy the declared ranges as well.
+    session.run(
+        interpreter, "-m", "uv", "pip", "install", "--python", interpreter,
+        "-e", ".", "--no-deps", external=True,
+    )  # fmt: skip
     session.run(
         interpreter,
         "-c",
         "import sys; print('environment ready on Python', sys.version.split()[0])",
         external=True,
     )
+
+
+@nox.session(**IN_PROJECT_VENV)
+def lock(session: nox.Session) -> None:
+    """Recompile `pylock.toml` from `pyproject.toml`.
+
+    Idempotent by design: uv reads the existing lock as a preference source, so
+    running this after adding a dependency changes that dependency and leaves
+    the rest of the resolution where it is. That matters here more than usual,
+    because the versions in the lock are the ones every published number was
+    measured under, and a lock that drifted on every recompile would quietly
+    change what those numbers mean.
+
+    `nox -s lock -- --upgrade` is how to move them ON PURPOSE, and that is a
+    change that owes the calibration suite a rerun.
+    """
+    run(
+        session, "-m", "uv", "pip", "compile", "pyproject.toml",
+        "--extra", "dev", "--universal", "--python-version", "3.12",
+        "--format", "pylock.toml", "--output-file", "pylock.toml",
+        *session.posargs,
+    )  # fmt: skip
 
 
 @nox.session(**IN_PROJECT_VENV)

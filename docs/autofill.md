@@ -204,12 +204,200 @@ uncalibrated 0.9 is not a usable 0.9" means in numbers.
 diagram into the report. Without the flag the report is byte identical to what
 it was before this section existed.
 
+### The fill or skip decision policy
+
+A classifier reports a distribution; a product has to choose an action, and the
+two are not the same problem. Autofill's product truth is that a wrong fill
+costs the user more than no fill, so whether to fill a field at all is its own
+decision. It is modelled as a **contextual bandit** over the context
+`(predicted type, calibrated confidence, locale)` with the two actions `fill`
+and `skip`. A bandit and not reinforcement learning, and the distinction is
+load bearing rather than pedantic: nothing one field's decision does changes the
+next field's context, there is no episode and no discounting, and calling it RL
+would claim machinery that is not here.
+
+The reward is `+1` for a correct fill, `0` for a skip, and a type dependent
+penalty for a wrong one, in units of one correct fill:
+
+| Cost tier | Tokens | Wrong fill |
+| --- | --- | ---: |
+| payment | `cc-name`, `cc-number`, `cc-exp-month`, `cc-exp-year`, `cc-csc` | -4 |
+| identity | `given-name`, `family-name`, `name`, `email`, `tel`, `username` | -4 |
+| address | the four address lines and levels, `postal-code`, `country-name` | -2 |
+| other | `organization`, `unknown` | -1 |
+
+Configurable through `--penalties payment=8,address=3`; tiers left out keep the
+default. `organization` sits in `other` beside `unknown` rather than in
+`address`, because a company name is neither a person's identity nor a locative
+component of an address, and getting one wrong is a typo rather than a leak.
+
+**The penalty is charged against the TRUE type of the field, not the predicted
+one.** A wrong fill leaves a bad value in a field whose type is what it is: the
+user goes and repairs a payment field, an address field or a comment box, and
+the work is the work regardless of what the model thought it was doing. That has
+a consequence worth stating rather than discovering, and it is exactly what
+makes this a bandit problem: **the cost of an action is not observable at
+decision time**, because the policy sees only the predicted type. The latent
+truth is what the reward depends on and what the policy never gets to look at,
+which is why the learned thresholds are indexed by what the policy CAN see.
+
+#### Why there is no importance sampling estimator, and why that is the honest answer
+
+Off policy evaluation normally needs an estimator (IPS, self normalised IPS,
+doubly robust) for one specific reason: logged data records the reward of the
+action that WAS taken and nothing about the action that was not, so the value of
+a new policy has to be reconstructed from a reweighted sample, at a variance
+cost that grows with how far the new policy is from the logging one.
+
+That reason does not apply here. The evaluation corpus is fully labelled and the
+reward is a known function of `(prediction, truth, action)`, so BOTH arms of
+every row are computable: filling earns `+1` or the penalty, skipping earns `0`.
+A policy's expected reward is therefore a sum over rows rather than an estimate
+with a confidence interval. Fitting an IPS estimator on top of that would add
+variance to a quantity that is already exact, and reporting its error bars would
+be theatre. What the exactness does NOT cover, and the module says so: it cannot
+value a policy that would have shown the user a different set of fields.
+Nothing here changes which fields exist.
+
+#### Four policies, one threshold class
+
+All four compared policies are one object: a vector of nineteen thresholds, one
+per predicted type, with `fill` when the calibrated confidence reaches the
+threshold for the predicted type. Always filling is the vector of zeros, never
+filling the vector of twos (no probability exceeds one), a global cut the
+constant vector, and the learned policy the interesting one.
+
+That is not a trick to save code. It is the statement that these are the same
+policy class evaluated at different points, and it has a caveat that has to be
+read out loud: **because always filling is a member of the class, a per type
+policy fitted on a split cannot lose to it on that same split, by
+construction.** The in sample number below is therefore not evidence on its own,
+which is why the out of sample number is measured too and why the report labels
+the in sample case rather than quoting an unbeatable figure silently.
+
+Fitting is exact and needs no search: expected reward is a sum over rows and the
+predicted type partitions the rows, so maximising each type's own block
+maximises the total. Within a block, sorting by confidence turns "every
+threshold" into "every prefix" and one cumulative sum finds the best, with
+candidate cuts taken only at the ends of runs of EQUAL confidence, since a
+threshold cannot split two rows that look identical to it. A type with fewer
+than twenty rows in the fitting split inherits the global cut rather than a
+threshold decided by three rows.
+
+#### Measured, on de_DE validation
+
+287 rows, the sweep's best head (`lr0.3_l20` seed 0) at temperature 1.171,
+thresholds fitted on the same split, which is the default and is labelled
+`in_sample` in the artifact and in the report:
+
+| Policy | Fill rate | Expected reward | Correction cost |
+| --- | ---: | ---: | ---: |
+| never fill | 0.0000 | 0.0000 | 0.0000 |
+| always fill | 1.0000 | 0.8815 | 0.0732 |
+| global threshold | 0.9512 | 0.9059 | 0.0279 |
+| **per type threshold** (chosen) | 0.9373 | **0.9233** | **0.0070** |
+| Thompson sampling (online) | 0.8711 | 0.7770 | 0.0592 |
+
+Correction cost is what the user pays to undo the wrong fills, per field of the
+form. It is deliberately not the negative of the reward: a skip costs the user
+typing, which is what they were doing anyway, and charging for it would make
+doing nothing look expensive. Read beside the raw accuracy above, this is the
+number that changes: the per type policy gives up 6.3% of the fills and removes
+**90% of the correction cost**, 0.0732 down to 0.0070.
+
+Never filling is in the table because it is the bar. A policy that cannot beat
+zero is worse than shipping nothing, and a comparison that omits it is grading
+on a curve.
+
+#### The online version, and what learning costs
+
+The Thompson sampling row is the same decision learned ONLINE, one field at a
+time, over a seeded permutation of the evaluation stream. The posterior is one
+Gaussian per context cell over the mean reward of filling there, conjugate under
+a Normal prior with known noise. Gaussian rather than the textbook Beta because
+the reward is not a coin flip: it lives on `[-4, 1]` and its scale is exactly
+what the decision turns on. Each step draws once from the cell's posterior and
+fills when the draw beats the reward of skipping, which is Thompson sampling;
+the exploration is the width of the posterior and nothing else.
+
+**It updates only on the fills**, because a skip teaches a bandit nothing. That
+partial feedback is the whole difference between this row and the ones above it,
+and a simulation that updated on skips would be reporting numbers from full
+feedback while calling itself a bandit.
+
+The arms are `(locale, cost tier, equal mass confidence bucket)`, which is 2 x 4
+x 5 = **40 cells**. Pooling the nineteen predicted types down to their four cost
+tiers is deliberate: the arms have to be learnable from one pass over a few
+hundred decisions, and `2 x 19 x 5` arms would leave most of them with three
+observations and turn the simulation into a demonstration of the prior. The
+fitted threshold policy uses all nineteen types because it is fitted offline on
+the whole split at once, where support is not the binding constraint. Bucket
+edges are equal MASS, the same choice the calibration bins make and for the same
+reason. Arm indices are computed arithmetically from integer codes rather than
+from a dictionary keyed by tuples, and every draw comes from one `SeedSequence`,
+so the whole simulation is byte reproducible under its seed.
+
+Over 287 decisions it gave up **42.00 of reward against the best fixed policy**,
+which is 0.1463 per decision. That gap is the price of learning the policy
+rather than being handed it, and it is measured rather than bounded. Starting
+from a flat prior and never seeing the reward of anything it declined to fill,
+the bandit still reached 84% of the best fixed policy's reward inside one short
+stream. Regret can come out negative, which would not be a bug: the fixed class
+is restricted, and a bandit that adapts within a stream can beat every member of
+it on that stream.
+
+#### The finding that goes the other way
+
+On the held out test split the same thresholds do NOT beat always filling:
+
+| Policy | Fill rate | Expected reward | Correction cost |
+| --- | ---: | ---: | ---: |
+| **always fill** | 1.0000 | **0.9619** | 0.0235 |
+| global threshold | 0.9736 | 0.9589 | 0.0088 |
+| per type threshold | 0.9619 | 0.9472 | 0.0088 |
+| Thompson sampling (online) | 0.8768 | 0.8534 | 0.0147 |
+
+341 rows, thresholds fitted on val and scored here, so this is the version of
+the claim that costs something. The head is 0.9853 accurate on this split
+against 0.9547 on validation, and that is the whole explanation: **the value of
+a skip policy scales with the error rate.** When the classifier is wrong three
+times in two hundred, the fills a threshold gives up are worth more than the
+mistakes it prevents. There is a second effect underneath it, worth naming
+because it is the reason the per type policy also loses to the single global
+cut here: nineteen thresholds fitted on 287 rows generalise worse than one, and
+the support floor of twenty shrinks most types onto the global cut but not all
+of them.
+
+The online row moves with it: the best fixed policy here is always filling, and
+the Thompson run gave up 37.00 of reward against it over 341 decisions, 0.1085
+each. A bandit that has to learn a threshold pays for the lesson whether or not
+the threshold turns out to be worth having.
+
+Neither number was tuned to make this table look better. The support floor was
+not raised against the test split, and the chosen policy is still the per type
+one, because 5.3 names it and because the default evaluation is the validation
+split where it wins. The honest summary is that the decision layer earns its
+place at the error rates this corpus is generated at, and that a near perfect
+classifier does not need one.
+
+#### The artifact
+
+`triage autofill evaluate` writes `policy.json` beside `calibration.json`: the
+reward function, every policy's exact numbers, the fitted thresholds, the
+Thompson summary, and which policy was chosen. `--decision-policy` names the one
+exported, and the Thompson run is deliberately not an export target, because its
+decisions are a function of the stream it saw and a demo needs a policy that is
+the same on every run. The agentic demo loads that file; the report renders it
+with no import of `triage.autofill` in the reporting layer, so the numbers on
+the page are the ones that were measured.
+
 ## Reproducing all of it
 
 ```text
 triage autofill generate --out data --seed 0
 triage autofill sweep    --data data --out runs
 triage autofill evaluate --data data --weights runs/best.npz --locale de_DE --bootstrap 5 --out eval
+triage autofill evaluate --data data --weights runs/best.npz --locale de_DE --bootstrap 5 --split test --out eval_test
 triage ingest  runs      --database sweep.db
 triage compare --database sweep.db --baseline lr0.03_l20
 triage ingest  eval/runs --database eval.db
@@ -223,7 +411,11 @@ the machine.
 
 ## Not here yet
 
-`policy.py` (the fill or skip contextual bandit), the local LLM annotator, and
-the agentic browser demo. `triage autofill evaluate --policy llm` is declared and
-refuses with "not yet implemented until part 11" rather than falling back to the
-model, because a silent fallback would report LLM numbers that no LLM produced.
+The local LLM annotator and the agentic browser demo. `triage autofill evaluate
+--policy llm` is declared and refuses with "not yet implemented until part 11"
+rather than falling back to the model, because a silent fallback would report LLM
+numbers that no LLM produced.
+
+`policy.py` has landed: it is the fill or skip section above. What it is still
+waiting for is a consumer, since the exported `policy.json` is written for the
+agentic demo that does not exist yet.

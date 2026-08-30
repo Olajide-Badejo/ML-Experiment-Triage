@@ -69,6 +69,13 @@ VIEWPORT_WIDTH = 1000
 VIEWPORT_HEIGHT = 900
 SCREENSHOT_SCALE = 1
 
+#: Bounds on the height the capture crops to. The floor keeps a nearly empty
+#: page from producing a sliver, and the ceiling keeps a page that reports an
+#: absurd height (a broken layout, an infinite scroller) from asking the browser
+#: for a hundred megapixel image.
+MIN_CAPTURE_HEIGHT = 200
+MAX_CAPTURE_HEIGHT = 4000
+
 #: How long to wait for a `file://` page to finish loading, and how often to
 #: ask. A generated page is a few kilobytes with no external resources, so this
 #: is a guard against a browser that never came up rather than a real wait.
@@ -423,6 +430,21 @@ VALUES_JS = """
 """
 
 
+#: The height of the rendered content, so the capture can crop to it. Measured
+#: from the body's box rather than from `documentElement.scrollHeight`, which
+#: never reports less than the viewport and would therefore say "as tall as the
+#: window" for every page shorter than the window, which is all of them.
+DOCUMENT_HEIGHT_JS = """
+(() => {
+  const body = document.body;
+  if (!body) { return '0'; }
+  const box = body.getBoundingClientRect();
+  const margin = parseFloat(getComputedStyle(body).marginBottom) || 0;
+  return String(Math.ceil(box.bottom + window.scrollY + margin));
+})()
+"""
+
+
 def chrome_available() -> bool:
     """True when a Chromium the driver could drive is installed on this machine.
 
@@ -572,7 +594,24 @@ class ChromePage:
         }
 
     def screenshot(self, path: Path) -> Path:
-        """Capture the page at scale 1 and write it, recompressed if that is possible."""
+        """Capture the page at scale 1 and write it, recompressed if that is possible.
+
+        The viewport is shrunk to the height of the content first. A generated
+        form is shorter than the window it renders in, and capturing the window
+        would put a few hundred rows of empty white into a committed PNG: bytes
+        that are not the picture and that no reader is looking at.
+        """
+        height = int(float(self._session.evaluate(self._tab, DOCUMENT_HEIGHT_JS) or 0))
+        self._session.command(
+            self._tab,
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": VIEWPORT_WIDTH,
+                "height": max(MIN_CAPTURE_HEIGHT, min(height, MAX_CAPTURE_HEIGHT)),
+                "deviceScaleFactor": SCREENSHOT_SCALE,
+                "mobile": False,
+            },
+        )
         result = self._session.command(
             self._tab,
             "Page.captureScreenshot",

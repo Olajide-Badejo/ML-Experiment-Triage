@@ -144,4 +144,6 @@ def test_the_demo_captures_one_screenshot_at_scale_one(pages: list[Path], tmp_pa
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert len(data) < SCREENSHOT_CEILING_BYTES
     width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
     assert width == agentic.VIEWPORT_WIDTH * agentic.SCREENSHOT_SCALE
+    assert height < agentic.VIEWPORT_HEIGHT, "the capture crops to the content, not to the window"

@@ -440,7 +440,190 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     add_autofill(subparsers)
+    add_llm(subparsers)
     return parser
+
+
+#: The verb `triage ask` forwards to. Section 6.5 writes the question answering
+#: verb as `triage ask "..."` and Section 5.5 lists it as `triage llm ask`; both
+#: spellings are in the specification, so both work and one of them is an alias
+#: rather than a second implementation.
+ASK_ALIAS = "ask"
+
+
+def add_llm_options(parser: argparse.ArgumentParser) -> None:
+    """The flags every `triage llm` verb shares: where the model is and which."""
+    from triage.llm.embeddings import DEFAULT_EMBEDDING_MODEL
+    from triage.llm.ollama_client import (
+        DEFAULT_CHAT_MODEL,
+        DEFAULT_HOST,
+        DEFAULT_NUM_CTX,
+        MAX_NUM_CTX,
+    )
+
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help=(
+            f"where Ollama is listening (default: {DEFAULT_HOST}). Everything in this "
+            f"layer is local; there is no hosted model to fall back to"
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_CHAT_MODEL,
+        help=(
+            f"chat model (default: {DEFAULT_CHAT_MODEL}). When it is not pulled, the "
+            f"faster fallback is used and a note says so on stderr"
+        ),
+    )
+    parser.add_argument(
+        "--embed-model",
+        default=DEFAULT_EMBEDDING_MODEL,
+        help=(
+            f"embedding model (default: {DEFAULT_EMBEDDING_MODEL}). Its prompt prefixes "
+            f"come from the model record, so a model with no record is refused rather "
+            f"than embedded without them"
+        ),
+    )
+    parser.add_argument(
+        "--num-ctx",
+        type=bounded_int(low=256, high=MAX_NUM_CTX),
+        default=DEFAULT_NUM_CTX,
+        help=(
+            f"context window (default: {DEFAULT_NUM_CTX}, maximum {MAX_NUM_CTX}). The "
+            f"ceiling is the VRAM measurement in the docs, not a preference"
+        ),
+    )
+    parser.add_argument(
+        "--llm-seed",
+        type=bounded_int(low=0),
+        default=0,
+        help="the seed sent with every request, at temperature 0 (default: 0)",
+    )
+
+
+def add_ask_options(parser: argparse.ArgumentParser) -> None:
+    """The question answering flags, shared by `triage llm ask` and `triage ask`."""
+    parser.add_argument("question", help="a question about this database, in plain English")
+    parser.add_argument(
+        "--database",
+        default=DEFAULT_DATABASE,
+        help=f"the database to read (default: {DEFAULT_DATABASE})",
+    )
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help=(
+            "the baseline to compare against, needed for any question about verdicts, "
+            "refusals or sensitivity. Without it those questions are refused rather "
+            "than answered against an arbitrary run"
+        ),
+    )
+    parser.add_argument(
+        "--root", default=".", help="where the prose corpus is (default: the current directory)"
+    )
+    parser.add_argument(
+        "--k", type=bounded_int(low=1), default=4, help="prose chunks retrieved (default: 4)"
+    )
+    add_llm_options(parser)
+    parser.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--log-level", default="warning", choices=LOG_LEVELS, help=argparse.SUPPRESS
+    )
+
+
+def add_llm(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Section 6's three verbs, plus the `triage ask` alias 6.5 spells out.
+
+    The flag declarations import `triage.llm.ollama_client` and
+    `triage.llm.embeddings` for their default values, which is deliberate and
+    cheap: both are standard library plus numpy, they exist so the defaults in
+    `--help` are the ones the code actually uses rather than a second copy that
+    can drift, and neither reaches the network at import time.
+    """
+    llm_parser = subparsers.add_parser(
+        "llm",
+        help="local model verbs: annotate, summarize, ask (Ollama on localhost)",
+        description=(
+            "Retrieval augmented field annotation, a grounded plain language summary of "
+            "a report, and scoped question answering. Everything runs against a local "
+            "Ollama; nothing here calls a hosted model."
+        ),
+    )
+    verbs = llm_parser.add_subparsers(dest="llm_verb", required=True)
+
+    annotate = verbs.add_parser(
+        "annotate",
+        help="classify a split with the local model, using its nearest labelled examples",
+    )
+    annotate.add_argument("--data", required=True, metavar="DIR", help="a generated corpus")
+    annotate.add_argument(
+        "--out", required=True, metavar="DIR", help="where the runs and the outcomes file go"
+    )
+    annotate.add_argument(
+        "--split", default="val", choices=["train", "val", "test"], help="which split to classify"
+    )
+    annotate.add_argument(
+        "--locale", default="de_DE", choices=["all", "en_US", "de_DE"], help="restrict to a locale"
+    )
+    annotate.add_argument(
+        "--k", type=bounded_int(low=1, high=32), default=8, help="few shot examples (default: 8)"
+    )
+    annotate.add_argument(
+        "--limit",
+        type=bounded_int(low=1),
+        default=None,
+        help="classify only the first N rows: a quick pass, recorded as such",
+    )
+    annotate.add_argument(
+        "--bootstrap", type=bounded_int(low=2), default=5, help="bootstrap replicates (default: 5)"
+    )
+    annotate.add_argument("--seed", type=bounded_int(low=0), default=0, help="resampling seed")
+    annotate.add_argument(
+        "--ablation",
+        action="store_true",
+        help=(
+            "score the split twice, zero shot and retrieval augmented, and report the "
+            "difference as a verdict with a p value through the comparison layer. This "
+            "is how the claim that retrieval helps is checked rather than asserted"
+        ),
+    )
+    add_common(annotate)
+    add_llm_options(annotate)
+
+    summarize = verbs.add_parser(
+        "summarize",
+        help="a grounded plain language summary of one analysis, numbers checked",
+        description=(
+            "Renders the whole report into the prompt, generates a 150 to 250 word "
+            "summary, then deletes every sentence containing a number the report does "
+            "not support and says how many were dropped."
+        ),
+    )
+    add_common(summarize)
+    add_analysis_options(summarize)
+    summarize.add_argument(
+        "--output", default=None, metavar="FILE", help="also write the summary to a file"
+    )
+    add_llm_options(summarize)
+
+    ask_parser = verbs.add_parser(
+        "ask",
+        help="answer a scoped question about this database, or refuse it",
+        description=(
+            "Retrieval runs over the prose corpus; every number in the answer is "
+            "computed from the database by a SQL template and checked afterwards. A "
+            "question this cannot ground is refused, naming what it can answer."
+        ),
+    )
+    add_ask_options(ask_parser)
+
+    alias = subparsers.add_parser(
+        ASK_ALIAS,
+        help="the same as `triage llm ask`, which is how Section 6.5 spells it",
+    )
+    add_ask_options(alias)
 
 
 def add_autofill(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -542,7 +725,32 @@ def add_autofill(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]
         help=(
             "which engine is under study. The heuristic is always scored beside it, "
             "because a number with nothing to compare against is not a result. "
-            "`llm` is declared and refuses: it arrives with the annotator"
+            "`llm` runs the local annotator over the split and needs a running Ollama"
+        ),
+    )
+    evaluate.add_argument(
+        "--llm-host",
+        default="http://localhost:11434",
+        help="where Ollama is listening, for --policy llm (default: http://localhost:11434)",
+    )
+    evaluate.add_argument(
+        "--llm-model",
+        default="mistral-nemo:12b-instruct-2407-q4_K_M",
+        help="chat model for --policy llm; the faster fallback is used when it is absent",
+    )
+    evaluate.add_argument(
+        "--llm-k",
+        type=bounded_int(low=1, high=32),
+        default=8,
+        help="few shot examples retrieved per field for --policy llm (default: 8)",
+    )
+    evaluate.add_argument(
+        "--llm-limit",
+        type=bounded_int(low=1),
+        default=None,
+        help=(
+            "classify only the first N rows with --policy llm. The evaluation is then "
+            "over exactly those rows and says so, rather than over the whole split"
         ),
     )
     evaluate.add_argument(
@@ -592,6 +800,19 @@ def run_autofill(args: argparse.Namespace) -> int:
     from triage.autofill.cli import run
 
     return run(args)
+
+
+def run_llm(args: argparse.Namespace) -> int:
+    """Hand off to the local model layer, imported only when it is asked for."""
+    from triage.llm.cli import run
+
+    return run(args)
+
+
+def run_ask_alias(args: argparse.Namespace) -> int:
+    """`triage ask` is `triage llm ask`, spelled the way 6.5 spells it."""
+    args.llm_verb = ASK_ALIAS
+    return run_llm(args)
 
 
 def run_ingest(args: argparse.Namespace) -> int:
@@ -896,6 +1117,8 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "report": run_report,
     "demo": run_demo,
     "autofill": run_autofill,
+    "llm": run_llm,
+    ASK_ALIAS: run_ask_alias,
 }
 
 

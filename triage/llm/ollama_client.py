@@ -145,7 +145,13 @@ class OllamaClient:
     num_ctx: int = DEFAULT_NUM_CTX
     seed: int = DEFAULT_SEED
     timeout: float = DEFAULT_TIMEOUT
-    transport: Transport = urllib_transport
+    #: `None` means the real one. It is resolved at the moment of the call
+    #: rather than bound as a dataclass default, and that is the difference
+    #: between a seam and a decoration: a default bound at class creation cannot
+    #: be replaced afterwards, so an integration test driving a whole command
+    #: could not have substituted one. Looking the module attribute up per call
+    #: costs a dictionary read and makes the substitution possible.
+    transport: Transport | None = None
     _health: HealthReport | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -164,8 +170,9 @@ class OllamaClient:
     def _round_trip(self, path: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         url = self._url(path)
         encoded = None if payload is None else json.dumps(payload).encode("utf-8")
+        send = self.transport if self.transport is not None else urllib_transport
         try:
-            body = self.transport(url, encoded, self.timeout)
+            body = send(url, encoded, self.timeout)
         except (urllib.error.URLError, OSError) as error:
             raise LlmUnavailableError(
                 f"no Ollama at {self.host} ({error}). Start it with `ollama serve`, or point "

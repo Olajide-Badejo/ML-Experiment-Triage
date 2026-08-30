@@ -6,12 +6,12 @@ line module imports this package until somebody asks for it. That split is the
 same one `triage report` uses for the reporting stack, for the same reason: the
 cost of a feature should be paid by the people who use it.
 
-**On the `llm` policy.** It is a declared choice that refuses, rather than an
-omitted one. A policy silently missing from the list reads as a decision not to
-have it; a policy that answers "not yet implemented until part 11" tells a
-reader that it is coming and stops them from wiring a pipeline around its
-absence. What it must never do is quietly fall back to the model, which would
-report LLM numbers that no LLM produced.
+**On the `llm` policy.** It scores the same split with the local annotator
+(6.3) and puts the result in the same table as the other two engines. It needs
+a running Ollama and it says so when there is not one, rather than falling back
+to the model, which would report LLM numbers that no LLM produced. The response
+cache lives in `--database`, so a second run of the same command reproduces the
+same numbers without asking the model anything.
 """
 
 from __future__ import annotations
@@ -19,12 +19,18 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from triage.cli import EXIT_OK, EXIT_USAGE
 
-#: The policy names 5.5 lists, and the one that is not here yet.
+if TYPE_CHECKING:
+    # Types only, so the annotations below are precise while the modules that
+    # define them are still imported at the moment a verb runs and not before.
+    from triage.autofill.evaluate import ScoredEngine
+    from triage.autofill.generator import FieldRecord
+
+#: The policy names 5.5 lists.
 POLICIES = ("model", "heuristic", "llm")
-NOT_YET = "llm"
 
 
 def run_generate(args: argparse.Namespace) -> int:
@@ -103,13 +109,6 @@ def run_evaluate(args: argparse.Namespace) -> int:
     from triage.autofill.generator import load_split
     from triage.autofill.model import LogisticModel
 
-    if args.policy == NOT_YET:
-        print(
-            f"error: the {NOT_YET!r} policy is not yet implemented until part 11; "
-            f"the engines available today are 'model' and 'heuristic'",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
     if args.policy == "model" and not args.weights:
         print(
             "error: --policy model needs --weights pointing at a .npz written by "
@@ -128,6 +127,9 @@ def run_evaluate(args: argparse.Namespace) -> int:
     # reported numbers are the ones that cost something.
     fit_records = None if args.split == "val" else load_split(args.data, "val")
     reward = RewardModel.parse(args.penalties) if args.penalties else RewardModel()
+    extra_engines = None
+    if args.policy == "llm":
+        records, extra_engines = _annotate_with_the_llm(args, records)
     paths = write_evaluation(
         args.out,
         records=records,
@@ -139,6 +141,7 @@ def run_evaluate(args: argparse.Namespace) -> int:
         fit_records=fit_records,
         reward=reward,
         decision_policy=args.decision_policy,
+        extra_engines=extra_engines,
     )
     report = summarise(paths)
     for name, engine in sorted(report["engines"].items()):
@@ -162,6 +165,42 @@ def run_evaluate(args: argparse.Namespace) -> int:
         f"{paths.root / 'runs'})"
     )
     return EXIT_OK
+
+
+def _annotate_with_the_llm(
+    args: argparse.Namespace, records: list[FieldRecord]
+) -> tuple[list[FieldRecord], dict[str, ScoredEngine]]:
+    """Score the split with the local annotator, and hand back what it scored.
+
+    The rows come back as well as the predictions, because `--limit` shortens
+    the pass and the evaluation has to be over exactly the rows that were
+    classified. Scoring 200 rows and reporting them against a split of 800 would
+    be a number about nothing, and the shape of that mistake is a length
+    mismatch that `evaluate_engines` refuses anyway.
+    """
+    from triage.autofill.generator import load_split
+    from triage.core.store import Store
+    from triage.llm.annotator import ENGINE_LLM, Annotator, AnnotatorConfig
+    from triage.llm.ollama_client import OllamaClient
+
+    client = OllamaClient(host=args.llm_host, chat_model=args.llm_model)
+    chat_model = client.resolve_chat_model(args.llm_model)
+    if chat_model != args.llm_model:
+        print(f"note: using {chat_model}; {args.llm_model} is not pulled", file=sys.stderr)
+
+    rows = [record for record in records if args.locale == "all" or record.locale == args.locale]
+    examples = [
+        record
+        for record in load_split(args.data, "train")
+        if args.locale == "all" or record.locale == args.locale
+    ]
+    settings = AnnotatorConfig(
+        k=args.llm_k, chat_model=chat_model, limit=args.llm_limit, engine=ENGINE_LLM
+    )
+    with Store(args.database) as store:
+        run = Annotator(client, store, settings, examples=examples).annotate(rows)
+    print(run.describe())
+    return rows[: len(run.annotations)], {ENGINE_LLM: run.scored()}
 
 
 def _print_policies(path: Path) -> None:
@@ -209,9 +248,16 @@ def run(args: argparse.Namespace) -> int:
     no rows, a bootstrap of one), which is what exit 2 means. The command line's
     own error boundary does not list it, and should not: a `ValueError` from the
     statistics layer IS a bug and keeps its traceback.
+
+    An `LlmError` reaches here only from `--policy llm`, and it already names
+    the command that fixes it, so it is the same kind of answer: exit 2 with the
+    message. It is imported inside the handler so that the other three policies
+    never import the model client at all.
     """
+    from triage.llm.ollama_client import LlmError
+
     try:
         return HANDLERS[args.autofill_verb](args)
-    except ValueError as error:
+    except (LlmError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_USAGE

@@ -458,23 +458,12 @@ def test_an_unparsable_penalty_is_a_usage_error_not_a_traceback(
     assert "not a cost tier" in capsys.readouterr().err
 
 
-def test_the_llm_policy_says_it_is_not_here_yet_rather_than_pretending(
-    corpus: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    code = main(
-        [
-            "autofill",
-            "evaluate",
-            "--data",
-            str(corpus),
-            "--policy",
-            "llm",
-            "--out",
-            str(tmp_path / "llm"),
-        ]
-    )
-    assert code == EXIT_USAGE
-    assert "not yet implemented" in capsys.readouterr().err
+# The `llm` policy used to be declared here and refuse with "not yet
+# implemented"; it now runs the annotator of Section 6.3. Its tests moved to
+# `tests/integration/test_llm_cli.py`, which is where the fake transport is
+# injected, and they cover both halves of what it must do: score the split when
+# Ollama is up, and refuse naming `ollama serve` when it is not. Nothing in this
+# file may reach a model, which is why none of them stayed.
 
 
 def test_the_model_policy_without_weights_is_refused(

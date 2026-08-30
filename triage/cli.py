@@ -428,7 +428,136 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", default="warning", choices=LOG_LEVELS, help=argparse.SUPPRESS
     )
 
+    add_autofill(subparsers)
     return parser
+
+
+def add_autofill(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """The reference workload's four verbs, per 5.5.
+
+    Declared here rather than in `triage/autofill/cli.py` so that `triage
+    --help` is one document and so that building the parser costs no import of
+    that package; the handlers are imported when one of these verbs runs.
+    """
+    autofill_parser = subparsers.add_parser(
+        "autofill",
+        help="this repository's reference workload: form field classification",
+        description=(
+            "Generate a synthetic corpus of browser form fields, train a numpy "
+            "classifier on it, sweep the grid, and evaluate against a heuristic "
+            "baseline. The sweep writes ordinary run directories, so `triage ingest` "
+            "and `triage compare` read them with no autofill specific flag."
+        ),
+    )
+    verbs = autofill_parser.add_subparsers(dest="autofill_verb", required=True)
+
+    generate = verbs.add_parser("generate", help="write the synthetic corpus and its HTML pages")
+    generate.add_argument("--out", required=True, metavar="DIR", help="where to write the corpus")
+    generate.add_argument(
+        "--locale",
+        nargs="+",
+        default=["en_US", "de_DE"],
+        choices=["en_US", "de_DE"],
+        help="locales to generate (default: both)",
+    )
+    generate.add_argument("--seed", type=bounded_int(low=0), default=0, help="corpus seed")
+    generate.add_argument(
+        "--n-fields",
+        type=bounded_int(low=20),
+        default=4000,
+        help="how many labelled fields to write (default: 4000)",
+    )
+    add_common(generate)
+
+    train_parser = verbs.add_parser("train", help="train one model into a run directory")
+    train_parser.add_argument("--data", required=True, metavar="DIR", help="a generated corpus")
+    train_parser.add_argument(
+        "--out", required=True, metavar="RUNS_DIR", help="where the run directory goes"
+    )
+    train_parser.add_argument(
+        "--lr", type=bounded_float(low=0.0), default=0.1, help="learning rate"
+    )
+    train_parser.add_argument(
+        "--batch-size", type=bounded_int(low=1), default=64, help="minibatch size"
+    )
+    train_parser.add_argument(
+        "--l2", type=bounded_float(low=0.0, low_inclusive=True), default=1e-4, help="L2 strength"
+    )
+    train_parser.add_argument("--seed", type=bounded_int(low=0), default=0, help="training seed")
+    train_parser.add_argument(
+        "--epochs", type=bounded_int(low=1), default=8, help="passes over the training split"
+    )
+    add_common(train_parser)
+
+    sweep_parser = verbs.add_parser(
+        "sweep",
+        help="train the whole demo grid: lr {0.03, 0.1, 0.3} x l2 {0, 1e-4} x seeds 0 to 4",
+    )
+    sweep_parser.add_argument("--data", required=True, metavar="DIR", help="a generated corpus")
+    sweep_parser.add_argument(
+        "--out", required=True, metavar="RUNS_DIR", help="where the 30 run directories go"
+    )
+    sweep_parser.add_argument(
+        "--epochs", type=bounded_int(low=1), default=8, help="passes over the training split"
+    )
+    sweep_parser.add_argument(
+        "--batch-size", type=bounded_int(low=1), default=64, help="minibatch size"
+    )
+    sweep_parser.add_argument(
+        "--seeds",
+        type=bounded_int(low=1, high=5),
+        default=5,
+        help=(
+            "how many of the five seeds to run (default: 5). Fewer is a smoke test: "
+            "three or more is what the seed replicated mode needs"
+        ),
+    )
+    add_common(sweep_parser)
+
+    evaluate = verbs.add_parser(
+        "evaluate", help="score a policy against the heuristic baseline and write both artifacts"
+    )
+    evaluate.add_argument("--data", required=True, metavar="DIR", help="a generated corpus")
+    evaluate.add_argument(
+        "--out", required=True, metavar="DIR", help="where the runs and the outcomes file go"
+    )
+    evaluate.add_argument(
+        "--weights", metavar="W.npz", default=None, help="a model written by train or sweep"
+    )
+    evaluate.add_argument(
+        "--policy",
+        default="model",
+        choices=["model", "heuristic", "llm"],
+        help=(
+            "which engine is under study. The heuristic is always scored beside it, "
+            "because a number with nothing to compare against is not a result. "
+            "`llm` is declared and refuses: it arrives with the annotator"
+        ),
+    )
+    evaluate.add_argument(
+        "--bootstrap",
+        type=bounded_int(low=2),
+        default=5,
+        help=(
+            "bootstrap replicates, one run directory each, replicate k as seed k "
+            "(default: 5, which is what the seed replicated mode wants)"
+        ),
+    )
+    evaluate.add_argument(
+        "--split", default="val", choices=["train", "val", "test"], help="which split to score"
+    )
+    evaluate.add_argument(
+        "--locale", default="all", choices=["all", "en_US", "de_DE"], help="restrict to one locale"
+    )
+    evaluate.add_argument("--seed", type=bounded_int(low=0), default=0, help="resampling seed")
+    add_common(evaluate)
+
+
+def run_autofill(args: argparse.Namespace) -> int:
+    """Hand off to the reference workload, imported only when it is asked for."""
+    from triage.autofill.cli import run
+
+    return run(args)
 
 
 def run_ingest(args: argparse.Namespace) -> int:
@@ -719,6 +848,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "compare": run_compare,
     "report": run_report,
     "demo": run_demo,
+    "autofill": run_autofill,
 }
 
 

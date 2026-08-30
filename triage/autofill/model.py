@@ -387,6 +387,7 @@ def write_run_dir(
     locale_mix: str,
     variant: str | None = None,
     extra_config: dict[str, Any] | None = None,
+    save_weights: bool = True,
 ) -> Path:
     """Write `config.json`, `metrics.jsonl` and `weights.npz` into one run directory.
 
@@ -394,6 +395,10 @@ def write_run_dir(
     autofill aware parser, no special case in `triage.ingest`, and no flag: the
     trainer writes the format the tool already reads, which is what acceptance
     criterion 1 asks for and the only arrangement that could keep being true.
+
+    `save_weights=False` is for the sweep, where thirty heads of 65,536 by 19
+    float32 would be tens of megabytes of scaffolding for a comparison that reads
+    none of it; the sweep keeps the best head alone, beside its own summary.
     """
     run = Path(path)
     run.mkdir(parents=True, exist_ok=True)
@@ -426,7 +431,8 @@ def write_run_dir(
         encoding="utf-8",
         newline="\n",
     )
-    result.model.save(run / "weights.npz")
+    if save_weights:
+        result.model.save(run / "weights.npz")
     return run
 
 

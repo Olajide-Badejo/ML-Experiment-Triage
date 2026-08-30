@@ -479,10 +479,16 @@ class ChromeSession:
         self.close()
 
     def page(self, path: Path) -> ChromePage:
-        """Open one generated page over `file://` and wait for it to settle."""
+        """Open one generated page over `file://` and wait for it to settle.
+
+        The path is resolved first, because a `file://` URI is absolute by
+        definition and `--pages experiments/results/.../pages` on the command
+        line is not: without this the demo refuses every relative path with a
+        message about URIs rather than opening the page it was handed.
+        """
         if self._browser is None:
             raise BrowserError("the browser is not open: use `with ChromeSession() as session`")
-        tab = self._run(self._browser.create_tab(path.as_uri()))
+        tab = self._run(self._browser.create_tab(path.resolve().as_uri()))
         page = ChromePage(self, tab, path.stem)
         page.prepare()
         return page

@@ -80,6 +80,20 @@ def test_a_value_typed_into_the_page_is_in_the_element_afterwards(pages: list[Pa
         assert page.values()[element] == "Avery Nakamura"
 
 
+def test_a_page_named_by_a_relative_path_still_loads(
+    pages: list[Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--pages some/relative/dir` is the ordinary way to type it.
+
+    A `file://` URI is absolute by definition, so a relative path has to be
+    resolved before it becomes one. This failed on the first real run of the
+    demo, with a message about URIs and no page opened.
+    """
+    monkeypatch.chdir(pages[0].parent)
+    with agentic.ChromeSession() as session:
+        assert session.page(Path(pages[0].name)).rows()
+
+
 def test_filling_an_element_that_is_not_there_raises_rather_than_passing(
     pages: list[Path],
 ) -> None:

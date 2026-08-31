@@ -172,10 +172,9 @@ documentation site.
   with an API reference rendered by mkdocstrings from the docstrings themselves,
   built with `--strict` in CI so a dead cross reference is a failing build.
   `nox -s docs-site` builds it locally.
-* **`CITATION.cff` and `CODE_OF_CONDUCT.md`.** GitHub renders the citation
-  widget from the CFF and the Zenodo integration mints a DOI per release from
-  the same metadata. There is deliberately no `.zenodo.json`, which would
-  silently override it.
+* **`CITATION.cff`.** GitHub renders the citation widget from the CFF and the
+  Zenodo integration mints a DOI per release from the same metadata. There is
+  deliberately no `.zenodo.json`, which would silently override it.
 * **A release workflow using PyPI Trusted Publishing** (Section 7 item 3).
   OIDC through `pypa/gh-action-pypi-publish`, PEP 740 attestations on by
   default, no API token in the repository or its secrets, and a TestPyPI path

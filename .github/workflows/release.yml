@@ -199,6 +199,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `gh release upload` needs a release object to upload to, and pushing a
+      # tag does not create one: on 1.1.0 this step failed with "release not
+      # found" and the PDFs had to be attached by hand. So the release is
+      # created first if it is missing. `gh release view` is the existence
+      # check rather than `create || true`, because a create that fails for any
+      # other reason should still be a red job.
+      - name: The release object exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists, leaving it alone"
+            exit 0
+          fi
+
+          echo "creating release $GITHUB_REF_NAME"
+
+          # A heredoc rather than an inline `--notes` string: the notes are
+          # Markdown, and Markdown treats the indentation a folded YAML string
+          # would carry into the body as a code block.
+          cat > "$RUNNER_TEMP/notes.md" <<NOTES
+          What changed in $GITHUB_REF_NAME is in
+          [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md).
+
+          The two committed PDFs are attached below. The \`reports\` job in CI
+          proves those bytes are the ones this tag's tree builds, so they are
+          uploaded rather than rebuilt here.
+          NOTES
+
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+      # `--clobber` keeps a re-run idempotent: the same two assets are replaced
+      # rather than rejected as duplicates.
       - name: Upload the reports
         env:
           GH_TOKEN: ${{ github.token }}

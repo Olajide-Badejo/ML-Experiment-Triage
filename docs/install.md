@@ -6,6 +6,18 @@ pip install ml-experiment-triage
 
 That is the whole install for the statistics API. Python 3.12 or later.
 
+**Until the PyPI registration completes that line 404s, and so does every other
+`pip install ml-experiment-triage` on this page.** Install from the tag in the
+meantime, which resolves the same dependencies and gives you the same `triage`
+command. Any extra named below works in the same position:
+
+```bash
+pip install "ml-experiment-triage @ git+https://github.com/Olajide-Badejo/ML-Experiment-Triage.git@v1.1.0"
+pip install "ml-experiment-triage[cli] @ git+https://github.com/Olajide-Badejo/ML-Experiment-Triage.git@v1.1.0"
+```
+
+This paragraph and its code block go away the day the package is on PyPI.
+
 ## What the core install is, and why it is small
 
 The core dependencies are **numpy and scipy, and nothing else**. That is a

@@ -17,7 +17,7 @@
 .PHONY: all help env lock lint fmt check-style check-fixtures typecheck test \
         test-unit test-stats test-property test-integration demo verify-demo assets \
         calibration-docs check-calibration-docs docs-site serve-docs html \
-        report report-debug images pdfs package clean distclean
+        report report-debug images gif pdfs package clean distclean
 
 ifeq ($(OS),Windows_NT)
 BASE_PY := py -3.13
@@ -48,6 +48,7 @@ help:
 	@echo "  docs-site       build the mkdocs site with every warning an error"
 	@echo "  pdfs            compile the main and debug reports"
 	@echo "  images          regenerate the landing page charts (needs kaleido)"
+	@echo "  gif             rebuild the README action GIF (needs Chrome)"
 	@echo "  package         build the wheel and prove it installs and runs"
 	@echo "  all             everything above, in order"
 	@echo "  clean           remove generated artifacts"
@@ -158,6 +159,9 @@ pdfs:
 
 images:
 	$(NOX) -s images
+
+gif:
+	$(NOX) -s gif
 
 package:
 	$(NOX) -s package

@@ -270,6 +270,18 @@ def images(session: nox.Session) -> None:
 
 
 @nox.session(**IN_PROJECT_VENV)
+def gif(session: nox.Session) -> None:
+    """Rebuild the README's action GIF. Needs Chrome; the GIF is committed.
+
+    Not part of the default run for the same reason `images` is not: it drives a
+    browser, and what it produces is a committed documentation asset rather than
+    a result anything depends on. It is a session so that the GIF is a thing
+    this repository builds rather than a file somebody once made.
+    """
+    run(session, "scripts/make_readme_gif.py", *session.posargs)
+
+
+@nox.session(**IN_PROJECT_VENV)
 def clean(session: nox.Session) -> None:
     """Remove every generated artifact. `nox -s clean -- --venv` for a distclean."""
     run(session, "scripts/clean.py", *session.posargs)

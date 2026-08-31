@@ -18,6 +18,7 @@ generator into a temporary directory.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,29 @@ def test_a_tab_holding_another_document_is_not_read_as_the_page(
         page = session.page(pages[0])
         with pytest.raises(agentic.BrowserError, match="rather than a complete"):
             page.prepare(pages[1].resolve().as_uri())
+
+
+def test_a_page_answers_a_question_about_its_own_layout(pages: list[Path]) -> None:
+    """`ChromePage.evaluate`, which is how the README GIF frames whole sections.
+
+    A caller that has a page open has questions this module has no business
+    enumerating. The one that exists asks the rendered report where its own
+    sections are, so that a frame cropped out of a tall capture lands on a whole
+    figure; the assertion here is the same shape on a page that is always there.
+    """
+    with agentic.ChromeSession() as session:
+        page = session.page(pages[0])
+        element = page.rows()[0]["id"]
+        box = json.loads(
+            page.evaluate(
+                "JSON.stringify(Object.entries("
+                f"document.getElementById({json.dumps(element)}).getBoundingClientRect()"
+                ".toJSON()))"
+            )
+        )
+        measured = dict(box)
+        assert measured["width"] > 0 and measured["height"] > 0
+        assert measured["bottom"] > measured["top"]
 
 
 def test_filling_an_element_that_is_not_there_raises_rather_than_passing(

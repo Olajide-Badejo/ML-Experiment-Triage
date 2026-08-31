@@ -1,7 +1,13 @@
 """The whole tool end to end: synthesise, ingest, compare, report.
 
-    python examples/demo_workflow.py
-    python examples/demo_workflow.py --verify-committed
+    python -m examples.demo_workflow
+    python -m examples.demo_workflow --verify-committed
+
+**Run it as a module, not as a path.** `python examples/demo_workflow.py` puts
+`examples/` on `sys.path` instead of the repository root, and the first import
+below is `from examples.make_synthetic_runs import ...`, so the documented
+invocation raised `ModuleNotFoundError: No module named 'examples'` before it
+printed a line. The `-m` form is what the Makefile and CI have always used.
 
 Plain form regenerates the synthetic sweep, rebuilds the demo database that the
 LaTeX reports and CI compile from, and writes the HTML report.
@@ -22,8 +28,8 @@ import time
 from pathlib import Path
 
 from examples.make_synthetic_runs import BASELINE, KNOWN_BEST, generate
-from triage.analysis.comparison import ComparisonConfig, compare_all
-from triage.analysis.regression import RegressionConfig, TriageReport, classify
+from triage.analysis.comparison import ComparisonConfig, ComparisonRefusal, compare_all
+from triage.analysis.regression import RegressionConfig, TriageReport, classify, rank
 from triage.analysis.sensitivity import analyse
 from triage.cli import CALIBRATION_NOTE
 from triage.core.store import Store
@@ -37,8 +43,15 @@ HTML_OUTPUT = ROOT / "experiments" / "results" / "triage_report.html"
 EXPECTED = ROOT / "examples" / "expected_verdicts.json"
 
 
-def build(show_progress: bool = True) -> tuple[TriageReport, list, list, float]:
-    """Run the pipeline and return the report, sensitivity, runs and elapsed time."""
+def build(
+    show_progress: bool = True,
+) -> tuple[TriageReport, list, list, tuple[ComparisonRefusal, ...], float]:
+    """Run the pipeline: report, sensitivity, runs, refusals and elapsed time.
+
+    The refusals travel out of here with the findings because a comparison the
+    tool declined to make is a result, and the demo's own HTML report is one of
+    the outputs that has to name it.
+    """
     started = time.perf_counter()
 
     print("1. synthesising the sweep")
@@ -70,15 +83,20 @@ def build(show_progress: bool = True) -> tuple[TriageReport, list, list, float]:
     comparison_config = ComparisonConfig()
     regression_config = RegressionConfig()
     results = compare_all(experiments, BASELINE, config=comparison_config)
-    findings = classify(results, regression_config)
+    findings = rank(classify(results, regression_config))
     report = TriageReport(findings=findings, config=regression_config, baseline=BASELINE)
     sensitivity = analyse(experiments, config=comparison_config)
     print(f"   {report.summary()}")
 
-    return report, sensitivity, experiments, time.perf_counter() - started
+    return report, sensitivity, experiments, results.refusals, time.perf_counter() - started
 
 
-def write_html(report: TriageReport, sensitivity: list, experiments: list) -> Path:
+def write_html(
+    report: TriageReport,
+    sensitivity: list,
+    experiments: list,
+    refusals: tuple[ComparisonRefusal, ...] = (),
+) -> Path:
     context = build_context(
         experiments=experiments,
         triage=report,
@@ -88,6 +106,7 @@ def write_html(report: TriageReport, sensitivity: list, experiments: list) -> Pa
         comparison_config=ComparisonConfig(),
         regression_config=RegressionConfig(),
         calibration=CALIBRATION_NOTE,
+        refusals=refusals,
         title="ML Experiment Triage: synthetic demo sweep",
     )
     return render(context, HTML_OUTPUT)
@@ -152,7 +171,7 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="no progress bars")
     args = parser.parse_args()
 
-    report, sensitivity, experiments, elapsed = build(show_progress=not args.quiet)
+    report, sensitivity, experiments, refusals, elapsed = build(show_progress=not args.quiet)
     record = verdict_record(report)
 
     if args.verify_committed:
@@ -190,11 +209,15 @@ def main() -> int:
         print(f"wrote the verdict record to {EXPECTED.relative_to(ROOT)}")
 
     print("4. writing the HTML report")
-    output = write_html(report, sensitivity, experiments)
+    output = write_html(report, sensitivity, experiments, refusals)
     print(f"   {output.relative_to(ROOT)} ({output.stat().st_size / 1024:.0f} KB, self contained)")
 
     print_table(report)
-    print(f"\nbest condition found: {report.best_candidate} (ground truth: {KNOWN_BEST})")
+    # A weaker mode answer is still an answer, but it is never presented as if it
+    # were a seed replicated one.
+    best = report.best_finding
+    mode = " [weaker mode]" if best is not None and best.result.is_weak_mode else ""
+    print(f"\nbest condition found: {report.best_candidate}{mode} (ground truth: {KNOWN_BEST})")
     print(f"demo workflow completed in {elapsed:.1f} s")
     measured = CALIBRATION_NOTE["Measured type I error, strong mode"]
     print(f"calibration behind these p values: {measured}")

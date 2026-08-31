@@ -1,0 +1,215 @@
+/* Reading rhythm for the documentation site.
+ *
+ * This project's pages are long and argumentative rather than short and
+ * referential: a reader is being asked to follow a chain of reasoning about
+ * why a p value means what it says. Material's defaults are tuned for API
+ * documentation, where a reader scans. So the two things that matter here are
+ * the ones a scanning layout gets wrong: the measure (how many characters sit
+ * on a line before the eye has to find the next one) and the vertical air
+ * between blocks.
+ *
+ * Prose is capped near 74 characters, which is the middle of the range every
+ * typographic reference lands on. Tables, code and figures are NOT capped with
+ * it: several tables here carry seven columns of measured numbers, and forcing
+ * them to a prose measure would trade a readable paragraph for a table that
+ * scrolls sideways on every screen. So the column is wide enough for the data
+ * and the text inside it is not.
+ *
+ * The palette is the report's own ink: the same near black, the same warm grey
+ * borders, the same off white paper, the same blue accent. A report generated
+ * by this tool and a page describing it should not look like two products.
+ */
+
+:root {
+  /* The report's accent blue, and the same green its passing badges use. */
+  --md-primary-fg-color: #1a4f8f;
+  --md-primary-fg-color--light: #2a78d6;
+  --md-primary-fg-color--dark: #143c6c;
+  --md-accent-fg-color: #2a78d6;
+
+  --triage-ink: #0b0b0b;
+  --triage-ink-muted: #52514e;
+  --triage-rule: #e1e0d9;
+  --triage-paper: #fcfcfb;
+  --triage-panel: #f6f5f1;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: var(--triage-paper);
+  --md-default-fg-color: var(--triage-ink);
+  --md-default-fg-color--light: var(--triage-ink-muted);
+  --md-typeset-color: var(--triage-ink);
+  --md-typeset-a-color: #1a4f8f;
+  --md-code-bg-color: var(--triage-panel);
+  --md-code-fg-color: #2f2e2b;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 220;
+  --md-typeset-a-color: #7fb2f0;
+  --md-accent-fg-color: #7fb2f0;
+  --triage-rule: #3a3d44;
+  --triage-panel: rgba(255, 255, 255, 0.04);
+}
+
+/* ----------------------------------------------------------------- measure */
+
+.md-grid {
+  max-width: 76rem;
+}
+
+.md-typeset {
+  font-size: 0.85rem;
+  line-height: 1.75;
+  letter-spacing: 0.002em;
+}
+
+/* The prose cap. Applied to the elements that hold sentences, and to nothing
+ * else, so a table or a code block keeps the whole column. */
+.md-typeset p,
+.md-typeset > ul,
+.md-typeset > ol,
+.md-typeset blockquote,
+.md-typeset .admonition > p,
+.md-typeset details > p {
+  max-width: 74ch;
+}
+
+.md-typeset p {
+  margin: 0 0 1.15em;
+}
+
+.md-typeset li {
+  margin-bottom: 0.45em;
+}
+
+.md-typeset li > p {
+  max-width: 70ch;
+}
+
+/* ---------------------------------------------------------------- headings */
+
+.md-typeset h1 {
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  margin-bottom: 1.1em;
+}
+
+.md-typeset h2 {
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin-top: 2.6em;
+  margin-bottom: 0.9em;
+  padding-top: 0.7em;
+  border-top: 1px solid var(--triage-rule);
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  margin-top: 2em;
+  margin-bottom: 0.7em;
+}
+
+.md-typeset h4 {
+  margin-top: 1.7em;
+  margin-bottom: 0.6em;
+}
+
+/* The first heading on a page has nothing above it to be separated from. */
+.md-typeset h1 + h2,
+.md-typeset h2:first-child {
+  border-top: 0;
+  margin-top: 0.8em;
+  padding-top: 0;
+}
+
+/* ------------------------------------------------------------------ tables */
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--triage-rule);
+  border-radius: 6px;
+  font-size: 0.94em;
+  line-height: 1.55;
+}
+
+.md-typeset table:not([class]) th {
+  font-weight: 620;
+  letter-spacing: 0.01em;
+  padding: 0.75em 1em;
+}
+
+.md-typeset table:not([class]) td {
+  padding: 0.7em 1em;
+  border-top: 1px solid var(--triage-rule);
+}
+
+.md-typeset__table {
+  margin: 1.9em 0;
+}
+
+/* -------------------------------------------------------- code and figures */
+
+.md-typeset pre > code {
+  padding: 1.05em 1.2em;
+  line-height: 1.6;
+}
+
+.md-typeset .highlight,
+.md-typeset pre {
+  margin: 1.7em 0;
+}
+
+.md-typeset code {
+  font-size: 0.86em;
+  border-radius: 4px;
+}
+
+.md-typeset img {
+  border-radius: 6px;
+  margin: 1.6em 0;
+}
+
+/* -------------------------------------------------------------- admonitions */
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-width: 0 0 0 3px;
+  border-radius: 6px;
+  box-shadow: none;
+  background: var(--triage-panel);
+  font-size: 0.94em;
+  margin: 1.9em 0;
+  padding-bottom: 0.35em;
+}
+
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+/* ------------------------------------------------------------- navigation */
+
+.md-nav {
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.md-nav__title {
+  font-weight: 620;
+}
+
+.md-nav__link {
+  margin-top: 0.5em;
+}
+
+.md-sidebar--secondary .md-nav__link {
+  margin-top: 0.4em;
+}
+
+/* The footer sits directly under a long argument; give it room. */
+.md-footer-meta {
+  font-size: 0.72rem;
+}

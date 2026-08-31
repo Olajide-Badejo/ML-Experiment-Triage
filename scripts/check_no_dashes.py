@@ -1,15 +1,23 @@
-"""Repo wide guard against em dashes, en dashes, and LaTeX dash ligatures.
+"""Prose wide guard against em dashes, en dashes, and LaTeX dash ligatures.
 
-Ground rule 1 of this project forbids U+2014 and U+2013 anywhere in the
-repository, including inside the compiled PDFs. LaTeX turns ``--`` into an en
-dash and ``---`` into an em dash, so plain ASCII source can still smuggle a
+Ground rule 1 of this project forbids U+2014 and U+2013 in the text this
+project writes, including inside the compiled PDFs. LaTeX turns ``--`` into an
+en dash and ``---`` into an em dash, so plain ASCII source can still smuggle a
 dash into a PDF. This script therefore runs three checks:
 
-1. every text file is scanned for the forbidden code points;
+1. every prose or source file is scanned for the forbidden code points;
 2. every ``.tex`` and ``.bib`` file is scanned for runs of two or more hyphens
    outside verbatim style environments, which is how the ligature sneaks in;
 3. every ``.pdf`` is converted with ``pdftotext`` and the extracted text is
    scanned for the forbidden code points.
+
+**The scope is prose, not data.** ``.json``, ``.csv`` and ``.jsonl`` are
+deliberately not scanned. A rule about typography in English writing has no
+business rewriting a fixture, a config, or a log row: those files record what
+some other system produced, and a dash inside one is content that this project
+is carrying rather than text that this project wrote. Scanning them meant the
+only way to keep a fixture containing a legitimate dash was to corrupt the
+record it existed to be.
 
 Exit status is 0 when the repository is clean and 1 when anything is found.
 """
@@ -27,6 +35,13 @@ from pathlib import Path
 # Written as escapes so this file never contains the characters it bans.
 # U+2010 and U+2011 are deliberately absent: they are hyphens rather than
 # dashes, and pdftotext legitimately emits U+2010 for a typeset hyphen.
+#
+# The three CJK compatibility forms that used to sit here (U+FE58, U+FE63,
+# U+FF0D) are gone for the same reason. U+FF0D is the fullwidth spelling of an
+# ASCII hyphen and U+FE63 its small form: banning them made a Japanese or
+# Chinese string a violation of a rule about typography in English prose, which
+# is not a rule this project has. Nothing here has ever written one, so the
+# entries were unreachable as well as wrong.
 FORBIDDEN: dict[str, str] = {
     "\u2012": "FIGURE DASH",
     "\u2013": "EN DASH",
@@ -34,9 +49,6 @@ FORBIDDEN: dict[str, str] = {
     "\u2015": "HORIZONTAL BAR",
     "\u2e3a": "TWO EM DASH",
     "\u2e3b": "THREE EM DASH",
-    "\ufe58": "SMALL EM DASH",
-    "\ufe63": "SMALL HYPHEN MINUS",
-    "\uff0d": "FULLWIDTH HYPHEN MINUS",
 }
 
 EXCLUDED_DIRS = {
@@ -44,12 +56,21 @@ EXCLUDED_DIRS = {
     ".venv",
     ".ruff_cache",
     ".pytest_cache",
+    ".mypy_cache",
     "__pycache__",
     "node_modules",
     "build",
+    "dist",
     "_minted",
+    # Local working material. git already hides it, so this only matters on the
+    # fallback walk used when the guard is run outside a checkout.
+    "private",
 }
 
+# Prose and the source that carries prose: docstrings, comments, templates,
+# help text and configuration a person reads. `.json`, `.jsonl` and `.csv` are
+# absent on purpose (see the module docstring): they hold data rather than
+# writing, and this guard has no standing over what another system logged.
 TEXT_SUFFIXES = {
     ".py",
     ".md",
@@ -63,12 +84,9 @@ TEXT_SUFFIXES = {
     ".ini",
     ".yml",
     ".yaml",
-    ".json",
     ".html",
     ".css",
     ".js",
-    ".jsonl",
-    ".csv",
     ".sh",
     ".gitignore",
 }
@@ -184,6 +202,23 @@ def git_tracked_files(root: Path) -> list[Path] | None:
     return [root / name for name in result.stdout.split("\0") if name]
 
 
+def is_excluded(path: Path, root: Path) -> bool:
+    """True when `path` lies under one of `EXCLUDED_DIRS` inside `root`.
+
+    The names in `EXCLUDED_DIRS` are directories of this repository, so they
+    only mean anything relative to the tree being scanned. Matching them
+    against the absolute path instead made the guard's answer depend on where
+    the tree happened to sit: on macOS a temporary directory is
+    `/private/var/folders/...`, whose first component is `private`, so every
+    file under one was skipped and the guard reported a clean scan of nothing.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in EXCLUDED_DIRS for part in parts)
+
+
 def iter_files(root: Path) -> list[Path]:
     tracked = git_tracked_files(root)
     candidates = tracked if tracked is not None else list(root.rglob("*"))
@@ -191,7 +226,7 @@ def iter_files(root: Path) -> list[Path]:
     for path in sorted(candidates):
         if not path.is_file():
             continue
-        if any(part in EXCLUDED_DIRS for part in path.parts):
+        if is_excluded(path, root):
             continue
         files.append(path)
     return files

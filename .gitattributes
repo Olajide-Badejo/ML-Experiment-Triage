@@ -15,5 +15,10 @@ Makefile text eol=lf
 *.pdf binary
 *.png binary
 *.db binary
+*.npy binary
 *.tfevents.* binary
-tests/fixtures/tensorboard/** binary
+# The event file only, not the whole directory. `config.json` sits beside it
+# and is ordinary text: marking it binary froze the CRLF that the Windows
+# generator had written into the object store, where no Linux or macOS run of
+# the generator could ever reproduce it.
+tests/fixtures/tensorboard/**/events.out.tfevents.* binary

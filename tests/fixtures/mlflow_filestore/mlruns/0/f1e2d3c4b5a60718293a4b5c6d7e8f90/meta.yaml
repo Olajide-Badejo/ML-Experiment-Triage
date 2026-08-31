@@ -1,0 +1,15 @@
+artifact_uri: file:///mlruns/0/f1e2d3c4b5a60718293a4b5c6d7e8f90/artifacts
+end_time: 1700000059000
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: f1e2d3c4b5a60718293a4b5c6d7e8f90
+run_name: mlflow_filestore_run
+run_uuid: f1e2d3c4b5a60718293a4b5c6d7e8f90
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1700000000000
+status: 3
+tags: []
+user_id: fixture

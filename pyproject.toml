@@ -1,13 +1,19 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 is the floor for PEP 639: the SPDX `license` string and `license-files`
+# below are errors on anything older, and the table and classifier spellings
+# they replace are deprecated with a removal date of 2027-02-18.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ml-experiment-triage"
-version = "1.0.0"
+# Read from `triage/_version.py`, so the number is written once. See
+# [tool.setuptools.dynamic] below.
+dynamic = ["version"]
 description = "Ranked, significance tested comparison of machine learning training runs."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Olajide Badejo" }]
 requires-python = ">=3.12"
 keywords = [
@@ -18,23 +24,89 @@ keywords = [
     "hypothesis-testing",
     "tensorboard",
 ]
+# No `License :: OSI Approved` classifier: with a PEP 639 `license` string
+# above, setuptools>=77 rejects the pair rather than reconciling them.
 classifiers = [
-    "License :: OSI Approved :: MIT License",
+    # Published API, one downstream consumer, and no PyPI release yet. Stable
+    # is a claim about how this has behaved in other people's hands, and this
+    # has not been in other people's hands.
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    # Ships py.typed. The consumer's mypy configuration carries an
+    # `ignore_missing_imports` override for `triage.*` that exists only because
+    # this was missing, and which they can now delete (E1).
+    "Typing :: Typed",
 ]
+# Core is numpy and scipy, and nothing else (E1). The one downstream project
+# that depends on this one uses the statistics layer over JSONL rows: pandas,
+# tensorboard, plotly and jinja2 are most of the install and none of the value
+# for that use, so they moved into extras and the modules that need them import
+# them at the point of use. `pip install ml-experiment-triage` therefore gets a
+# working statistics API and JSONL parser; everything else is opt in.
+#
+# These two floors are the versions the calibration was measured against, not
+# the oldest that might work. Every number this package publishes came out of
+# them, and a floor that has never been installed is a guess written as a fact
+# (D30). The `ranges` CI job installs from these declarations alone, so the
+# ceiling is exercised on every run rather than assumed.
 dependencies = [
-    "numpy>=1.26",
-    "pandas>=2.1",
-    "scipy>=1.11",
-    "plotly>=5.18",
-    "jinja2>=3.1",
-    "tensorboard>=2.15",
-    "tqdm>=4.66",
+    "numpy>=2.5",
+    "scipy>=1.18",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "ruff>=0.5"]
+# Log formats beyond JSONL. pandas reads the CSV shapes and tensorboard reads
+# event files; tqdm draws the ingest bar and its absence is not an error. The
+# pandas floor is the measured one for the same reason as numpy and scipy: it
+# decodes the numbers. The other two touch no result, so their floors stay at
+# the oldest this project has ever asked anything of.
+parsers = ["pandas>=3.0", "tensorboard>=2.15", "tqdm>=4.66"]
+# The HTML report. plotly is upper bounded on purpose: the report is required to
+# be byte identical across two builds from one database, and the Plotly runtime
+# is inlined into it verbatim, so the version of that bundle is part of the
+# output. A floor of 5.18 let an installation produce a file that differed from
+# the committed one in several megabytes of vendored JavaScript (D27).
+report = ["plotly>=6.9,<7", "jinja2>=3.1"]
+# The `triage` command needs to read logs and write reports, so it is the two
+# above under one name.
+cli = ["ml-experiment-triage[parsers,report]"]
+# Static image export for the agentic and documentation paths (Section 5).
+agentic = ["choreographer>=1.3"]
+all = ["ml-experiment-triage[cli,agentic]"]
+dev = [
+    "ml-experiment-triage[all]",
+    "build>=1.2",
+    # The property suite. A development and CI dependency only: nothing this
+    # package ships imports it, and a user installing the wheel must not be
+    # asked to carry a test framework (D30).
+    "hypothesis>=6.100",
+    # The documentation site (Section 7 item 1). Development and CI only: it
+    # builds the site, it is not imported by anything shipped. mkdocstrings
+    # renders the docstrings that already exist rather than a second copy of
+    # them, which is the whole reason the site is allowed to make a claim.
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mypy>=1.11",
+    "nox>=2024.4.15",
+    # The commit hooks in .pre-commit-config.yaml. Optional to use and pinned
+    # here so that the version a contributor gets is the version the config was
+    # written against.
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.16",
+    "twine>=5.0",
+    # The resolver that produces `pylock.toml` and the installer that reads it
+    # back. Declared here so that the lock covers the tool that wrote it, and so
+    # `pip install ml-experiment-triage[dev]` is still a complete development
+    # environment for somebody who does not have uv on their machine yet.
+    "uv>=0.9",
+]
 
 [project.scripts]
 triage = "triage.cli:main"
@@ -44,15 +116,39 @@ Homepage = "https://github.com/Olajide-Badejo/ML-Experiment-Triage"
 Repository = "https://github.com/Olajide-Badejo/ML-Experiment-Triage"
 Issues = "https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues"
 
+[tool.setuptools.dynamic]
+# `triage._version` is a literal and imports nothing, so setuptools reads it
+# with the AST and never has to import the package. Pointing this at
+# `triage.__version__` would: that value is computed, so setuptools would fall
+# back to importing `triage/__init__.py` inside the isolated build environment,
+# where numpy and scipy are not installed.
+version = { attr = "triage._version.VERSION" }
+
 [tool.setuptools.packages.find]
 include = ["triage*"]
 
 [tool.setuptools.package-data]
 "triage.report" = ["templates/*.html"]
+# PEP 561. Without this the marker is in the source tree and not in the wheel,
+# which is the same as not having it.
+"triage" = ["py.typed"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# `ruff format` reformats Python code blocks inside Markdown as well as Python
+# files. That is wanted for the documents this project writes and wrong for the
+# ones it is written FROM: reformatting a specification to this project's line
+# length changes the document the work is being checked against. `private/` is
+# already covered by .gitignore, which ruff respects; these are named because
+# they sit in the checkout unignored.
+extend-exclude = [
+    "ML_Experiment_Triage_V2.md",
+    "*_Alignment.md",
+    "CLAUDE*.md",
+    "BOARD.md",
+    "tasks/",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
@@ -61,9 +157,70 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
 
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["triage"]
+# Unreachable code is a defect rather than a style question here, with one
+# structural exception: the `else` branch of every `if TYPE_CHECKING` block
+# that binds a lazy module (E1) is unreachable BY CONSTRUCTION, since mypy
+# reads TYPE_CHECKING as true. Turning this on would flag those four bindings
+# and nothing else, so it stays off and the lazy bindings stay honest.
+warn_unreachable = false
+
+# These packages ship no type information, so mypy cannot see into them. Listed
+# one by one rather than as a global `ignore_missing_imports`, so that a new
+# untyped dependency is a decision somebody makes rather than a silence they
+# inherit. Nothing here suppresses a finding about this project's own code:
+# `triage` itself is checked under --strict with no per module exceptions.
+[[tool.mypy.overrides]]
+module = [
+    # The screenshot recompression of D35a, which the agentic demo does when an
+    # imaging library happens to be installed and skips when there is none. It
+    # is deliberately not a declared dependency of any extra: the capture is at
+    # scale 1 either way, which is most of the saving.
+    "PIL",
+    "PIL.*",
+    "pandas",
+    "pandas.*",
+    "plotly",
+    "plotly.*",
+    "scipy",
+    "scipy.*",
+    "tensorboard.*",
+    "tqdm",
+    "tqdm.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "slow: calibration tests that run thousands of permutations",
+    # Section 6.6. Skipped automatically when `health()` fails, which is every
+    # machine without a local Ollama and therefore every CI runner. `pytest -m
+    # ollama` is how it is run deliberately, once before a release.
+    "ollama: tests that talk to a real local Ollama, skipped when there is none",
+    # Section 5.4. Skipped automatically when no Chromium is installed, which is
+    # every CI runner that has not asked for one. `pytest -m browser` runs them
+    # deliberately; the `--no-browser` half of the same demo runs everywhere.
+    "browser: tests that drive a real headless Chrome, skipped when there is none",
 ]
-filterwarnings = ["ignore::DeprecationWarning"]
+# A deprecation is an error, and the exceptions are named by the module that
+# emits them. The blanket `ignore::DeprecationWarning` this replaces silenced
+# this package's own deprecations too, so the one deprecation currently in
+# flight (RegressionConfig's old threshold keyword, E2) could have been stepped
+# on anywhere in the suite and nothing would have said so.
+#
+# The two exceptions are the tensorboard and protobuf stack, which this project
+# vendors nothing of and can act on nothing in. Neither fires on the machine
+# this was written on; they are here because that stack emits interpreter
+# version dependent deprecations and the CI matrix spans two Python versions
+# and three operating systems, where a warning nobody can fix would otherwise
+# fail a run for a reason unconnected to the change under test. Every other
+# module, first party included, is an error.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "ignore::DeprecationWarning:google.*",
+    "ignore::DeprecationWarning:tensorboard.*",
+]

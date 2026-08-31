@@ -270,3 +270,387 @@ later cannot shift the numbers of the conditions before it.
 
 **Verification.** `make verify-demo` rebuilds the sweep from its seeds and checks
 all twelve verdicts against the committed record to four decimal places.
+
+---
+
+## 2026-08-30: the published calibration was measuring one design out of six
+
+**Symptom.** None visible, which is the point. Every gate was green and every
+number in the README, the report and the HTML footer was reproducible. The suite
+was measuring five seeds a side, one spread, Gaussian noise: the one design a
+permutation test is exact in, and therefore the design least able to notice that
+the statistic underneath it had just changed.
+
+**Root cause.** Two of them, and they compound. The arms had been chosen when the
+raw mean difference was the permuted statistic and balanced designs were all that
+was tested, so nothing in the suite could see the failure that motivated
+studentizing (D12). Separately, the block length multiplier of three had been
+fixed by measurement against an autocorrelation time that part 03 then corrected:
+tau had been estimated on the smoothed window, where a nine point moving average
+leaves white noise looking correlated over nine points. Correcting tau left the
+multiplier attached to nothing.
+
+**Options.** (a) Publish the new statistics against the old arms. Rejected: it
+would have meant claiming a calibration for designs never measured. (b) Add the
+arms and gate them all at [2, 8] percent. Rejected after measuring: three runs of
+a wide condition against seven of a narrow one measures 12.92 percent, and a gate
+it cannot meet is either a permanently red build or, worse, an invitation to
+widen the gate quietly later. (c) Add the arms, gate each regime at what its own
+measurement supports, and publish every rate whether or not it flatters. Taken.
+
+**Fix and why.** Six new arms, 1200 null cases per design cell, 1000 paired and
+500 on macro F1, all deterministic. Before is the number published in v1.0.0 or,
+where the arm is new, the rate the unstudentized statistic measured in the same
+cell as recorded in the defect register.
+
+| Arm | Before | After |
+|---|---|---|
+| Type I, seed replicated, 5v5 | 4.53 percent | 4.53 percent |
+| Type I across seed sigma 0.005 to 0.05 | 4.40, 4.70, 5.00 | 4.40, 4.70, 5.00 |
+| Power, seed replicated | 96.25 percent | 96.25 percent |
+| Type I, window block | 5.81 percent, 1928 cases, 72 refused | 6.28 percent, 1989 cases, 11 refused |
+| Power, window block | 100 percent, 291 cases | 100 percent, 300 cases |
+| Null p uniformity at 0.05/0.10/0.25/0.50 | 0.058, 0.099, 0.241, 0.485 | 0.0580, 0.0993, 0.2407, 0.4847 |
+| Weak mode cost at seed sigma 0.01/0.02/0.04 | 53.2, 77.0, 87.4 percent | 54.3, 76.6, 87.7 percent |
+| Seed replicated on the same seed variance | 4.4, 4.7, 5.0 (a different arm) | 4.1, 3.8, 4.1 percent |
+| Unequal spread, 5 narrow against 5 wide | 8.25 percent, unstudentized | 7.83 percent |
+| Unequal spread, 3 narrow against 7 wide | 1.08 percent, unstudentized | 2.08 percent |
+| Unequal spread, 7 narrow against 3 wide | 17.92 percent, unstudentized | 12.92 percent |
+| Unequal counts only, 7 against 3 | not measured | 4.25 percent |
+| Heavy tailed noise, Student t at 3 df | not measured | 5.00 percent |
+| Paired clustered, 10 clusters of 4 | not measured | 4.90 percent |
+| The same data, clustering ignored | not measured | 12.10 percent |
+| Paired clustered on macro F1 | not measured | 2.00 percent |
+
+Three gates, because the three regimes differ and one gate would have had to be
+either dishonest about the worst cell or useless on the best. Equal spreads and
+heavy tails keep [2, 8] percent. Unequal spreads with five or more runs a side
+get [2, 10]: studentizing is asymptotic in the number of runs and five a side
+lands near nominal rather than on it. Unequal spreads with fewer than five runs
+on one side get [1, 15], set so the defect it exists to catch fails it, since the
+raw mean difference measured 17.92 percent there. The macro F1 arm gates on its
+upper bound alone: a statistic that discrete cannot produce a uniform p value, so
+it is conservative, and conservative is the safe direction.
+
+The two numbers in the weak mode cost table were measured at different seed
+deviations from each other until now. The strong column was borrowed from the
+seed variance sweep, at 0.005, 0.02 and 0.05, and printed against rows labelled
+0.01, 0.02 and 0.04. The numbers were close and the mislabelling was invisible,
+which is exactly the kind of thing this suite exists to stop; both columns now
+come out of one arm at one set of deviations.
+
+**The block length multiplier, re-derived.** Swept over 2000 null cases a point
+with the corrected tau estimate, against the refusal rate on runs of a realistic
+length at rho 0.8:
+
+| Multiplier | Type I | Refused of 2000 | Refused at 4000 steps |
+|---|---|---|---|
+| 2 tau | 8.85 percent | 1 | 0 percent |
+| 3 tau | 7.02 percent | 5 | 6 percent |
+| 4 tau | 6.28 percent | 11 | 20 percent |
+| 5 tau | 6.09 percent | 46 | 40 percent |
+| 6 tau | 6.03 percent | 108 | 78 percent |
+
+The error rate is asymptotic at about 6 percent, so four tau takes three quarters
+of the correction that is available at all and every longer block takes almost
+nothing while refusing far more comparisons. Two tau is outside the gate
+altogether. Four is what the mode now uses. It is the one constant here that
+should be expected to move again if the window statistic changes.
+
+**Verification.** `pytest tests/statistics -q -s`, 17 passed in 110 s on the
+machine in the README, every gate green on its own measurement. The full suite is
+303 passing in 130 seconds. Every published number is rendered from `triage/calibration.py`:
+the LaTeX tables through `scripts/gen_report_assets.py` and the Markdown through
+`scripts/render_calibration_docs.py`, whose `--check` mode runs in CI so the two
+sides cannot drift apart again.
+
+**A defect found on the way.** The dash guard failed on the rebuilt main report.
+`RegressionConfig.describe()` prints the flag `--fdr`, and TeX sets two hyphens
+as an en dash, so the abstract of the PDF carried a banned character and, worse,
+the wrong flag. `escape()` in the asset generator now breaks the ligature. The
+guard caught it in the compiled PDF, which is the reason it reads PDFs at all.
+
+---
+
+## 2026-08-30: a 400 from a running Ollama was reported as "no Ollama"
+
+**Symptom.** The first end to end run of `make demo-autofill` against the real
+service printed
+
+    error: no Ollama at http://localhost:11434 (HTTP Error 400: Bad Request).
+    Start it with `ollama serve`
+
+while Ollama was running, answering `/api/tags`, and holding two models in VRAM.
+The advice was to restart a service that was working.
+
+**Root cause.** Two bugs stacked, and the outer one hid the inner one.
+
+`urllib.error.HTTPError` subclasses `URLError` which subclasses `OSError`, so the
+`except (URLError, OSError)` that turns a refused connection into
+`LlmUnavailableError` was also catching every 4xx and 5xx the server sent. A
+response is the opposite of an absent service, and the message threw away the
+body, which is where Ollama had put the actual explanation.
+
+The 400 underneath it was real: this build of Ollama serves an `/api/embed`
+batch of about 288 inputs and fails above roughly 300, with the runner reporting
+`Post "http://127.0.0.1:PORT/tokenize": connection refused`. Its embedding runner
+subprocess dies and restarts, and the next smaller batch succeeds. Verified
+repeatedly at 300, 512 and 900 inputs, each time with a 128 input batch
+succeeding immediately afterwards, and at 128, 256, 257 and 288 succeeding
+throughout. The batch size here was 512, chosen on the reasoning that the
+endpoint takes an array and one request beats nine hundred, with no measurement
+behind the specific number.
+
+**Options.** (a) Catch `HTTPError` first and lower the batch size. (b) Retry a
+failed batch at half the size, which would hide a server that is unwell behind a
+slower path that usually works. (c) Send one text per request, which is the
+design this endpoint exists to avoid and would have made the corpus embedding
+463 round trips instead of four.
+
+**Fix and why.** Option (a), both halves. `HTTPError` is now caught ahead of
+`OSError`: a 404 is an `LlmUnavailableError` naming `ollama pull`, and any other
+status is an `LlmProtocolError` carrying Ollama's own `{"error": ...}` text and
+saying plainly that restarting the server will not help. And
+`DEFAULT_BATCH_SIZE` is 128, which is comfortably under the measured boundary and
+still makes the de_DE training split four requests rather than 463. The number
+is now a measurement with the measurement written beside it.
+
+**Verification.** Three unit tests drive a fake transport that raises a real
+`HTTPError`: a 400 whose message survives and does not mention `ollama serve`, a
+404 that names the pull command, and a non JSON error body that is still
+reported. The demo then ran end to end against the real service.
+
+---
+
+## 2026-08-30: the Section 2 co residency question, answered
+
+**The question.** Section 2 left one thing unverified: whether Ollama keeps the
+12B chat model and the embedder simultaneously resident on a 12,227 MiB card.
+The arithmetic said yes, 7.5 GB plus 0.6 GB plus caches, and the fallback if it
+did not was sequential loading, which the batch design already permits.
+
+**Measured**, during `triage llm annotate` on the real service, with
+`/api/ps` and `nvidia-smi` sampled while the annotation was running:
+
+| Model | Resident | In VRAM |
+|---|---|---|
+| `mistral-nemo:12b-instruct-2407-q4_K_M` | 7.88 GB | 7.88 GB |
+| `embeddinggemma:300m` | 0.68 GB | 0.68 GB |
+
+`nvidia-smi` reported **9,207 MiB of 12,227 MiB** in use at the same moment, with
+both models fully on the GPU and neither offloaded. No eviction was observed
+across a 460 second annotation pass that alternated embedding and generation.
+
+**Conclusion.** Co residency holds on this card at the default 4096 token
+context. The sequential loading fallback is not needed and is not implemented as
+a special case; the batch design that would have made it work is there anyway,
+because embedding the corpus in one pass before any generation is simply the
+faster order.
+
+---
+
+## 2026-08-30: the LLM layer, measured
+
+Recorded because Section 6.6 asks for the real service run to be in the log
+rather than only in the docs. Machine: RTX 5070, 12,227 MiB; Ollama 0.32.14;
+`mistral-nemo:12b-instruct-2407-q4_K_M` and `embeddinggemma:300m`.
+
+**The ablation, which is the claim.** `triage llm annotate --ablation` scored 90
+de_DE validation fields twice and had the comparison layer judge the difference:
+
+| Arm | Macro F1 | Requests | Wall clock |
+|---|---|---|---|
+| Zero shot | 0.8007 | 90 | 221.1 s |
+| Retrieval augmented, k = 8 | 0.8879 | 0 (90 cache hits) | 0.0 s |
+
+Verdict **improvement, p 0.0079, adjusted p 0.0212**, +0.0872 macro F1 over 5
+bootstrap replicates. Retrieval augmented few shot selection is worth having on
+this task, and the number is a verdict from `compare_all` rather than a claim.
+
+**Against the other engines**, same split: keyword rules 0.7420 macro F1, n gram
+model 0.9381, LLM 0.8879. Both learned engines beat the rules at p 0.0079. The
+pure numpy classifier beats the 12B model and answers in microseconds against
+its 5.04 seconds a field, which is worth stating plainly: the LLM is a useful
+third condition here, not the best one.
+
+**The cache round trip.** The retrieval arm above made zero HTTP calls because a
+previous run had asked those exact questions. 90 of 90 served from
+`llm_responses`, identical answers, 0.0 s. That is the reproducibility property
+of 6.3 observed rather than asserted.
+
+**Retrieval latency**, 463 de_DE training vectors at 256 dimensions, a 0.47 MB
+matrix: exact brute force search at k = 8 costs a mean of **15.5 us** (median
+14.9, p95 18.6, n = 2000), reading the whole cached corpus out of SQLite costs
+1.7 ms, and the HTTP round trip that produces the query vector costs 2,233 ms.
+The search is about 144,000 times cheaper than embedding the query it searches
+with. That is the whole argument against a vector database at this scale, and it
+is in `docs/llm.md` in one line.
+
+**Wall clocks.** Corpus generation and the sweep of 18 runs: 3.7 s. Model and
+heuristic evaluation: under a second. LLM annotation of 90 fields on a cold
+cache: 459.1 s (5.1 s a field), and 0.0 s on a warm one. The whole
+`make demo-autofill` chain: 460.5 s with the LLM step, 16.5 s without it.
+
+---
+
+## 2026-08-30: the agentic demo, in a real browser
+
+Section 5.4 asks for the demo to be run on a real machine and the wall clock
+recorded here rather than only in the docs. Machine: Windows 11, Chrome
+151.0.7922.174 found by choreographer 1.3.0, headless, one browser process for
+all six pages; Ollama 0.32.14 with `mistral-nemo:12b-instruct-2407-q4_K_M` for
+the third arm.
+
+**What was run.** A 4,000 field corpus at seed 0 (six pages, three templates in
+two locales, 71 inputs between them), the thirty run sweep, one evaluation over
+both locales to export `policy.json`, then `triage autofill agentic` three
+times into one output directory, once per engine, filling under the exported
+`per_type_threshold` policy.
+
+| Step | Wall clock |
+|---|---|
+| `autofill generate` (4,000 fields) plus `autofill sweep` (30 runs) | 21 s |
+| `autofill evaluate --locale all --bootstrap 5` | 1 s |
+| `autofill agentic --policy heuristic` (6 pages, browser) | 0.7 s |
+| `autofill agentic --policy model` (6 pages, browser, plus the screenshot) | 0.8 s |
+| `autofill agentic --policy llm` (6 pages, browser, cold cache) | 434.1 s |
+| The same LLM arm on a warm cache | 0.9 s |
+| `ingest` 90 run directories plus `compare` | under 2 s |
+
+**The result table**, 71 fields over six pages, scored against `data-truth`
+read back out of the DOM:
+
+| Engine | Filled | Fill accuracy | Reward per field | Correction cost |
+|---|---:|---:|---:|---:|
+| Keyword rules | 30 | 0.8667 | 0.2394 | 0.0563 |
+| n gram model | 64 | 1.0000 | 0.9014 | 0.0000 |
+| Local LLM, kNN k = 8 | 42 | 0.9286 | 0.4789 | 0.0423 |
+
+Handed to `triage compare` with no autofill specific flag, baseline `rules`:
+`ngram` +151.40% on `task/reward` (p 0.0001, adjusted 0.0002) and +28.19% on
+`task/fill_accuracy` (adjusted 0.0002); `llm` +62.07% and +18.44% (adjusted
+0.0033 and 0.0195). Both learned engines beat the keyword baseline on the task
+metric, and the pure numpy model beats the 12B model at six orders of magnitude
+less wall clock a field, which is the same ordering the validation split gave.
+
+**Two things the browser found that a dictionary would not have.** The first
+run refused every page with "relative path can't be expressed as a file URI",
+because a `file://` URI is absolute by definition and `--pages
+experiments/results/.../pages` is not; the fix is one `resolve()` and there is
+now a test that opens a page by a relative path. The second was cosmetic and
+still worth having: the capture was the emulated 1000 by 900 window rather than
+the page, so a third of the committed PNG was white. The capture now crops to
+the body's box, which is D35a's argument applied to a screenshot nobody had
+taken yet.
+
+**The screenshot.** `assets/images/agentic-demo.png`, the en_US checkout page
+after the model filled it: 1000 pixels wide at device scale factor 1 (D35a),
+recompressed at zlib level 9, **21.8 KB**. For comparison, the same capture at
+the full window height before the crop was 23.5 KB and at scale 2 would have
+been about four times that.
+
+**Cache round trip.** The LLM arm was run twice. The second pass served 71 of 71
+answers from `llm_responses`, made zero HTTP requests, took 0.9 s against
+434.1 s, and wrote a byte identical summary. That is the reproducibility
+property of 6.3 holding for a browser driven run as well as for a split.
+
+## 2026-08-31: cross repo verification of the built wheel
+
+Section 9 item 4 of the build specification asks for the wheel to be proved
+against its real consumer rather than against this repository's own idea of it.
+This is that run. Nothing in `triage/` and nothing in the consumer's checkout
+was changed to make any of it pass, which is the only arrangement under which
+the two disagreements below could have been found rather than papered over.
+
+**The wheel.** `nox -s package` from the v1.1.0 tree built
+`ml_experiment_triage-1.1.0-py3-none-any.whl`
+(sha256 `2d68af04fcd0cb35753dc54db7ab1d989983daf019924235634186ada051133f`,
+52 members, `triage/py.typed` among them), passed `twine check --strict`, and
+passed both smoke installs, the `[cli]` one and the bare core one.
+
+**The consumer.** `Autofill_audit` at `7e30a44`, cloned shallow into a scratch
+directory, into a fresh `py -3.14` virtual environment installed from its own
+`requirements.lock`. That lock pins us as `ml-experiment-triage @
+git+...@v1.0.0`, so the environment was first brought up on the version they
+actually consume, measured there, and only then had the wheel swapped in. The
+swap installed nothing else: `numpy>=2.5` and `scipy>=1.18` were already
+satisfied by their lock, and `pip check` found no broken requirements, which is
+E1 holding at the only place it matters.
+
+| Gate | On v1.0.0 | On the v1.1.0 wheel |
+|---|---|---|
+| `tests/unit/test_triage_bridge.py` | 14 passed, 0 failed | 14 passed, 0 failed |
+| sole importer AST gate plus the private name gate | 2 passed | 2 passed |
+| `probe_native_ingestion` on a real 2,317 row `run.jsonl` | claimed, not parsed | claimed, not parsed |
+
+**Their suite is green, and one of those greens is a finding.** They wrote
+`test_the_harness_claims_the_run_log_and_cannot_read_it` to FAIL the day we
+learned to read their file, with a comment saying the right response is to
+delete their local scaffolding rather than relax the assertion. It still
+passes, because `probe_native_ingestion` names `JsonlParser` and we deliberately
+left `JsonlParser` refusing a step free file: the new path is `OutcomesParser`,
+a different class. So the CHANGELOG sentence "a `probe_native_ingestion`
+scenario should flip from refused to supported" is true of the scenario and not
+of their function. The flip is one import line on their side and cannot happen
+without one. Their `analysis.json` also records the refusal detail verbatim, and
+that string changed: `records carry no step field; expected one of step,
+global_step, iteration, iter, epoch` became `run.jsonl: no record carries a step
+field; expected one of ...`. Their assertion is `"step" in detail`, so it
+survives, but a stored artifact of theirs will differ.
+
+**The documented join key does not work on their data.** This is the one to fix
+here. The CHANGELOG, `docs/autofill.md` and this repository's fixture all write
+the E5 example as `pair_on("form_id", "engine", "rules", "ngram")`. Run against
+`experiments/results/test/.../run.jsonl` it raises `SeriesError: 'form_id' is
+not unique within 'rules'`, and it is right to. Their schema is one row per
+classified FIELD; a form holds between 3 and 23 fields. Their real file has
+2,317 rows over 240 form ids, 270 selectors, 2,317 distinct `(form_id,
+selector)` pairs and 10 templates. The unit key is the pair, not the form.
+
+Our fixture `tests/fixtures/outcomes/autofill_run/run.jsonl` did not catch this
+because it is not the file the CHANGELOG says it is. It holds 48 rows, one per
+`(engine, form_id)`, and 11 of the 25 keys their writer emits: no `selector`, no
+`engine_describe`, no `signals`, no `finding_codes`, none of the nulls. It was
+generated from the abridged snippet in the specification rather than copied from
+their output, so it models a form as the unit of analysis, which is the one
+thing their own module docstring says the schema is not. "The fixture in this
+repository is a copy of yours, verbatim" is not accurate and the join key it
+taught is wrong for their data.
+
+Everything downstream of the key is right. With the unit spelled `form_id`
+plus `selector`, their real pair of run logs joins 2,317 rows to 2,317, and
+`paired_permutation` over `correct` clustered by `template_id` returns
+`mode="paired_cluster"`, rules 0.7678 against ngram 0.8226, p 0.00390625 exact
+over 1,024 arrangements with `min_attainable_p` 0.001953125. The parser reads
+their unmodified file whole: nested `engine_describe`, list valued `signals`
+and `finding_codes` and the nulls all land as group keys, 2,317 rows, four
+measured fields. The refusal half holds by name: `compare_window_block` and
+`compare_all` both raise `ComparisonError` naming `paired_permutation`, and
+`triage ingest` on their two run directories reports "2 added, 2 of them outcome
+files, 4,634 rows" with the same advice per run. Their own mode string
+`template_clustered_paired` now labels and serialises instead of raising
+(E3), `classify` returns in input order with `finding.result is result` (E4),
+and the absolute practical gate constructs (E2).
+
+**TPT (E6).** `experiments/results/canonical/health/healthy_steps.jsonl` from
+the sibling checkout, 2,001 lines, copied to a temp directory and ingested
+unmodified. One run, 24 series, 42,120 points, `malformed_lines: 0`,
+`records: 2001`, `records_without_step: 1`. The environment header was skipped
+and counted, exactly as E6(a) asks. `data_ms` is `null` on every row and is
+absent from the series rather than zero, which is E6(c). Two caveats worth
+writing down: no file in that checkout contains the `"NaN"`, `"Infinity"` or
+`"-Infinity"` string literals of E6(b), and none carries a second environment
+header, so both of those paths are still exercised only by our own fixtures and
+by their `docs/schema.md`. And `row_schema_version` is on every record, so it
+was read as a 2,000 point metric series whose value is always 2. Harmless, and
+noise in a tag list.
+
+**Two smaller notes.** Specification E2 asks for the old `practical_threshold`
+constructor keyword to be accepted with a deprecation warning for one minor
+version; v1.0.0's field was already `practical_threshold_pct`, so the alias we
+ship and describe in the CHANGELOG is for a spelling no release ever had.
+Harmless, and the CHANGELOG sentence overstates it. Second, `mypy --strict`
+could not be run in the scratch environment at all: its compiled extension
+fails to load from a path that deep on Windows. `triage/py.typed` is in the
+wheel and on disk in their site-packages, so E1's typing half is verified by
+presence rather than by their checker.

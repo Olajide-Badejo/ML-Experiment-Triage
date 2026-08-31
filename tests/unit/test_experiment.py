@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from triage.analysis.comparison import group_by_variant
 from triage.core.experiment import Experiment, MetricSeries, SeriesError
 
 
@@ -88,6 +89,33 @@ def test_seed_replicates_share_a_variant_key() -> None:
     assert a.variant_key == b.variant_key
     assert a.variant_key != c.variant_key
     assert (a.seed, b.seed) == (0, 1)
+
+
+def test_int_and_float_spellings_of_one_value_are_one_condition() -> None:
+    """D21h: a JSON log writing 32.0 and a YAML one writing 32 are one condition.
+
+    `repr()` spelled them `32` and `32.0`, which split a five seed condition
+    into singletons that silently fell back to the weaker single run mode.
+    """
+    integral = experiment({"batch_size": 32, "learning_rate": 0.001, "seed": 0}, "a")
+    fractional = experiment({"batch_size": 32.0, "learning_rate": 0.001, "seed": 1}, "b")
+    assert integral.variant_key == fractional.variant_key
+    grouped = group_by_variant([integral, fractional])
+    assert len(grouped) == 1
+    assert len(next(iter(grouped.values()))) == 2
+
+
+def test_booleans_do_not_collapse_into_the_numbers_they_wrap() -> None:
+    """`bool` is an `int` subclass, so True must not canonicalize to 1."""
+    truthy = experiment({"amp": True}, "a")
+    one = experiment({"amp": 1}, "b")
+    assert truthy.variant_key != one.variant_key
+
+
+def test_a_non_finite_config_value_still_yields_a_stable_variant_key() -> None:
+    a = experiment({"learning_rate": float("nan")}, "a")
+    b = experiment({"learning_rate": float("nan")}, "b")
+    assert a.variant_key == b.variant_key
 
 
 def test_an_explicit_variant_wins_over_the_derived_key() -> None:

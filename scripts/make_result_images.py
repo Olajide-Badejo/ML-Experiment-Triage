@@ -98,10 +98,34 @@ def style_axes(figure: go.Figure, theme: Theme, x_title: str, y_title: str) -> N
     )
 
 
+#: Export scale. The four curve charts came out at 630 to 650 KB each at scale
+#: 2, which put 17.5 MB of binary churn into an eleven commit history for
+#: figures a README displays at about 880 pixels wide. At scale 1 they are 1180
+#: pixels across, still wider than they are ever drawn, and about a fifth of the
+#: bytes. Sharpness on a high density display is unaffected in practice because
+#: the image is downscaled to fit the column either way.
+EXPORT_SCALE = 1
+
+
 def save(figure: go.Figure, stem: str, theme: Theme, width: int, height: int) -> Path:
     IMAGES.mkdir(parents=True, exist_ok=True)
     path = IMAGES / f"{stem}-{theme.name}.png"
-    figure.write_image(str(path), width=width, height=height, scale=2)
+    figure.write_image(str(path), width=width, height=height, scale=EXPORT_SCALE)
+    return optimise(path)
+
+
+def optimise(path: Path) -> Path:
+    """Rewrite a PNG with maximum lossless compression.
+
+    Plotly writes through kaleido at the default compression level. Re encoding
+    the same pixels at level 9 with the filter search on costs a second per
+    image and takes another fifth off, and every byte here is committed.
+    """
+    from PIL import Image
+
+    with Image.open(path) as image:
+        pixels = image.copy()
+    pixels.save(path, format="PNG", optimize=True, compress_level=9)
     return path
 
 

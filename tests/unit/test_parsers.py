@@ -91,10 +91,18 @@ def test_discovery_finds_every_run_once(fixture_root: Path) -> None:
     found = discover_runs(fixture_root, DEFAULT_PARSERS)
     names = sorted(parser.run_id(path) for parser, path in found)
     assert names == [
+        "autofill_run",
         "csv_long_run",
         "csv_wide_run",
+        # The MLflow file store run, named by its uuid as MLflow names it.
+        "f1e2d3c4b5a60718293a4b5c6d7e8f90",
+        "healthy_steps",
         "jsonl_run",
         "killed_run",
+        # Two runs out of one `mlflow.db`, each namespaced by the database (E8).
+        "mlflow/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        "mlflow/9f8e7d6c5b4a30291817263544332211",
+        "sweep_results",
         "tb_run",
     ]
     assert len(names) == len(set(names))
@@ -109,6 +117,12 @@ def test_discovery_claims_the_right_parser(fixture_root: Path) -> None:
     assert by_run["csv_wide_run"] == "csv"
     assert by_run["csv_long_run"] == "csv"
     assert by_run["jsonl_run"] == "jsonl"
+    # The consumer's step free file is claimed by the outcomes parser, which sits
+    # ahead of the JSONL parser precisely so that it can be (E5).
+    assert by_run["autofill_run"] == "outcomes"
+    # And the undeclared one is not: strict recognition refuses to guess, so the
+    # JSONL parser claims it by suffix and fails on it, which is legible.
+    assert by_run["sweep_results"] == "jsonl"
 
 
 def test_fingerprint_changes_only_when_the_source_does(tmp_path: Path) -> None:

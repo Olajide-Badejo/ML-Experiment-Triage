@@ -1,94 +1,151 @@
 # ML Experiment Triage build entry points.
 #
+# **The recipes live in `noxfile.py`.** This file forwards to it and does
+# nothing else. GNU Make is not on stock Windows, and where it is present it
+# only runs these recipes because Make execs a single command recipe directly,
+# without a shell: the moment a recipe gains a pipe or an `&&` it routes through
+# cmd.exe, where `.venv/Scripts/nox.exe` with forward slashes does not resolve.
+# So every recipe below is exactly one command, `make all` is a sequence of
+# `$(MAKE)` calls rather than a chain, and anybody without Make runs
+# `nox -s <session>` directly for the same result.
+#
 # Everything in this project runs on CPU. `make all` from a clean tree builds
 # the environment, lints, runs the full test suite including the statistical
 # calibration gates, regenerates the demo sweep and database, and compiles both
 # PDFs. No step needs manual intervention.
 
-.PHONY: all help env lint fmt check-style test test-unit test-stats \
-        test-integration demo assets html report report-debug images \
-        pdfs verify-demo clean distclean
+.PHONY: all help env lock lint fmt check-style check-fixtures typecheck test \
+        test-unit test-stats test-property test-integration demo verify-demo assets \
+        calibration-docs check-calibration-docs docs-site serve-docs html \
+        report report-debug images pdfs package clean distclean
 
 ifeq ($(OS),Windows_NT)
 BASE_PY := py -3.13
 PY := .venv/Scripts/python.exe
+NOX := .venv/Scripts/nox.exe
 else
 BASE_PY := python3
 PY := .venv/bin/python
+NOX := .venv/bin/nox
 endif
 
-DEMO_RUNS := experiments/results/demo_sweep
 DEMO_DB := experiments/demo/triage.db
 BASELINE := lr0.0010_bs32
 
 help:
-	@echo "Targets:"
-	@echo "  env             create .venv and install pinned requirements"
-	@echo "  lint            ruff format check and ruff lint"
-	@echo "  check-style     dash guard over sources and compiled PDFs"
+	@echo "Targets (each forwards to a nox session; run 'nox -l' for the full list):"
+	@echo "  env             create .venv and install the locked toolchain"
+	@echo "  lock            recompile pylock.toml from pyproject.toml"
+	@echo "  lint            ruff format check, ruff lint, dash guard, fixture check"
+	@echo "  typecheck       mypy --strict over the package"
 	@echo "  test            full suite including calibration (slowest step)"
+	@echo "  test-unit       the inner loop: everything but the calibration gates"
+	@echo "  test-property   the property suite at the thorough Hypothesis profile"
 	@echo "  demo            regenerate the synthetic sweep, database and HTML report"
+	@echo "  demo-autofill   the autofill vertical end to end (LLM step skips if Ollama is down)"
 	@echo "  assets          regenerate report figures and tables from the database"
+	@echo "  calibration-docs render the measured calibration numbers into the Markdown"
+	@echo "  docs-site       build the mkdocs site with every warning an error"
 	@echo "  pdfs            compile the main and debug reports"
 	@echo "  images          regenerate the landing page charts (needs kaleido)"
+	@echo "  package         build the wheel and prove it installs and runs"
 	@echo "  all             everything above, in order"
 	@echo "  clean           remove generated artifacts"
 
 all:
 	$(MAKE) env
 	$(MAKE) lint
-	$(MAKE) check-style
+	$(MAKE) typecheck
 	$(MAKE) test
 	$(MAKE) demo
 	$(MAKE) verify-demo
 	$(MAKE) assets
+	$(MAKE) check-calibration-docs
 	$(MAKE) pdfs
-	$(MAKE) check-style
+	$(MAKE) package
+	$(MAKE) lint
 	@echo ""
 	@echo "make all complete."
 
+# The one recipe that cannot forward to nox, because nox lives in the
+# environment this creates. Bootstrapping nox first and asking it to build its
+# own interpreter would be one more moving part for no gain.
 env:
 	$(BASE_PY) -m venv .venv
-	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -r requirements.txt
-	$(PY) -m pip install -e . --no-deps
+	$(PY) -m pip install --upgrade pip uv
+	$(PY) -m uv pip install --python $(PY) -r pylock.toml
+	$(PY) -m uv pip install --python $(PY) -e . --no-deps
 	$(PY) -c "import sys; print('environment ready on Python', sys.version.split()[0])"
 
+lock:
+	$(NOX) -s lock
+
 lint:
-	$(PY) -m ruff format --check .
-	$(PY) -m ruff check .
+	$(NOX) -s lint
 
 fmt:
-	$(PY) -m ruff format .
-	$(PY) -m ruff check --fix .
+	$(NOX) -s fmt
 
+# Kept as their own targets because they name what they check, which is what a
+# failing CI step should be called.
 check-style:
 	$(PY) scripts/check_no_dashes.py .
 
+check-fixtures:
+	$(PY) scripts/make_fixtures.py --check
+
+typecheck:
+	$(NOX) -s typecheck
+
 test:
-	$(PY) -m pytest tests -v
+	$(NOX) -s test -- -v
 
 test-unit:
-	$(PY) -m pytest tests/unit -v
+	$(NOX) -s test -- -m "not slow" -q
 
 test-stats:
-	$(PY) -m pytest tests/statistics -v
+	$(NOX) -s test_stats
+
+test-property:
+	$(NOX) -s test_property
 
 test-integration:
-	$(PY) -m pytest tests/integration -v
+	$(NOX) -s test -- tests/integration -v
 
 demo:
-	$(PY) -m examples.demo_workflow
+	$(NOX) -s demo
+
+# The autofill vertical: generate, sweep, evaluate with the model, the rules and
+# the local LLM, then ingest, compare and report with no autofill specific flag.
+# The LLM step prints why it skipped when Ollama is not running; nothing after it
+# depends on it, so the target is deterministic on a machine with no model.
+demo-autofill:
+	$(NOX) -s demo-autofill
 
 verify-demo:
-	$(PY) -m examples.demo_workflow --verify-committed
+	$(NOX) -s demo -- --verify-committed
 
 assets:
-	$(PY) scripts/gen_report_assets.py --database $(DEMO_DB)
+	$(NOX) -s assets
+
+# The Markdown documents quote the same measured numbers as the report tables.
+# Both sides render from triage/calibration.py, so neither can be edited alone.
+calibration-docs:
+	$(NOX) -s docs
+
+check-calibration-docs:
+	$(NOX) -s docs -- --check
+
+# The mkdocs site, built with every warning an error. `make serve-docs` is the
+# preview with live reload; CI runs the strict build on every push.
+docs-site:
+	$(NOX) -s docs-site
+
+serve-docs:
+	$(NOX) -s docs-site -- serve
 
 html:
-	$(PY) -m triage.cli report --database $(DEMO_DB) --baseline $(BASELINE) \
-	    --output experiments/results/triage_report.html
+	$(PY) -m triage.cli report --database $(DEMO_DB) --baseline $(BASELINE) --output experiments/results/triage_report.html
 
 report:
 	$(PY) scripts/build_pdf.py report/main.tex --bibtex
@@ -97,19 +154,16 @@ report-debug:
 	$(PY) scripts/build_pdf.py report_debug/debug_report.tex
 
 pdfs:
-	$(MAKE) report
-	$(MAKE) report-debug
+	$(NOX) -s pdfs
 
-# Regenerating the landing page charts needs kaleido for static image export.
-# That is a development extra rather than a runtime dependency, so it is
-# installed here on demand and `images` is not part of `make all`. The images
-# themselves are committed.
 images:
-	$(PY) -m pip install --quiet kaleido
-	$(PY) scripts/make_result_images.py
+	$(NOX) -s images
+
+package:
+	$(NOX) -s package
 
 clean:
-	$(PY) scripts/clean.py
+	$(NOX) -s clean
 
 distclean:
-	$(PY) scripts/clean.py --venv
+	$(NOX) -s clean -- --venv

@@ -1,0 +1,73 @@
+# Citation File Format 1.2.0. GitHub renders the "Cite this repository" widget
+# from this file, and the Zenodo GitHub integration mints a DOI per release from
+# this same metadata.
+#
+# There is deliberately no `.zenodo.json` beside it (Section 7 item 6): Zenodo
+# prefers that file when both exist, so adding one would silently override
+# everything here and leave two descriptions of one release that have to agree.
+#
+# Once the first DOI is minted, add it as the `doi:` key below and to the README
+# badge row. It is not here yet because a DOI that has not been minted is a
+# citation that does not resolve.
+
+cff-version: 1.2.0
+message: If you use this software, please cite it using these metadata.
+title: "ML Experiment Triage"
+abstract: >-
+  A tool that turns a directory of machine learning training runs into a ranked,
+  significance tested comparison against a baseline. Two sided permutation
+  testing on the mean of a smoothed final window, in a seed replicated mode and
+  a weaker single run window block mode that is labelled as such everywhere,
+  with Benjamini Hochberg correction in one family per mode and a practical
+  effect gate beside the statistical one. The tool's own error rates are
+  measured by a calibration suite rather than assumed, and every published rate
+  is rendered from one source.
+type: software
+authors:
+  - family-names: Badejo
+    given-names: Olajide
+version: 1.1.0
+date-released: "2026-08-30"
+license: MIT
+repository-code: https://github.com/Olajide-Badejo/ML-Experiment-Triage
+url: https://olajide-badejo.github.io/ML-Experiment-Triage/
+keywords:
+  - machine learning
+  - mlops
+  - experiment tracking
+  - statistics
+  - hypothesis testing
+  - permutation test
+  - multiple comparisons
+  - reproducibility
+references:
+  - type: article
+    title: >-
+      Controlling the false discovery rate: a practical and powerful approach to
+      multiple testing
+    authors:
+      - family-names: Benjamini
+        given-names: Yoav
+      - family-names: Hochberg
+        given-names: Yosef
+    journal: Journal of the Royal Statistical Society, Series B
+    volume: 57
+    issue: 1
+    start: 289
+    end: 300
+    year: 1995
+    doi: 10.1111/j.2517-6161.1995.tb02031.x
+  - type: article
+    title: >-
+      Studentized permutation tests for non i.i.d. hypotheses and the
+      generalized Behrens Fisher problem
+    authors:
+      - family-names: Janssen
+        given-names: Arnold
+    journal: Statistics and Probability Letters
+    volume: 36
+    issue: 1
+    start: 9
+    end: 21
+    year: 1997
+    doi: 10.1016/S0167-7152(97)00043-6

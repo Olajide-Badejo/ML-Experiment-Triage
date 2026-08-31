@@ -171,7 +171,7 @@ the window cannot support it. (d) Abandon the single run mode. Rejected:
 sometimes one run is all there is, and a labelled weak answer beats no answer.
 
 \field{Fix and why} Option (c). $\tau$ is now estimated per window with the larger
-taken, the block is three times $\tau$, and below eight blocks the comparison
+taken, the block is a fixed multiple of $\tau$, and below eight blocks the comparison
 raises an error naming the concrete remedies rather than returning a number.
 Three was chosen by measurement: across window lengths from 1200 to 8000 steps
 and autocorrelation coefficients from 0 to 0.9, one $\tau$ gave 9 to 14 percent,
@@ -185,6 +185,19 @@ that nothing later can recover.
 \field{Verification} Type I error 5.81 percent over 1928 null cases, 72 refused
 as too short. Power 100 percent on a large effect, confirming the fix did not
 simply make the test deaf. A separate test pins the refusal.
+
+\field{Reopened in v1.1.0} Both halves of the fix above were measured against a
+$\tau$ that was itself wrong: it was estimated on the smoothed window, which is
+this project's own filter, and a nine point moving average leaves white noise
+looking correlated over about nine points. Estimating $\tau$ on the raw window
+made the estimate honest and left the multiplier of three attached to nothing, so
+it was swept again over 2000 null cases a point: 8.85 percent at two $\tau$, 7.02
+at three, 6.28 at four, 6.09 at five, 6.03 at six, against refusal rates on 4000
+step runs of 0, 6, 20, 40 and 78 percent. The error rate is asymptotic at about 6
+percent, so four $\tau$ takes three quarters of the available correction and
+every longer block takes almost nothing while refusing far more comparisons. Four
+is what the mode now uses, and the verification above becomes 6.28 percent over
+1989 null cases with 11 refused, power unchanged at 100 percent.
 
 \field{Commit} Phase 2.
 
@@ -216,6 +229,40 @@ measured rate is conditional on the precondition being met.
 \field{Verification} The suite asserts both the error rate and the refusal rate.
 
 % ---------------------------------------------------------------------------
+\entry{The published calibration was measuring one design out of six}{Symptom:
+none visible. Every gate was green and every published number reproducible. The
+suite measured five seeds a side, one spread, Gaussian noise: the one design a
+permutation test is exact in, and therefore the design least able to notice that
+the permuted statistic had just changed underneath it.}
+
+\field{Root cause} The arms were chosen when the raw mean difference was the
+statistic and balanced designs were all that was tested, so nothing in the suite
+could see the failure that motivated studentizing it.
+
+\field{Options} (a) Publish new statistics against the old arms, which would
+claim a calibration for designs never measured. Rejected. (b) Add the arms and
+gate every one at $[2, 8]$ percent. Rejected after measuring: three runs of a
+wide condition against seven of a narrow one measures 12.92 percent, and a gate
+a design cannot meet is either a permanently red build or an invitation to widen
+it quietly later. (c) Add the arms, gate each regime at what its own measurement
+supports, and publish every rate whether or not it flatters. Taken.
+
+\field{Fix and why} Six arms, 1200 null cases per design cell, 1000 paired and
+500 on macro F1. Unequal spread at five runs a side measures 7.83 percent against
+8.25 for the raw mean difference; three narrow against seven wide 2.08 against
+1.08; seven narrow against three wide 12.92 against 17.92. Unequal counts at one
+spread measure 4.25 percent and heavy tailed Student $t$ noise 5.00, which is
+what an exchangeable design should do. The paired clustered mode measures 4.90
+percent, and the same data with the clustering ignored 12.10, which is the
+argument for the cluster argument existing.
+
+\field{Verification} \texttt{pytest tests/statistics}, 17 arms, 110 seconds, each
+gate green on its own measurement. Every published number is rendered from
+\texttt{triage/calibration.py}: the tables in this report through the asset
+generator, the Markdown through a renderer whose check mode runs in CI.
+
+\field{Commit} v1.1.0, part 04b.
+
 \section{Reproducibility}
 
 \entry{Every HTML report differed from the last}{Symptom: a test comparing two

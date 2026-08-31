@@ -4,7 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ context.title }}: {{ context.baseline }}</title>
+{# The charting runtime is nearly five megabytes. A report with nothing to
+   chart used to ship it anyway, which made an empty result the largest cheap
+   thing this tool produces. #}
+{% if plotly_js %}
 <script>{{ plotly_js | safe }}</script>
+{% endif %}
 <style>
 :root {
   color-scheme: light;
@@ -12,7 +17,10 @@
   --plane: #f9f9f7;
   --ink: #0b0b0b;
   --ink-2: #52514e;
-  --muted: #898781;
+  /* Mirrored from MUTED_INK in html_report.py, and a unit test asserts the two
+     agree. Measured 5.03:1 on --surface; the value it replaced was 3.50:1,
+     which fails WCAG AA for the normal size text this styles. */
+  --muted: #6f6d68;
   --grid: #e1e0d9;
   --rule: #c3c2b7;
   --good: #0ca30c;
@@ -51,7 +59,15 @@ h3 { font-size: 15px; margin: 24px 0 8px; color: var(--ink-2); font-weight: 600;
 .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--grid); white-space: nowrap; }
-th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+/* A 500 run sweep puts 503 unpaginated rows in this table. A header that
+   scrolls away leaves a grid of numbers whose columns nobody can name, so it
+   stays put while the rows move under it. */
+th {
+  color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface); box-shadow: inset 0 -1px 0 var(--rule);
+}
 tbody tr:last-child td { border-bottom: none; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.wrap-cell { white-space: normal; min-width: 260px; }
@@ -65,6 +81,15 @@ td.wrap-cell { white-space: normal; min-width: 260px; }
 
 .figure { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 8px 0; margin-bottom: 10px; overflow-x: auto; }
 .caption { color: var(--muted); font-size: 12.5px; margin: 0 0 26px; max-width: 88ch; }
+
+/* Each table carries a caption naming it, which is what gives the table an
+   accessible name when a screen reader lists the tables on the page. It is not
+   shown, because the heading directly above every table already says the same
+   thing to a reader who can see it, and printing both would be noise. */
+caption.named {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 
 .note {
   background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warning);
@@ -91,6 +116,8 @@ footer dd { margin: 0; }
   </p>
 </header>
 
+<main>
+
 <p class="lede">
   Every p value below is labelled with the test and the mode that produced it. Results from the
   single run mode are marked as a weaker claim, because that mode cannot see seed to seed
@@ -100,7 +127,7 @@ footer dd { margin: 0; }
 
 {% set regressions = context.triage.regressions %}
 {% set improvements = context.triage.improvements %}
-<div class="tiles">
+<div class="tiles" role="group" aria-label="Headline counts">
   <div class="tile {% if regressions %}bad{% endif %}">
     <div class="value">{{ regressions | length }}</div>
     <div class="label">regressions</div>
@@ -119,22 +146,35 @@ footer dd { margin: 0; }
   </div>
 </div>
 
+{% if context.llm_summary %}
+<h2>{{ context.llm_summary.heading }}</h2>
+<div class="note">
+  <p>{{ context.llm_summary.text }}</p>
+</div>
+<p class="caption">
+  {{ context.llm_summary.caption }} Everything below this block is computed rather than
+  generated; this paragraph is the only part of the page a language model wrote, and every
+  number in it survived a check against the report's own figures.
+</p>
+{% endif %}
+
 <h2>Verdicts, ranked by severity</h2>
 <div class="scroll">
 <table>
+  <caption class="named">Verdicts for every candidate condition on every metric, ranked by severity</caption>
   <thead>
     <tr>
-      <th>Candidate</th>
-      <th>Metric</th>
-      <th>Verdict</th>
-      <th>Mode</th>
-      <th class="num">Baseline</th>
-      <th class="num">Candidate</th>
-      <th class="num">Change</th>
-      <th class="num">95% interval</th>
-      <th class="num">p (raw)</th>
-      <th class="num">p (BH adjusted)</th>
-      <th class="num">n</th>
+      <th scope="col">Candidate</th>
+      <th scope="col">Metric</th>
+      <th scope="col">Verdict</th>
+      <th scope="col">Mode</th>
+      <th class="num" scope="col">Baseline</th>
+      <th class="num" scope="col">Candidate</th>
+      <th class="num" scope="col">Change</th>
+      <th class="num" scope="col">95% interval</th>
+      <th class="num" scope="col">p (raw)</th>
+      <th class="num" scope="col">p (BH adjusted)</th>
+      <th class="num" scope="col">n</th>
     </tr>
   </thead>
   <tbody>
@@ -186,27 +226,72 @@ footer dd { margin: 0; }
 </div>
 {% endif %}
 
+{% if context.refusals %}
+<h2>Comparisons not made</h2>
+<div class="scroll">
+<table>
+  <caption class="named">Comparisons the analysis declined to make, and the reason for each</caption>
+  <thead>
+    <tr>
+      <th scope="col">Condition</th>
+      <th scope="col">Metric</th>
+      <th class="wrap-cell" scope="col">Why the comparison was refused</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for refusal in context.refusals %}
+    <tr>
+      <td>{{ refusal.variant }}</td>
+      <td>{{ refusal.tag }}</td>
+      <td class="wrap-cell">{{ refusal.reason }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  These conditions are in the database and are absent from the table above, because no calibrated
+  test could be built from what they carry. Refusing is the intended behaviour: a p value from a
+  design that cannot support one is worse than no p value. Each row names what would fix it.
+</p>
+{% endif %}
+
 <h2>Curves</h2>
 {% for tag, figure in figures.items() %}
 <h3>{{ tag }}</h3>
-<div class="figure">{{ figure | safe }}</div>
+<div class="figure" role="img"
+     aria-label="Curve of {{ tag }} over training steps, one line per condition with the spread across seeds as a band. The same numbers are in the tables above and below.">{{ figure | safe }}</div>
+{% if tag not in compared %}
+<div class="note">
+  <strong>{{ tag }} was not compared against the baseline.</strong>
+  It is drawn here because it is in the database, but no verdict above rests on it: either the
+  baseline never logged it, or no condition carrying it could support a calibrated test. The curve
+  is a description of what happened, not a claim about it.
+</div>
+{% endif %}
 <p class="caption">
   Each line is the mean across seeds of a {{ context.comparison_config.smoothing_window }} point
-  moving average; the band is the full range across seeds of that condition. The shaded region on the
-  right is the final window the statistic is taken over. Where two bands overlap, the conditions are
-  not separated by more than their own run to run noise, whatever the lines appear to do.
+  moving average; the band is the full range across seeds of that condition, drawn only where those
+  seeds have data. The shaded region on the right is the final window the statistic is taken over.
+  Where two bands overlap, the conditions are not separated by more than their own run to run noise,
+  whatever the lines appear to do.
+</p>
+{% else %}
+<p class="caption">
+  No metric in this database carries a series to chart, so there is nothing to draw.
 </p>
 {% endfor %}
 
 <h2>Run inventory</h2>
 <div class="scroll">
 <table>
+  <caption class="named">One row per condition: seeds, source format, and the final window statistic per metric</caption>
   <thead>
     <tr>
-      <th>Condition</th>
-      <th class="num">Seeds</th>
-      <th>Source format</th>
-      {% for tag in figures.keys() %}<th class="num">{{ tag }} (mean, sd)</th>{% endfor %}
+      <th scope="col">Condition</th>
+      <th class="num" scope="col">Seeds</th>
+      <th scope="col">Source format</th>
+      {% for tag in figures.keys() %}<th class="num" scope="col">{{ tag }} (mean, sd)</th>{% endfor %}
     </tr>
   </thead>
   <tbody>
@@ -237,16 +322,19 @@ footer dd { margin: 0; }
 {% if context.sensitivity %}
 <div class="scroll">
 <table>
+  <caption class="named">Rank correlation of each swept hyperparameter against each metric</caption>
   <thead>
     <tr>
-      <th>Parameter</th>
-      <th>Metric</th>
-      <th class="num">Spearman rho</th>
-      <th>Strength</th>
-      <th class="num">p</th>
-      <th class="num">n runs</th>
-      <th class="num">distinct values</th>
-      <th class="wrap-cell">Reading</th>
+      <th scope="col">Parameter</th>
+      <th scope="col">Metric</th>
+      <th class="num" scope="col">Spearman rho</th>
+      <th scope="col">Strength</th>
+      <th class="num" scope="col">p</th>
+      <th class="num" scope="col">p adj</th>
+      <th class="num" scope="col">n variants</th>
+      <th class="num" scope="col">n runs</th>
+      <th class="num" scope="col">distinct values</th>
+      <th class="wrap-cell" scope="col">Reading</th>
     </tr>
   </thead>
   <tbody>
@@ -257,6 +345,8 @@ footer dd { margin: 0; }
       <td class="num">{{ item.correlation | signed }}</td>
       <td>{{ item.strength }}</td>
       <td class="num">{{ item.p_value | p }}</td>
+      <td class="num">{{ item.adjusted_p | p }}</td>
+      <td class="num">{{ item.n_variants }}</td>
       <td class="num">{{ item.n_runs }}</td>
       <td class="num">{{ item.n_distinct_values }}</td>
       <td class="wrap-cell">{{ item.direction }}</td>
@@ -265,15 +355,187 @@ footer dd { margin: 0; }
   </tbody>
 </table>
 </div>
+{# The caveat itself comes from SensitivityReport.caveat(). It used to be
+   duplicated here word for word, which made it two things to keep true and, worse,
+   a fixed sentence where the real one carries the counts the correlation actually
+   rests on. #}
 <p class="caption">
-  Spearman rank correlation, two sided. The <em>n runs</em> column is not decoration: a correlation
-  of 0.9 over four runs is not evidence of anything. These are associations across the sweep as it
-  was actually run, not controlled effects, so a parameter that only ever changed alongside another
-  cannot be separated from it here.
+  Spearman rank correlation, two sided, with the p value taken from permuting the pairings rather
+  than from a t approximation that is invalid under ties. {{ context.sensitivity_caveat }}
+  The <em>n variants</em> column is therefore not decoration: a correlation of 0.9 over four
+  conditions is not evidence of anything, and below five conditions no p value is reported at all
+  because none could be small enough to mean anything. <em>p adj</em> is Benjamini Hochberg across
+  this whole table, which is one family of questions asked at once.
 </p>
 {% else %}
-<p class="caption">No hyperparameter varied over enough runs to rank correlate against.</p>
+<p class="caption">{{ context.sensitivity_caveat }}</p>
 {% endif %}
+
+{% if context.autofill %}
+<h2>Autofill calibration</h2>
+<p class="caption">
+  The reference workload's predicted probabilities, measured on
+  {{ context.autofill.n_rows }} rows of the
+  {{ context.autofill.locale or 'whole' }} {{ context.autofill.split or 'evaluation' }} split.
+  This section is about how much the model's confidence is worth, which is a different question
+  from how often it is right: a decision layer that skips a field below a confidence threshold is
+  reading these numbers, and an uncalibrated 0.9 is not a usable 0.9.
+</p>
+<div class="scroll">
+<table>
+  <caption class="named">Calibration error before and after temperature scaling</caption>
+  <thead>
+    <tr>
+      <th scope="col">Measure</th>
+      <th class="num" scope="col">Before</th>
+      <th class="num" scope="col">After</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Expected calibration error</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.ece_pre) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.ece_post) }}</td>
+    </tr>
+    <tr>
+      <td>Maximum calibration error</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.mce_pre) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.mce_post) }}</td>
+    </tr>
+    <tr>
+      <td>Fitted temperature</td>
+      <td class="num">1.000</td>
+      <td class="num">{{ "%.3f" | format(context.autofill.temperature) }}</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+{% if reliability %}
+<div class="figure" role="img"
+     aria-label="Reliability diagram: mean predicted confidence against measured accuracy in each of {{ context.autofill.n_bins }} equal mass bins, before and after temperature scaling, against a diagonal marking perfect calibration. The same numbers are in the table above.">{{ reliability | safe }}</div>
+{% endif %}
+<p class="caption">
+  {{ context.autofill.n_bins }} bins of equal mass, not of equal width. A trained classifier's
+  confidences pile up near one, so equal width bins would put most of the data in the top bin and
+  estimate the rest from a handful of rows each. Temperature scaling is one scalar fitted on the
+  validation split; it cannot change a single prediction, because dividing every logit by the same
+  positive number leaves the argmax where it was, so accuracy and macro F1 below are the same
+  either side of it.
+</p>
+{% if context.autofill.engines %}
+<div class="scroll">
+<table>
+  <caption class="named">Engines scored on this split</caption>
+  <thead>
+    <tr>
+      <th scope="col">Engine</th>
+      <th class="num" scope="col">Rows</th>
+      <th class="num" scope="col">Accuracy</th>
+      <th class="num" scope="col">Macro F1</th>
+      <th class="num" scope="col">ECE</th>
+      <th class="num" scope="col">Latency (us/field)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in context.autofill.engines %}
+    <tr>
+      <td>{{ row.engine }}</td>
+      <td class="num">{{ row.n_rows }}</td>
+      <td class="num">{{ "%.4f" | format(row.accuracy) }}</td>
+      <td class="num">{{ "%.4f" | format(row.macro_f1) }}</td>
+      <td class="num">{{ "%.4f" | format(row.ece) }}</td>
+      <td class="num">{{ "%.1f" | format(row.mean_latency_us) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="caption">
+  The rule engine's confidences are TIERS rather than estimates: which rule fired, not how likely
+  it is to be right. Its calibration error is the point being made rather than a defect being
+  reported, and it is why the decision layer reads the model's probabilities and not the
+  heuristic's. The latency column is the measured mean per field, not a per field timing.
+</p>
+{% endif %}
+
+{% if context.autofill.policies %}
+<h3>Fill or skip: the decision policy</h3>
+<p class="caption">
+  A wrong fill costs the user more than no fill, so whether to fill a field at all is its own
+  decision, modelled here as a <strong>contextual bandit</strong> over (predicted type, calibrated
+  confidence, locale) with the two actions fill and skip. A bandit and not reinforcement learning:
+  nothing one field's decision does changes the next field's context. Reward:
+  {{ context.autofill.policy_reward }}, in units of one correct fill. Every number below is
+  computed exactly rather than estimated, because the corpus is fully labelled and both arms of
+  every row are therefore known: no importance sampling estimator is needed and none is used.
+</p>
+<div class="scroll">
+<table>
+  <caption class="named">Expected reward and expected user correction cost, per field</caption>
+  <thead>
+    <tr>
+      <th scope="col">Policy</th>
+      <th class="num" scope="col">Fill rate</th>
+      <th class="num" scope="col">Expected reward</th>
+      <th class="num" scope="col">Correction cost</th>
+      <th class="num" scope="col">Accuracy of the fills</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in context.autofill.policies %}
+    <tr>
+      <td>{{ row.name }}{% if row.name == context.autofill.chosen_policy %} (chosen){% endif %}</td>
+      <td class="num">{{ "%.4f" | format(row.fill_rate) }}</td>
+      <td class="num">{{ "%.4f" | format(row.expected_reward) }}</td>
+      <td class="num">{{ "%.4f" | format(row.correction_cost) }}</td>
+      <td class="num">{% if row.fill_accuracy is none %}none filled{% else %}{{ "%.4f" | format(row.fill_accuracy) }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  {% if context.autofill.thompson %}
+    <tr>
+      <td>thompson sampling (online)</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.thompson.fill_rate) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.thompson.expected_reward) }}</td>
+      <td class="num">{{ "%.4f" | format(context.autofill.thompson.correction_cost) }}</td>
+      <td class="num">learned online</td>
+    </tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% if context.autofill.chosen_policy_row and context.autofill.always_fill_row %}
+<p class="caption">
+  This is the number to read beside the raw accuracy above: accuracy counts fields, correction cost
+  counts what the user has to undo. Filling every field costs
+  {{ "%.4f" | format(context.autofill.always_fill_row.correction_cost) }} per field; the chosen
+  {{ context.autofill.chosen_policy }} policy costs
+  {{ "%.4f" | format(context.autofill.chosen_policy_row.correction_cost) }} and earns
+  {{ "%.4f" | format(context.autofill.chosen_policy_row.expected_reward) }} against
+  {{ "%.4f" | format(context.autofill.always_fill_row.expected_reward) }}. The thresholds were
+  fitted on the {{ context.autofill.policy_fit_split }} split{% if context.autofill.policy_in_sample %},
+  which is also the split scored here: a threshold cannot lose on the rows it was fitted to, so this
+  is the in sample number, and <code>--split test</code> is the version of the claim that costs
+  something{% endif %}.
+</p>
+{% endif %}
+{% if context.autofill.thompson %}
+<p class="caption">
+  The last row is the same decision learned <em>online</em>, one field at a time, by Thompson
+  sampling over {{ context.autofill.thompson.n_cells }} context cells, with a Gaussian posterior on
+  each cell's mean reward. It updates only on the fills, because a skip teaches a bandit nothing,
+  and that partial feedback is the whole difference between it and the rows above. Over
+  {{ context.autofill.thompson.n_rows }} decisions it gave up
+  {{ "%.1f" | format(context.autofill.thompson.cumulative_regret) }} of reward against the best
+  fixed policy ({{ context.autofill.thompson.best_fixed }}), which is
+  {{ "%.4f" | format(context.autofill.thompson.regret_per_decision) }} per decision: that gap is
+  the price of learning the policy rather than being handed it, and it is measured rather than
+  bounded. The run is deterministic under seed {{ context.autofill.thompson.config.seed }}.
+</p>
+{% endif %}
+{% endif %}
+{% endif %}
+
+</main>
 
 <footer>
   <h3 style="margin-top:0">Methodology and reproducibility</h3>

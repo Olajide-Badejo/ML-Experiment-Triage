@@ -15,7 +15,22 @@ A permutation test needs only exchangeability under the null, which is exactly
 what the null hypothesis asserts (Good, *Permutation, Parametric, and Bootstrap
 Tests of Hypotheses*, 3rd ed., Springer 2005).
 
-**Two modes, answering two different questions.**
+The quantity permuted is the Welch t rather than the raw difference of means.
+Full exchangeability is more than the null actually claims once the two
+conditions have different spreads, and a raw mean difference is exact only
+under the stronger assumption: measured at a nominal 5 percent, seven runs
+against three with a fivefold spread ratio rejected 17.9 percent of true nulls.
+Studentizing the permuted statistic restores the guarantee asymptotically
+(Janssen, *Statistics and Probability Letters* 36(1), 1997) and changes nothing
+at all when the two conditions hold the same number of runs. Asymptotically is
+the operative word: on that same design the studentized statistic measures 12.9
+percent, because the variance that studentizes it is itself estimated from three
+numbers, and that measurement is published beside the others rather than rounded
+towards the number one would prefer. The effect and the
+interval reported beside the p value are still on the mean difference, which is
+the quantity a reader can act on.
+
+**Three modes, answering three different questions.**
 
 `seed_replicate`
     Several seeds per condition. The unit of analysis is the run, and the
@@ -35,13 +50,23 @@ Tests of Hypotheses*, 3rd ed., Springer 2005).
     so when seed variance is present it is anticonservative. The calibration
     suite measures exactly how anticonservative, and the number is published
     rather than buried.
+
+`paired_cluster`
+    Two conditions scored on the SAME units, which is the usual shape of an
+    offline evaluation rather than a training sweep. The unit of analysis is
+    the pair, the labels swap within a pair rather than shuffling across
+    units, and whole clusters of pairs swap together when the units are not
+    independent of one another. The statistic is whatever the caller passes,
+    because what is being compared is often not a mean of anything.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Callable, Hashable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from math import comb
 from typing import Any
 
@@ -49,12 +74,14 @@ import numpy as np
 from scipy import stats as scipy_stats
 
 from triage.core.experiment import Experiment, MetricSeries, SeriesError
+from triage.core.outcomes import Outcomes
 
 DEFAULT_SEED = 20260805
 
-# Tag name fragments that settle which direction is an improvement. Checked as
-# substrings of the lowercased tag, longest first, so `val/loss` and
-# `top1_accuracy` both resolve without configuration.
+# Tag name words that settle which direction is an improvement. Matched against
+# the WORDS of the tag, longest first, so `val/loss` and `top1_accuracy` both
+# resolve without configuration while `val/mape` is not read as a mean average
+# precision because the three letters of `map` happen to start it.
 LOWER_IS_BETTER = (
     "perplexity",
     "loss",
@@ -64,6 +91,8 @@ LOWER_IS_BETTER = (
     "mse",
     "rmse",
     "mae",
+    "mape",
+    "smape",
     "wer",
     "cer",
     "fid",
@@ -90,20 +119,30 @@ HIGHER_IS_BETTER = (
 
 MODE_SEED_REPLICATE = "seed_replicate"
 MODE_WINDOW_BLOCK = "window_block"
+MODE_PAIRED_CLUSTER = "paired_cluster"
 
 # Block length as a multiple of the estimated autocorrelation time, and the
 # fewest blocks per run the window block mode will accept. Both numbers were
 # set by measurement rather than taste: see `block_length` and the calibration
 # suite in `tests/statistics`.
-BLOCK_TAU_MULTIPLIER = 3.0
+BLOCK_TAU_MULTIPLIER = 4.0
 MIN_BLOCKS_PER_RUN = 8
 
+#: Labels for the modes this module implements. The vocabulary is OPEN: a
+#: caller that builds a `ComparisonResult` with a mode of its own gets the
+#: fallback below rather than a `KeyError` out of `mode_label` and `to_dict`,
+#: which between them are every reporting path there is. A consumer describing
+#: its own design truthfully must not be punished for it.
 MODE_LABELS = {
     MODE_SEED_REPLICATE: "seed replicated permutation test (strong claim)",
     MODE_WINDOW_BLOCK: (
         "single run window block permutation test (WEAKER CLAIM: cannot see seed to seed variance)"
     ),
+    MODE_PAIRED_CLUSTER: (
+        "paired permutation test with clustered label swaps (paired claim, clustered resampling)"
+    ),
 }
+MODE_LABEL_FALLBACK = "{mode} (a mode this version of triage does not describe)"
 
 
 class ComparisonError(ValueError):
@@ -124,14 +163,37 @@ class ComparisonConfig:
     alpha: float = 0.05
     min_replicates_for_seed_mode: int = 3
     seed: int = DEFAULT_SEED
+    #: Per tag direction overrides, `{tag: higher_is_better}`. A tag listed here
+    #: is never guessed at from its name, at any entry point.
+    directions: Mapping[str, bool] = field(default_factory=dict)
+
+    def __hash__(self) -> int:
+        """Hash by value, with the mapping spelled as a sorted tuple.
+
+        A frozen dataclass hashes the tuple of its fields, and a mapping is not
+        hashable, so carrying the direction overrides would otherwise have made
+        every `ComparisonConfig` unhashable: a break that would surface a long
+        way from here, in a set or a cache key rather than in this module.
+        """
+        scalars = tuple(
+            getattr(self, name) for name in self.__dataclass_fields__ if name != "directions"
+        )
+        return hash((scalars, tuple(sorted(self.directions.items()))))
 
     def describe(self) -> str:
+        overrides = ""
+        if self.directions:
+            named = ", ".join(
+                f"{tag} ({'higher' if better else 'lower'} is better)"
+                for tag, better in sorted(self.directions.items())
+            )
+            overrides = f"; direction set by the caller for {named}"
         return (
             f"final window mean over the last max({self.window_minimum}, "
             f"{self.window_fraction:.0%} of steps) points of a "
             f"{self.smoothing_window} point moving average; "
             f"two sided permutation test at alpha {self.alpha:g}; "
-            f"seed {self.seed}"
+            f"seed {self.seed}{overrides}"
         )
 
 
@@ -172,10 +234,16 @@ class ComparisonResult:
     warnings: tuple[str, ...] = ()
     #: Block length used by the window block mode, in steps; 0 in seed mode.
     block_length: int = 0
+    #: Stable join key, `variant|tag`, set by `compare_all`. A caller building
+    #: results itself is free to set its own; `tag` alone is not unique once one
+    #: metric is compared across several conditions, and a consumer rejoining
+    #: findings to results should not have to fall back on object identity.
+    key: str = ""
 
     @property
     def mode_label(self) -> str:
-        return MODE_LABELS[self.mode]
+        """The claim this mode makes, or the mode itself when it is not ours."""
+        return MODE_LABELS.get(self.mode, MODE_LABEL_FALLBACK.format(mode=self.mode))
 
     @property
     def is_weak_mode(self) -> bool:
@@ -205,37 +273,179 @@ class ComparisonResult:
         return data
 
 
+@dataclass(frozen=True)
+class ComparisonRefusal:
+    """One comparison that could not be made, and the reason it could not.
+
+    A refusal is a result. The claim this tool makes is that it declines to
+    answer rather than answering badly, and a refusal that is dropped on the
+    floor turns that claim into its opposite: three conditions too short for any
+    calibrated test reported "0 comparisons" and gave no hint that anything had
+    been attempted, while calling the same comparison directly raised a message
+    naming the remedy.
+    """
+
+    variant: str
+    tag: str
+    reason: str
+
+    def describe(self) -> str:
+        return f"{self.variant} on {self.tag}: {self.reason}"
+
+
+class ComparisonResults(list[ComparisonResult]):
+    """The comparisons that were made, carrying the ones that were not.
+
+    A list subclass rather than a wrapper, so that every existing caller of
+    `compare_all` keeps working unchanged while the refusals travel with the
+    results to the outputs that have to name them.
+    """
+
+    def __init__(
+        self,
+        results: Sequence[ComparisonResult] = (),
+        refusals: Sequence[ComparisonRefusal] = (),
+    ) -> None:
+        super().__init__(results)
+        self.refusals: tuple[ComparisonRefusal, ...] = tuple(refusals)
+
+
 # --------------------------------------------------------------------- helpers
+
+
+#: Word boundaries in a metric tag: any run of characters that is neither a
+#: letter nor a digit. A camel case hump is a boundary too, so `valMAP` and
+#: `val/map` produce the same words.
+_NOT_A_WORD = re.compile(r"[^a-z0-9]+")
+_CAMEL_HUMP = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def tag_words(tag: str) -> frozenset[str]:
+    """The words of a metric tag, for direction matching.
+
+    Splitting matters more than it looks. Matching the table as substrings read
+    `val/mape` and `val/smape` as mean average precision, because the three
+    letters of `map` start both of them, and reported a rising error as an
+    improvement. Words cannot do that: `mape` is a word, `map` is not in it.
+
+    Camel case is read both ways, and deliberately. Splitting the humps is what
+    finds the `loss` in `valLoss`; not splitting them is what finds the `map` in
+    `mAP@50`, which is how that metric is conventionally spelled. Both spellings
+    contribute words, because a word that matches under either reading is
+    evidence, and neither reading can invent a word the tag does not contain.
+    """
+    plain = _NOT_A_WORD.split(tag.lower())
+    humped = _NOT_A_WORD.split(_CAMEL_HUMP.sub(" ", tag).lower())
+    return frozenset(word for word in plain + humped if word)
 
 
 def infer_direction(tag: str) -> bool:
     """True when a larger value of this metric is better.
 
     Resolved from the tag name so that the common case needs no configuration.
-    The longest matching fragment wins, so `val/top1_accuracy` is not decided by
-    the `acc` in `accuracy` before `accuracy` itself has been considered, and a
-    tag matching nothing defaults to lower is better, which is what a loss is.
+    The longest matching word wins, so `val/top1_accuracy` is not decided by the
+    `acc` entry before `accuracy` itself has been considered, and a tag matching
+    nothing defaults to lower is better, which is what a loss is.
     """
-    lowered = tag.lower()
-    best_higher = max((len(f) for f in HIGHER_IS_BETTER if f in lowered), default=0)
-    best_lower = max((len(f) for f in LOWER_IS_BETTER if f in lowered), default=0)
+    words = tag_words(tag)
+    best_higher = max((len(f) for f in HIGHER_IS_BETTER if f in words), default=0)
+    best_lower = max((len(f) for f in LOWER_IS_BETTER if f in words), default=0)
     return best_higher > best_lower
+
+
+def direction_for(tag: str, config: ComparisonConfig | None = None) -> bool:
+    """The direction in force for a tag: the caller's override, else the guess.
+
+    Inference from the name is a convenience and it is sometimes wrong, which is
+    survivable only if the answer can be corrected without editing this table.
+    `ComparisonConfig.directions` is that correction, and it is threaded through
+    every entry point rather than existing only on the innermost function.
+    """
+    if config is not None and tag in config.directions:
+        return bool(config.directions[tag])
+    return infer_direction(tag)
+
+
+def refuse_outcomes(*candidates: Any) -> None:
+    """Refuse a windowed comparison over cross sectional rows, by name.
+
+    Every windowed statistic in this module reduces a curve to the mean of its
+    final window, and "final" is only meaningful when the rows are ordered by
+    something. `Outcomes` rows are not: they are one per classified field, one
+    per example, one per configuration, in whatever order the evaluation wrote
+    them. A window mean over that is a mean of an arbitrary subset, which is a
+    number with no referent, and it would compute perfectly happily.
+
+    So the refusal is by construction rather than by hoping the caller notices,
+    and it names `paired_permutation`, because a dead end is not a diagnosis:
+    two conditions scored on the SAME units have a right test, and the message
+    is where a reader learns which one it is.
+    """
+    for candidate in candidates:
+        if isinstance(candidate, Outcomes):
+            raise ComparisonError(
+                f"run {candidate.run_id!r} holds {candidate.n_rows} cross sectional outcome "
+                f"row(s) and no step axis, so it has no final window and no windowed comparison "
+                f"can be made from it. Two conditions scored on the same units are compared with "
+                f"paired_permutation(baseline, candidate, statistic, clusters=...): pair the rows "
+                f"first with Outcomes.pair_on, and cluster by whatever makes them non independent"
+            )
+
+
+def _finite_window(
+    series: MetricSeries, config: ComparisonConfig, smooth: bool = True
+) -> np.ndarray:
+    """The final window, or `ComparisonError` if it is not all finite.
+
+    Smoothed by default, because the comparison statistic is a mean over the
+    smoothed window. `smooth=False` returns the same window unfiltered, which
+    is what the autocorrelation estimate has to see.
+
+    This is the second of the two barriers against a non finite value, and it
+    exists because the first one can be absent. `MetricSeries.__post_init__`
+    drops non finite points, so a series built through the parsers can never
+    carry one; a series loaded from a database written before that filter
+    existed, or handed in by a caller of this module's public functions, can.
+
+    What the barrier buys is worth its cost. One NaN in a final window makes
+    the statistic NaN, `np.abs(null) >= nan` False for every arrangement, and
+    the exact p value `0 / total`, so a diverged run is reported as the most
+    significant finding in the table at p = 0.0000. An infinity does the same
+    to the effect and the relative effect and ranks the run first. Refusing to
+    produce a number is the only honest option, and it costs one comparison
+    rather than the whole verdict table.
+    """
+    values = (
+        series.smoothed(config.smoothing_window) if smooth else series.values.astype(np.float64)
+    )
+    size = series.window_size(config.window_fraction, config.window_minimum)
+    window = values[-size:]
+    if not bool(np.isfinite(window).all()):
+        bad = int(window.size - int(np.isfinite(window).sum()))
+        raise ComparisonError(
+            f"tag {series.tag!r} has {bad} non finite value(s) in its final window of "
+            f"{window.size} points, so no statistic computed from it would be meaningful. "
+            f"Reingest the run: parsing drops non finite points and reports the count"
+        )
+    return window
 
 
 def window_statistic(series: MetricSeries, config: ComparisonConfig) -> float:
     """The comparison statistic: mean of the smoothed final window."""
+    refuse_outcomes(series)
     if series.is_empty:
         raise ComparisonError(f"tag {series.tag!r} has no points")
-    smoothed = series.smoothed(config.smoothing_window)
-    size = series.window_size(config.window_fraction, config.window_minimum)
-    return float(np.mean(smoothed[-size:]))
+    return float(np.mean(_finite_window(series, config)))
 
 
 def window_values(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
     """The smoothed final window itself, needed by the block mode."""
-    smoothed = series.smoothed(config.smoothing_window)
-    size = series.window_size(config.window_fraction, config.window_minimum)
-    return smoothed[-size:]
+    return _finite_window(series, config)
+
+
+def raw_window_values(series: MetricSeries, config: ComparisonConfig) -> np.ndarray:
+    """The same final window, unsmoothed, for estimating autocorrelation."""
+    return _finite_window(series, config, smooth=False)
 
 
 def integrated_autocorrelation_time(values: np.ndarray) -> float:
@@ -268,8 +478,15 @@ def integrated_autocorrelation_time(values: np.ndarray) -> float:
 def block_length(windows: list[np.ndarray]) -> int:
     """Block length for the window block mode, from the autocorrelation time.
 
-    Two details here were both forced by the calibration suite, and both cost a
-    measured type I error of about 12 percent against a nominal 5 before they
+    Pass the RAW windows. Estimating tau on the smoothed window measures the
+    moving average rather than the data: a nine point filter leaves any series
+    correlated over about nine points, so white noise came back with a tau near
+    9 instead of near 1, the block tripled with it, and the mode then refused
+    almost every run of a realistic length. Two 400 step runs hold a 40 point
+    final window, which is one block of 27 and no test at all.
+
+    Two further details were both forced by the calibration suite, and both cost
+    a measured type I error of about 12 percent against a nominal 5 before they
     were fixed.
 
     First, tau is estimated on each window separately and the larger is taken,
@@ -277,11 +494,24 @@ def block_length(windows: list[np.ndarray]) -> int:
     change at the join, which the estimator reads as long range dependence and
     which inflates tau by roughly a factor of two.
 
-    Second, the block is three times tau, not one. At one tau the block means
+    Second, the block is several times tau, not one. At one tau the block means
     are still visibly correlated with their neighbours, and a permutation that
     scatters neighbouring blocks across both groups then produces a null
     distribution narrower than the truth, which is precisely how a test becomes
-    anticonservative. Three tau puts the measured type I back on nominal.
+    anticonservative.
+
+    The multiplier itself was swept once the tau estimate was fixed, because the
+    old value of three had been chosen against the old, inflated estimate.
+    Measured type I error against refusals, 2000 null cases a point: two tau
+    8.85 percent, three tau 7.02, four tau 6.28, five tau 6.09, six tau 6.03.
+    The rate is asymptotic at about 6, so four tau buys three quarters of what
+    is available and every longer block buys almost nothing; what longer blocks
+    do cost is refusals, since a longer block means fewer of them fit in a
+    window. On runs of 4000 steps at a typical autocorrelation the mode refuses
+    6 percent of comparisons at three tau, 20 percent at four, 40 percent at
+    five and 78 percent at six. Four is the knee of both curves, and it is the
+    one number here that a reader should expect to move again if the window
+    statistic changes.
     """
     tau = max(integrated_autocorrelation_time(window) for window in windows)
     return max(2, math.ceil(BLOCK_TAU_MULTIPLIER * tau))
@@ -301,8 +531,28 @@ def permutation_p_value(
     in Genetics and Molecular Biology* 9(1), 2010). For an exhaustive
     enumeration the observed arrangement is itself one of the permutations, so
     the same expression is the exact p value.
+
+    A non finite observed effect is refused rather than counted. Every IEEE
+    comparison against a NaN is False, so `np.abs(null) >= nan` counts zero
+    arrangements as extreme and the exact branch returns `0 / total`, which is
+    a p value of exactly zero on a run that diverged: the single most confident
+    claim the tool can make, made from the absence of a number.
     """
-    at_least_as_extreme = int(np.count_nonzero(np.abs(null_distribution) >= abs(observed) - 1e-15))
+    if not math.isfinite(observed):
+        raise ComparisonError(
+            f"the observed effect is {observed!r}, which no permutation count can rank; "
+            f"a non finite effect means the underlying window was not finite"
+        )
+    # The tie tolerance is relative, because floating point error is. An
+    # absolute 1e-15 is the right size for values around 1 and far too small for
+    # values around 50, where the last bits of a sum are worth about 1e-14: on
+    # such data the observed arrangement failed its own comparison and the exact
+    # p value came out as 0.0, which is not a value this test can produce.
+    magnitude = max(abs(observed), float(np.abs(null_distribution).max(initial=0.0)))
+    tolerance = 1e-9 * magnitude
+    at_least_as_extreme = int(
+        np.count_nonzero(np.abs(null_distribution) >= abs(observed) - tolerance)
+    )
     total = null_distribution.size
     if exact:
         return float(at_least_as_extreme / total)
@@ -320,6 +570,12 @@ def _label_permutations(
     Returns a boolean matrix of shape (n_permutations, n_total) whose rows each
     select `n_first` positions for the first group, and a flag saying whether
     the enumeration was exhaustive.
+
+    Row zero of an exhaustive enumeration is the identity arrangement, the first
+    `n_first` positions, which is the observed grouping itself. Callers rely on
+    that: taking the observed statistic from that row rather than computing it
+    separately is what guarantees the observed arrangement is inside its own
+    null distribution, bit for bit.
     """
     total_arrangements = comb(n_total, n_first)
     if total_arrangements <= config.exhaustive_limit:
@@ -337,13 +593,145 @@ def _label_permutations(
     return masks, False
 
 
-def _difference_null(values: np.ndarray, masks: np.ndarray) -> np.ndarray:
-    """Difference of group means for every arrangement, second group minus first."""
+def _identity_mask(n_total: int, n_first: int) -> np.ndarray:
+    """The one row arrangement that is the data as it actually arrived."""
+    mask = np.zeros((1, n_total), dtype=bool)
+    mask[0, :n_first] = True
+    return mask
+
+
+def _studentized_null(values: np.ndarray, masks: np.ndarray) -> np.ndarray:
+    """Welch t for every arrangement, second group minus first.
+
+    This is the statistic the permutation is over, and permuting it rather than
+    the raw mean difference is what keeps the test near nominal when the two
+    conditions have both different spreads and different numbers of runs
+    (Janssen, *Statistics and Probability Letters* 36(1), 1997). A raw mean
+    difference is exact only under full exchangeability, which unequal variances
+    break: measured at a nominal 5 percent, 7 runs against 3 with a 5x spread
+    ratio rejected 17.9 percent of true nulls, and the more seeds sat on the
+    stable baseline the worse it got, which is the wrong way round for the most
+    common real design.
+
+    Studentizing costs nothing where it is not needed. With equal group sizes
+    the denominator is a decreasing function of the squared mean difference, so
+    the arrangements rank in exactly the order the mean difference ranked them
+    and every balanced p value is unchanged.
+
+    Both group sums are formed directly rather than one being reconstructed as
+    `total - first_sums`, and the values are centred before any of it. The
+    subtraction looks free and is not: on values whose mean is far from zero it
+    cancels away most of the significant digits, the null it produced disagreed
+    with a directly computed observed statistic by more than the tie tolerance,
+    and the observed arrangement was then counted out of its own null
+    distribution, for an exact p value of 0.0 that no design can attain.
+    Centring is the same argument applied to the sums of squares: a shift moves
+    every group mean by the same amount and cancels out of the numerator and the
+    denominator alike, so it costs nothing and it keeps the variances from being
+    differences of two large numbers.
+    """
     n_first = int(masks[0].sum())
     n_second = values.size - n_first
-    first_sums = masks @ values
-    total = values.sum()
-    return (total - first_sums) / n_second - first_sums / n_first
+    centred = values - values.mean()
+    squares = centred**2
+    mean_first = (masks @ centred) / n_first
+    mean_second = ((~masks) @ centred) / n_second
+    # var = (sum of squares - n * mean^2) / (n - 1), clipped at zero because the
+    # subtraction can land a hair below it on constant data.
+    variance_first = np.maximum((masks @ squares) - n_first * mean_first**2, 0.0) / (n_first - 1)
+    variance_second = np.maximum((~masks) @ squares - n_second * mean_second**2, 0.0) / (
+        n_second - 1
+    )
+    difference = mean_second - mean_first
+    spread = np.sqrt(variance_first / n_first + variance_second / n_second)
+
+    # A zero denominator means both groups are constant. If they are constant at
+    # the same value the arrangement is not extreme at all; if they are constant
+    # at different values it is the most extreme there is. Neither is infinite,
+    # and an infinity here would be refused later as a non finite statistic, so
+    # the second case is given a magnitude just above every finite one, which
+    # ranks it correctly and ties it with its mirror image.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        studentized = np.where(spread > 0, difference / np.where(spread > 0, spread, 1.0), 0.0)
+    degenerate = (spread <= 0) & (difference != 0)
+    if degenerate.any():
+        finite_maximum = float(np.abs(studentized[~degenerate]).max(initial=0.0))
+        studentized = np.where(
+            degenerate, np.sign(difference) * (finite_maximum + 1.0), studentized
+        )
+    return studentized
+
+
+#: A design is warned about when the smaller condition is below this many runs
+#: AND the two conditions' spreads differ by more than this ratio. Studentizing
+#: makes the test asymptotically right under unequal variance; at few runs the
+#: variance estimates that go into it are themselves poor, and the guarantee
+#: becomes approximate rather than exact.
+HETEROSCEDASTICITY_MIN_REPLICATES = 5
+HETEROSCEDASTICITY_SD_RATIO = 2.0
+
+
+def _heteroscedasticity_warnings(first: np.ndarray, second: np.ndarray) -> list[str]:
+    """Say so when the design is in the regime the guarantee is weakest in."""
+    smaller = min(first.size, second.size)
+    if smaller < 2 or smaller >= HETEROSCEDASTICITY_MIN_REPLICATES:
+        return []
+    sd_first = float(np.std(first, ddof=1))
+    sd_second = float(np.std(second, ddof=1))
+    low, high = sorted((sd_first, sd_second))
+    if high <= 0:
+        return []
+    ratio = high / low if low > 0 else math.inf
+    if ratio <= HETEROSCEDASTICITY_SD_RATIO:
+        return []
+    spelled = "beyond measuring" if math.isinf(ratio) else f"{ratio:.1f}x"
+    return [
+        f"the smaller condition has {smaller} runs and the two conditions' spreads differ by "
+        f"{spelled} ({sd_first:.4g} against {sd_second:.4g}); the studentized permutation test "
+        f"is approximate rather than exact in this regime, so read the p value as indicative "
+        f"and add seeds to the narrower condition before concluding"
+    ]
+
+
+def _min_attainable_p(n_first: int, n_second: int, exact: bool, config: ComparisonConfig) -> float:
+    """The smallest p value this design can produce at all.
+
+    Two sided p values come out of counting arrangements at least as extreme as
+    the observed one, so the floor is set by how many of those the enumeration
+    holds. When the groups are the same size, the complement of every
+    arrangement is also enumerated and carries the same effect with the opposite
+    sign, so the extreme count can never be lower than two and the floor is
+    2/C. When they are not, the complement of an `n1` against `n2` split is an
+    `n2` against `n1` split, which is not in the enumeration at all, and the
+    floor is 1/C.
+
+    Assuming the equal size case everywhere overstated the floor by a factor of
+    two on every unbalanced design: at 2 against 5 it reported 0.0952 where
+    0.0476 is attainable, so designs that can clear alpha were declared
+    inconclusive before their p value was looked at.
+    """
+    if not exact:
+        return 1.0 / (1 + config.n_permutations)
+    arrangements = comb(n_first + n_second, n_first)
+    return (2.0 if n_first == n_second else 1.0) / arrangements
+
+
+def _observed_statistic(
+    values: np.ndarray,
+    n_first: int,
+    null_distribution: np.ndarray,
+    exact: bool,
+) -> float:
+    """The statistic for the arrangement the data actually came in.
+
+    In exact mode this is literally row zero of the null distribution. In
+    sampled mode the identity arrangement is not among the draws, so it is
+    computed here through the same expression rather than a different one.
+    """
+    if exact:
+        return float(null_distribution[0])
+    identity = _identity_mask(values.size, n_first)
+    return float(_studentized_null(values, identity)[0])
 
 
 # ------------------------------------------------------------ mode one: seeds
@@ -368,13 +756,14 @@ def compare_seed_replicated(
     No distributional form is assumed, and seed to seed variance is inside the
     null distribution rather than assumed away.
     """
+    refuse_outcomes(*baseline_runs, *candidate_runs)
     config = config or ComparisonConfig()
     baseline_name = baseline_name or (baseline_runs[0].variant_key if baseline_runs else "baseline")
     candidate_name = candidate_name or (
         candidate_runs[0].variant_key if candidate_runs else "candidate"
     )
     if higher_is_better is None:
-        higher_is_better = infer_direction(tag)
+        higher_is_better = direction_for(tag, config)
 
     baseline_stats = _statistics_for(baseline_runs, tag, config)
     candidate_stats = _statistics_for(candidate_runs, tag, config)
@@ -392,19 +781,26 @@ def compare_seed_replicated(
             f"{config.min_replicates_for_seed_mode} is the recommended minimum"
         )
 
+    warnings.extend(_heteroscedasticity_warnings(baseline_stats, candidate_stats))
+
     pooled = np.concatenate([baseline_stats, candidate_stats])
     rng = np.random.default_rng(config.seed)
     masks, exact = _label_permutations(pooled.size, n_baseline, config, rng)
-    null_distribution = _difference_null(pooled, masks)
+    null_distribution = _studentized_null(pooled, masks)
 
-    observed = float(candidate_stats.mean() - baseline_stats.mean())
+    # The test statistic comes out of the same expression as every null value,
+    # from the identity arrangement, so that in exact mode it IS
+    # `null_distribution[0]` rather than a number that merely ought to equal it.
+    # The effect below is the mean difference, which is what a reader wants
+    # reported; the Welch t is what the arrangements are ranked by.
+    observed = _observed_statistic(pooled, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
+    effect = float(candidate_stats.mean() - baseline_stats.mean())
 
     # The smallest p value this design can produce at all. With three seeds per
     # condition that is 0.1, so no result can ever clear alpha 0.05, and saying
     # so is more useful than reporting a p value that was never able to fire.
-    arrangements = comb(pooled.size, n_baseline)
-    min_attainable = 2.0 / arrangements if exact else 1.0 / (1 + config.n_permutations)
+    min_attainable = _min_attainable_p(n_baseline, n_candidate, exact, config)
     if min_attainable > config.alpha:
         warnings.append(
             f"with {n_baseline} and {n_candidate} seeds the smallest attainable p value is "
@@ -412,7 +808,7 @@ def compare_seed_replicated(
         )
 
     spread = _pooled_standard_deviation(baseline_stats, candidate_stats)
-    effect_size = observed / spread if spread > 0 else 0.0
+    effect_size = effect / spread if spread > 0 else 0.0
     ci_low, ci_high = _welch_interval(baseline_stats, candidate_stats, config.confidence_level)
 
     return ComparisonResult(
@@ -420,11 +816,11 @@ def compare_seed_replicated(
         baseline=baseline_name,
         candidate=candidate_name,
         mode=MODE_SEED_REPLICATE,
-        test_name="two sided permutation test on the final window mean",
+        test_name="two sided studentized permutation test (Welch t) on the final window mean",
         baseline_statistic=float(baseline_stats.mean()),
         candidate_statistic=float(candidate_stats.mean()),
-        effect=observed,
-        relative_effect_pct=_relative(observed, float(baseline_stats.mean())),
+        effect=effect,
+        relative_effect_pct=_relative(effect, float(baseline_stats.mean())),
         effect_size=float(effect_size),
         effect_size_name="Cohen's d over seed level statistics",
         ci_low=ci_low,
@@ -462,7 +858,11 @@ def compare_window_block(
     both are segments of the same stationary process.
 
     Assumptions: each window is stationary; dependence decays within one block
-    length, taken as three times the estimated integrated autocorrelation time.
+    length, taken as `BLOCK_TAU_MULTIPLIER` times the integrated autocorrelation
+    time estimated on the RAW window. The blocks themselves are cut from the smoothed window,
+    because the smoothed window mean is the statistic being compared, and the
+    ragged tail is dropped from the START so that the most recent points, the
+    ones the final window exists to look at, are the ones that survive.
 
     Precondition: the final window must hold at least `MIN_BLOCKS_PER_RUN`
     such blocks. Where it does not, this raises `ComparisonError` instead of
@@ -476,12 +876,15 @@ def compare_window_block(
     significant may be explained entirely by a different seed. The calibration
     suite measures that failure directly: against synthetic runs with realistic
     seed variance and a true effect of exactly zero, this mode reports a false
-    positive rate above 70 percent. Every output carries the caveat, and the
-    measured number is published rather than buried.
+    positive rate of more than half, rising with the seed variance it cannot see.
+    Every output carries the caveat, and the measured rates are published in
+    `triage.calibration.WEAK_MODE_COST` rather than buried, or restated here
+    where they would go stale.
     """
+    refuse_outcomes(baseline_run, candidate_run)
     config = config or ComparisonConfig()
     if higher_is_better is None:
-        higher_is_better = infer_direction(tag)
+        higher_is_better = direction_for(tag, config)
 
     baseline_window = window_values(baseline_run.series(tag), config)
     candidate_window = window_values(candidate_run.series(tag), config)
@@ -493,7 +896,12 @@ def compare_window_block(
 
     warnings = ["single run per condition: this cannot separate a real effect from seed variance"]
 
-    length = block_length([baseline_window, candidate_window])
+    length = block_length(
+        [
+            raw_window_values(baseline_run.series(tag), config),
+            raw_window_values(candidate_run.series(tag), config),
+        ]
+    )
     shortest = int(min(baseline_window.size, candidate_window.size))
     available = shortest // length
     if available < MIN_BLOCKS_PER_RUN:
@@ -516,12 +924,12 @@ def compare_window_block(
     pooled_blocks = np.concatenate([baseline_blocks, candidate_blocks])
     rng = np.random.default_rng(config.seed)
     masks, exact = _label_permutations(pooled_blocks.size, n_baseline, config, rng)
-    null_distribution = _difference_null(pooled_blocks, masks)
+    null_distribution = _studentized_null(pooled_blocks, masks)
 
-    observed = float(candidate_blocks.mean() - baseline_blocks.mean())
+    observed = _observed_statistic(pooled_blocks, n_baseline, null_distribution, exact)
     p_value = permutation_p_value(observed, null_distribution, exact)
-    arrangements = comb(pooled_blocks.size, n_baseline)
-    min_attainable = 2.0 / arrangements if exact else 1.0 / (1 + config.n_permutations)
+    effect = float(candidate_blocks.mean() - baseline_blocks.mean())
+    min_attainable = _min_attainable_p(n_baseline, n_candidate, exact, config)
     if min_attainable > config.alpha:
         warnings.append(
             f"the smallest attainable p value at this block count is {min_attainable:.3f}, "
@@ -538,12 +946,12 @@ def compare_window_block(
         baseline=baseline_run.run_id,
         candidate=candidate_run.run_id,
         mode=MODE_WINDOW_BLOCK,
-        test_name="two sided block permutation test on the final window mean",
-        baseline_statistic=float(baseline_window.mean()),
-        candidate_statistic=float(candidate_window.mean()),
-        effect=observed,
-        relative_effect_pct=_relative(observed, float(baseline_window.mean())),
-        effect_size=float(observed / spread) if spread > 0 else 0.0,
+        test_name="two sided studentized block permutation test (Welch t) on the final window mean",
+        baseline_statistic=float(baseline_blocks.mean()),
+        candidate_statistic=float(candidate_blocks.mean()),
+        effect=effect,
+        relative_effect_pct=_relative(effect, float(baseline_blocks.mean())),
+        effect_size=float(effect / spread) if spread > 0 else 0.0,
         effect_size_name="Cohen's d over block means",
         ci_low=ci_low,
         ci_high=ci_high,
@@ -555,7 +963,7 @@ def compare_window_block(
         min_attainable_p=float(min_attainable),
         n_baseline=n_baseline,
         n_candidate=n_candidate,
-        window_points=int(min(baseline_window.size, candidate_window.size)),
+        window_points=int(min(n_baseline, n_candidate) * length),
         higher_is_better=higher_is_better,
         seed=config.seed,
         baseline_runs=(baseline_run.run_id,),
@@ -563,6 +971,221 @@ def compare_window_block(
         warnings=tuple(warnings),
         block_length=int(length),
     )
+
+
+# ---------------------------------------------------------- mode three: pairs
+
+
+def paired_permutation(
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    statistic: Callable[[np.ndarray], float],
+    clusters: Sequence[Hashable] | None = None,
+    config: ComparisonConfig | None = None,
+    higher_is_better: bool = True,
+) -> ComparisonResult:
+    """Paired permutation test on any statistic of a vector of outcomes.
+
+    Null hypothesis: within each unit the two condition labels are exchangeable,
+    so swapping a unit's baseline and candidate values is a draw from the same
+    world. This is the right null when the two conditions were measured on the
+    SAME units, which is the usual shape of an offline evaluation: the same
+    fields, the same forms, the same examples, scored twice. Shuffling labels
+    across units instead, as the seed replicated mode does, would throw away the
+    pairing that makes such a comparison sensitive.
+
+    Assumptions: the pairs line up positionally, and, when `clusters` is given,
+    units sharing a cluster key are exchangeable only as a block. The statistic
+    is any function of one vector to one number, because the quantity being
+    compared is often not a mean of anything: a macro F1 over a split cannot be
+    written as an average of per item numbers, and a test that assumed it could
+    would be answering a different question.
+
+    **`statistic` must be a pure function of the vector it is handed**, and this
+    is the one precondition here that fails quietly rather than loudly. Two
+    different kinds of vector reach it. The permutation loop passes label
+    swapped vectors, which keep every row in its place, so the length and the
+    order are the caller's; the interval below is a CLUSTER BOOTSTRAP, which
+    draws whole clusters with replacement and therefore passes a vector of a
+    different length in a different order. A closure holding a fixed truth array
+    beside the predictions and indexing it positionally satisfies the first and
+    breaks on the second: with an error if the lengths differ, and with a
+    silently wrong interval if they happen to match. Anything the statistic
+    needs has to travel inside the row. `triage.autofill.evaluate.encode_outcome`
+    is the pattern: it packs the truth into the row as
+    `truth * n_classes + prediction` and `macro_f1_statistic` unpacks it, so the
+    same callable is correct under both.
+
+    `clusters` is not optional detail. Fields on one form template share their
+    markup, their locale and their author, so treating them as independent units
+    counts evidence that is not there. When they are clustered, whole clusters
+    swap together, and the smallest attainable p value falls out of the number
+    of CLUSTERS: `2 / 2**n_clusters` under exhaustive enumeration. Twelve pairs
+    in three templates can reach 0.25 and no lower, and reporting that plainly
+    is more useful than a smaller number that was never earned.
+
+    Enumeration is exhaustive when `2**n_clusters` is within
+    `config.exhaustive_limit`, so the p value is exact; above that the swaps are
+    sampled and the add one correction applies, as everywhere else here.
+
+    Returns a `ComparisonResult` with mode `paired_cluster`. The direction is the
+    caller's to state, because there is no tag name to infer it from.
+    """
+    config = config or ComparisonConfig()
+    baseline = np.asarray(baseline)
+    candidate = np.asarray(candidate)
+    if baseline.shape != candidate.shape:
+        raise ComparisonError(
+            f"paired permutation needs the two conditions to be the same length and shape, "
+            f"pair by pair; got {baseline.shape} and {candidate.shape}"
+        )
+    n_pairs = int(baseline.shape[0]) if baseline.ndim else 0
+    if n_pairs < 2:
+        raise ComparisonError(f"paired permutation needs at least 2 pairs; got {n_pairs}")
+    for name, values in (("baseline", baseline), ("candidate", candidate)):
+        if np.issubdtype(values.dtype, np.inexact) and not bool(np.isfinite(values).all()):
+            raise ComparisonError(
+                f"the {name} array holds non finite values, and no permutation count can rank "
+                f"a statistic computed from one; drop or repair those rows first"
+            )
+
+    cluster_index, n_clusters = _cluster_index(clusters, n_pairs)
+    exhaustive = 2**n_clusters <= config.exhaustive_limit
+    if exhaustive:
+        # Row zero is the all false pattern, which is the data as it arrived, so
+        # the observed statistic is inside its own null distribution by
+        # construction rather than by a separate calculation that ought to agree.
+        rows = np.arange(2**n_clusters, dtype=np.int64)
+        patterns = ((rows[:, None] >> np.arange(n_clusters)) & 1).astype(bool)
+    else:
+        rng = np.random.default_rng(config.seed)
+        patterns = rng.random((config.n_permutations, n_clusters)) < 0.5
+
+    null_distribution = np.empty(patterns.shape[0], dtype=np.float64)
+    for row in range(patterns.shape[0]):
+        swapped_baseline, swapped_candidate = _swap_pairs(
+            baseline, candidate, patterns[row][cluster_index]
+        )
+        null_distribution[row] = float(statistic(swapped_candidate)) - float(
+            statistic(swapped_baseline)
+        )
+
+    baseline_statistic = float(statistic(baseline))
+    candidate_statistic = float(statistic(candidate))
+    observed = (
+        float(null_distribution[0]) if exhaustive else candidate_statistic - baseline_statistic
+    )
+    p_value = permutation_p_value(observed, null_distribution, exhaustive)
+
+    warnings: list[str] = []
+    if n_clusters < n_pairs:
+        warnings.append(
+            f"{n_pairs} pairs fall into {n_clusters} clusters and whole clusters swap together, "
+            f"so this p value rests on {n_clusters} independent units, not {n_pairs}"
+        )
+    min_attainable = 2.0 / 2**n_clusters if exhaustive else 1.0 / (1 + int(patterns.shape[0]))
+    if min_attainable > config.alpha:
+        warnings.append(
+            f"with {n_clusters} clusters the smallest attainable p value is "
+            f"{min_attainable:.3f}, above alpha {config.alpha:g}; add clusters before concluding"
+        )
+
+    null_spread = float(np.std(null_distribution, ddof=1)) if null_distribution.size > 1 else 0.0
+    ci_low, ci_high = _cluster_bootstrap_interval(
+        baseline, candidate, statistic, cluster_index, n_clusters, config
+    )
+
+    return ComparisonResult(
+        tag="",
+        baseline="baseline",
+        candidate="candidate",
+        mode=MODE_PAIRED_CLUSTER,
+        test_name="two sided paired permutation test with clustered label swaps",
+        baseline_statistic=baseline_statistic,
+        candidate_statistic=candidate_statistic,
+        effect=observed,
+        relative_effect_pct=_relative(observed, baseline_statistic),
+        effect_size=observed / null_spread if null_spread > 0 else 0.0,
+        effect_size_name="effect in standard deviations of the permutation null",
+        ci_low=ci_low,
+        ci_high=ci_high,
+        ci_method=(
+            "percentile bootstrap over clusters"
+            if clusters is not None
+            else "percentile bootstrap over pairs"
+        ),
+        ci_level=config.confidence_level,
+        p_value=p_value,
+        n_permutations=int(null_distribution.size),
+        exact=exhaustive,
+        min_attainable_p=float(min_attainable),
+        n_baseline=n_pairs,
+        n_candidate=n_pairs,
+        window_points=0,
+        higher_is_better=higher_is_better,
+        seed=config.seed,
+        warnings=tuple(warnings),
+    )
+
+
+def _cluster_index(clusters: Sequence[Hashable] | None, n_pairs: int) -> tuple[np.ndarray, int]:
+    """Map each pair to a cluster number, in order of first appearance.
+
+    First appearance rather than sorted order, so a caller is never asked
+    whether its keys are comparable. The p value does not depend on the
+    numbering either way: the enumeration covers the same set of swaps.
+    """
+    if clusters is None:
+        return np.arange(n_pairs, dtype=np.int64), n_pairs
+    keys = list(clusters)
+    if len(keys) != n_pairs:
+        raise ComparisonError(
+            f"paired permutation needs one cluster key per pair; got {len(keys)} keys "
+            f"for {n_pairs} pairs"
+        )
+    numbering: dict[Hashable, int] = {}
+    index = np.empty(n_pairs, dtype=np.int64)
+    for position, key in enumerate(keys):
+        index[position] = numbering.setdefault(key, len(numbering))
+    return index, len(numbering)
+
+
+def _swap_pairs(
+    baseline: np.ndarray, candidate: np.ndarray, swap: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The two vectors with the marked pairs exchanged between them."""
+    swapped_baseline = baseline.copy()
+    swapped_candidate = candidate.copy()
+    swapped_baseline[swap] = candidate[swap]
+    swapped_candidate[swap] = baseline[swap]
+    return swapped_baseline, swapped_candidate
+
+
+def _cluster_bootstrap_interval(
+    baseline: np.ndarray,
+    candidate: np.ndarray,
+    statistic: Callable[[np.ndarray], float],
+    cluster_index: np.ndarray,
+    n_clusters: int,
+    config: ComparisonConfig,
+) -> tuple[float, float]:
+    """Percentile interval from resampling whole clusters with replacement.
+
+    Clusters rather than rows, for the same reason the permutation swaps them
+    together: resampling rows inside a cluster would treat correlated
+    observations as independent and return an interval narrower than the
+    evidence supports.
+    """
+    rng = np.random.default_rng(config.seed + 1)
+    members = [np.flatnonzero(cluster_index == number) for number in range(n_clusters)]
+    draws = rng.integers(0, n_clusters, size=(config.n_bootstrap, n_clusters))
+    differences = np.empty(config.n_bootstrap, dtype=np.float64)
+    for row in range(config.n_bootstrap):
+        index = np.concatenate([members[number] for number in draws[row]])
+        differences[row] = float(statistic(candidate[index])) - float(statistic(baseline[index]))
+    tail = (1.0 - config.confidence_level) / 2.0
+    low, high = np.quantile(differences, [tail, 1.0 - tail])
+    return float(low), float(high)
 
 
 # ------------------------------------------------------------------ dispatcher
@@ -592,6 +1215,7 @@ def compare(
     The choice is made by what is available, never by which produces the
     smaller p value.
     """
+    refuse_outcomes(*baseline_runs, *candidate_runs)
     config = config or ComparisonConfig()
     usable_baseline = [run for run in baseline_runs if run.has(tag)]
     usable_candidate = [run for run in candidate_runs if run.has(tag)]
@@ -618,13 +1242,19 @@ def compare_all(
     baseline: str,
     tags: list[str] | None = None,
     config: ComparisonConfig | None = None,
-) -> list[ComparisonResult]:
+) -> ComparisonResults:
     """Compare every condition against `baseline` on every shared tag.
 
     `baseline` may name a run or a variant key. Runs are grouped into variants
     first, so a sweep with five seeds per setting yields one strong comparison
     per setting rather than twenty five noisy pairwise ones.
+
+    A comparison that cannot be made is recorded on `ComparisonResults.refusals`
+    rather than skipped, and every output this package writes names those
+    refusals. The returned object is still a list of results, so a caller that
+    only wants the comparisons that succeeded does not have to know any of this.
     """
+    refuse_outcomes(*experiments)
     config = config or ComparisonConfig()
     variants = group_by_variant(experiments)
     baseline_key = _resolve_baseline(baseline, variants, experiments)
@@ -634,6 +1264,7 @@ def compare_all(
         tags = sorted({tag for run in experiments for tag in run.tags})
 
     results: list[ComparisonResult] = []
+    refusals: list[ComparisonRefusal] = []
     for variant_key, runs in variants.items():
         if variant_key == baseline_key:
             continue
@@ -643,19 +1274,20 @@ def compare_all(
             ):
                 continue
             try:
-                results.append(
-                    compare(
-                        baseline_runs,
-                        runs,
-                        tag,
-                        config,
-                        baseline_name=baseline_key,
-                        candidate_name=variant_key,
-                    )
+                result = compare(
+                    baseline_runs,
+                    runs,
+                    tag,
+                    config,
+                    higher_is_better=direction_for(tag, config),
+                    baseline_name=baseline_key,
+                    candidate_name=variant_key,
                 )
-            except (ComparisonError, SeriesError):
+            except (ComparisonError, SeriesError) as error:
+                refusals.append(ComparisonRefusal(variant_key, tag, str(error)))
                 continue
-    return results
+            results.append(replace(result, key=f"{variant_key}|{tag}"))
+    return ComparisonResults(results, refusals)
 
 
 def _resolve_baseline(
@@ -729,15 +1361,20 @@ def _welch_interval(
 
 
 def _block_means(values: np.ndarray, length: int) -> np.ndarray:
-    """Split a window into equal blocks, dropping the ragged tail.
+    """Split a window into equal blocks, dropping the ragged tail from the start.
 
     Dropping rather than padding keeps every block the same weight, which the
-    permutation over blocks assumes.
+    permutation over blocks assumes. Dropping from the START rather than the end
+    is the part that matters to a reader: the remainder used to come off the
+    most recent points, so a test about where a run ended up was run on
+    everything except where it ended up, and the effect computed from the
+    truncated blocks then disagreed with the statistics reported beside it by a
+    measured 2.7 percent.
     """
     usable = (values.size // length) * length
     if usable == 0:
         return np.array([values.mean()], dtype=np.float64)
-    return values[:usable].reshape(-1, length).mean(axis=1)
+    return values[-usable:].reshape(-1, length).mean(axis=1)
 
 
 def _block_bootstrap_interval(

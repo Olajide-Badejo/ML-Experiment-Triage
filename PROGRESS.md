@@ -34,7 +34,8 @@ point; every computation here is CPU only.
    still moving. Recorded here because it is a deliberate choice, not a default.
 2. **Package versions.** Every package named in the specification is still
    current and was installed at its latest release. Nothing was substituted.
-   The exact versions are pinned in `requirements.txt`.
+   The exact versions were pinned in `requirements.txt`, which `pylock.toml`
+   replaced at 1.1.0 with the same resolution in the PEP 751 format.
 3. **PDF driver.** `texify` is the driver on Windows as specified.
    `scripts/build_pdf.py` falls back to an explicit pdflatex and bibtex
    sequence where `texify` does not exist, which is what CI uses on Ubuntu.

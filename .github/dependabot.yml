@@ -1,0 +1,48 @@
+version: 2
+
+# Two ecosystems, because this repository has two kinds of pin that go stale in
+# different ways. `pip` covers the declarations in pyproject.toml, whose ranges
+# are what a user resolves against; `github-actions` covers the workflow, where
+# an unpinned major version is how a green build starts failing for reasons
+# unconnected to the code.
+#
+# It does NOT cover `pylock.toml`. Dependabot has no PEP 751 support, and a lock
+# it could not read is a lock it cannot half update: the versions in there are
+# the ones every published number was measured under, so moving one is
+# `nox -s lock -- --upgrade` followed by a rerun of the calibration suite, which
+# is a decision rather than a pull request to merge on a Monday.
+#
+# Weekly rather than daily. A statistics library that publishes measured error
+# rates has to rerun its calibration suite against a new numpy or scipy before
+# accepting one, and a daily pull request for that is a pull request nobody
+# reads.
+
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # The development toolchain moves often and breaks nothing a user sees,
+      # so it arrives as one pull request rather than six.
+      development:
+        patterns:
+          - build
+          - mypy
+          - nox
+          - pytest
+          - pytest-cov
+          - ruff
+          - twine
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"

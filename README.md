@@ -57,6 +57,16 @@ pip install "ml-experiment-triage[cli]"   # the command line tool, reports inclu
 pip install "ml-experiment-triage[all]"   # and the browser driven demo
 ```
 
+**Until the PyPI registration completes those three lines 404.** Install from the
+tag in the meantime, which resolves the same dependencies and gives you the same
+`triage` command:
+
+```bash
+pip install "ml-experiment-triage[cli] @ git+https://github.com/Olajide-Badejo/ML-Experiment-Triage.git@v1.1.0"
+```
+
+This paragraph and its code block go away the day the package is on PyPI.
+
 ## Three commands
 
 ```bash

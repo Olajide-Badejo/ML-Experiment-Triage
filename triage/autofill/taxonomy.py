@@ -68,27 +68,66 @@ FIELD_TYPES: tuple[FieldType, ...] = tuple(FieldType)
 _INDEX: dict[FieldType, int] = {member: position for position, member in enumerate(FIELD_TYPES)}
 
 #: The PyTorch Performance Toolkit's snake_case labels, mapped to this value
-#: space. Thirteen of the seventeen are a separator swap; the four that are not
-#: are the ones worth writing down, because `city` and `address-level2` are the
-#: same concept under two names and no automatic rule connects them.
+#: space, in TPT's own declaration order.
+#:
+#: Transcribed key for key from `tpt/models/formfield_data.py`, `LABELS`, lines
+#: 70 to 88 of that file, verified against the checkout on 2026-08-31. It is
+#: their whole label set and nothing besides: a key TPT does not define is a
+#: promise this bridge cannot keep, and a label TPT does define that is missing
+#: here is a `KeyError` in a caller that did nothing wrong.
+#:
+#: Nine of the seventeen are a separator swap. The rest are written out below
+#: because no automatic rule connects them, and three of them do not have a token
+#: in this taxonomy at all.
+#:
+#: Note the asymmetry this leaves: `name`, `organization`, `cc-exp-month` and
+#: `cc-exp-year` are members of `FieldType` that no TPT label reaches. That is
+#: expected. This taxonomy is a subset of `Autofill_audit`'s and a superset of
+#: TPT's, and a bridge from the smaller set does not have to be onto.
 TPT_LABELS: dict[str, FieldType] = {
     "given_name": FieldType.GIVEN_NAME,
     "family_name": FieldType.FAMILY_NAME,
-    "full_name": FieldType.NAME,
     "email": FieldType.EMAIL,
+    # TPT's `phone` is WHATWG's `tel`; the concept is identical.
     "phone": FieldType.TEL,
-    "address_line1": FieldType.ADDRESS_LINE1,
+    # WHATWG has a `street-address` token, but it is the whole multi line address
+    # as one field and this taxonomy does not include it: the head carries the
+    # per line `address-line1` and `address-line2`. TPT pairs `street_address`
+    # with `address_line2`, so it is being used as the first line, and
+    # `address-line1` is what that means here.
+    "street_address": FieldType.ADDRESS_LINE1,
     "address_line2": FieldType.ADDRESS_LINE2,
+    # City, town or village: WHATWG's second administrative level.
     "city": FieldType.ADDRESS_LEVEL2,
-    "state": FieldType.ADDRESS_LEVEL1,
+    # State, province or county: WHATWG's broadest administrative level. TPT
+    # spells it `region`, which is the WHATWG *label* for the level rather than
+    # its token.
+    "region": FieldType.ADDRESS_LEVEL1,
     "postal_code": FieldType.POSTAL_CODE,
     "country": FieldType.COUNTRY_NAME,
-    "organization": FieldType.ORGANIZATION,
-    "cc_name": FieldType.CC_NAME,
     "cc_number": FieldType.CC_NUMBER,
-    "cc_exp_month": FieldType.CC_EXP_MONTH,
-    "cc_exp_year": FieldType.CC_EXP_YEAR,
+    # Deliberately `unknown`, and the one mapping that loses information. TPT
+    # classifies the expiry as a single field; this head splits it into
+    # `cc-exp-month` and `cc-exp-year`, and there is no `cc-exp` member to land
+    # on. Picking either half would assert something about the field that the
+    # label does not say, so the bridge refuses to guess and the caller gets a
+    # class it can see is unresolved rather than one that is quietly wrong. Add a
+    # `CC_EXP` member if the combined form is ever needed; it appends to the head.
+    "cc_exp": FieldType.UNKNOWN,
+    # Card security code: CVC, CVV, CID.
     "cc_csc": FieldType.CC_CSC,
+    "cc_name": FieldType.CC_NAME,
+    "username": FieldType.USERNAME,
+    # Deliberately `unknown`. A password field is not an autofillable identity
+    # token in this taxonomy: WHATWG's credential tokens are a separate group
+    # this head does not carry, and this repository's workload does not generate
+    # them. Mapping it anywhere in the identity or payment groups would be worse
+    # than not answering.
+    "password": FieldType.UNKNOWN,
+    # Deliberately `unknown`, and the one mapping that is exact rather than a
+    # concession: TPT's `other` is its "none of the above" class and `unknown` is
+    # ours. The two mean the same thing.
+    "other": FieldType.UNKNOWN,
 }
 
 

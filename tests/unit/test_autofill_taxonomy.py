@@ -112,15 +112,29 @@ def test_tpt_snake_case_labels_map_to_the_whatwg_values() -> None:
     assert from_tpt_label("given_name") is FieldType.GIVEN_NAME
     assert from_tpt_label("family_name") is FieldType.FAMILY_NAME
     assert from_tpt_label("postal_code") is FieldType.POSTAL_CODE
-    assert from_tpt_label("cc_exp_month") is FieldType.CC_EXP_MONTH
+    assert from_tpt_label("cc_number") is FieldType.CC_NUMBER
 
 
 def test_the_tpt_labels_that_are_not_a_hyphen_swap_are_mapped_by_hand() -> None:
     """The interesting half: names that differ by more than the separator."""
     assert from_tpt_label("city") is FieldType.ADDRESS_LEVEL2
-    assert from_tpt_label("state") is FieldType.ADDRESS_LEVEL1
+    assert from_tpt_label("region") is FieldType.ADDRESS_LEVEL1
     assert from_tpt_label("country") is FieldType.COUNTRY_NAME
     assert from_tpt_label("phone") is FieldType.TEL
+    assert from_tpt_label("street_address") is FieldType.ADDRESS_LINE1
+
+
+def test_the_tpt_labels_with_no_token_here_resolve_to_unknown_on_purpose() -> None:
+    """Three of the seventeen have no counterpart, and say so rather than raise.
+
+    `cc_exp` is a single field TPT side and a month/year pair here, so either
+    half would be an invention. `password` is a credential rather than an
+    identity token and this head carries no credential group. `other` is TPT's
+    own "none of the above", which is exactly what `unknown` means here.
+    """
+    assert from_tpt_label("cc_exp") is FieldType.UNKNOWN
+    assert from_tpt_label("password") is FieldType.UNKNOWN
+    assert from_tpt_label("other") is FieldType.UNKNOWN
 
 
 def test_every_tpt_label_resolves() -> None:

@@ -31,6 +31,23 @@ name: Release
 # `Olajide-Badejo/ML-Experiment-Triage`, the workflow file `release.yml`, and
 # the environment (`pypi` or `testpypi`). Registering it on TestPyPI as well is
 # what makes the dry run a real rehearsal rather than a different mechanism.
+#
+# **Publishing is off until that registration exists**, and it is off by being
+# skipped rather than by failing. Each publish job is gated on a repository
+# variable, and a variable that has never been set is the empty string, so the
+# default state of this workflow is "build, verify, attach the PDFs, publish
+# nothing". A tag pushed before the publisher exists then produces a green
+# release run with a visibly skipped job, instead of a red one whose failure is
+# a configuration step nobody has done yet.
+#
+#   vars.PYPI_PUBLISHER_READY      set to `true` once the PyPI Trusted
+#                                  Publisher for the `pypi` environment exists
+#   vars.TESTPYPI_PUBLISHER_READY  the same for TestPyPI and `testpypi`
+#
+# Set them under Settings, Secrets and variables, Actions, Variables. They are
+# variables and not secrets on purpose: the value is a fact about the index,
+# not a credential, and there is still no credential anywhere in this
+# repository.
 
 on:
   push:
@@ -100,7 +117,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [build]
-    if: github.event_name == 'workflow_dispatch' && inputs.testpypi
+    # Skipped, not failed, while the TestPyPI Trusted Publisher does not exist.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.testpypi
+      && vars.TESTPYPI_PUBLISHER_READY == 'true'
 
     environment:
       name: testpypi
@@ -126,7 +147,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [build]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Skipped, not failed, while the PyPI Trusted Publisher does not exist. An
+    # unset repository variable is the empty string, so this is the default.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      && vars.PYPI_PUBLISHER_READY == 'true'
 
     environment:
       name: pypi
@@ -151,8 +176,18 @@ jobs:
     name: Attach the PDFs to the release
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [pypi]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, pypi]
+
+    # A skipped `pypi` must not take this job with it. A dependency that was
+    # skipped skips its dependents by default, which would have meant that not
+    # having registered a Trusted Publisher also silently removed the PDFs from
+    # every release. So this runs whenever the build succeeded and publishing
+    # did not actively fail, which covers both the gated and the ungated state.
+    if: >-
+      !cancelled()
+      && startsWith(github.ref, 'refs/tags/v')
+      && needs.build.result == 'success'
+      && needs.pypi.result != 'failure'
 
     permissions:
       contents: write

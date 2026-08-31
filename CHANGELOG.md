@@ -3,7 +3,7 @@
 All notable changes to this project are recorded here. Format follows Keep a
 Changelog; versions follow semantic versioning.
 
-## [1.1.0] 2026-08-30
+## [1.1.0] 2026-08-31
 
 The release that closes the consumer contract. Read
 [For ml-experiment-triage consumers](#for-ml-experiment-triage-consumers) first

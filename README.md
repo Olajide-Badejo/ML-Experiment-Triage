@@ -353,9 +353,9 @@ flowchart TD
 comparison takes milliseconds and can be rerun freely. Re-ingesting an unchanged source does no
 work, and an interrupted ingest loses at most the run in flight.
 
-The three layers below the analysis have pages of their own: the
-[reference workload](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/) that feeds
-its own task metrics back into `ingest`, the
+The three layers around that core have pages of their own: the
+[reference workload](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/) at the top,
+which produces run directories the ordinary parsers read with no autofill specific flag, the
 [local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) that hangs off the
 same store, and the [ecosystem](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/)
 the parsers had to survive contact with. What was chosen and what was rejected at each boundary
@@ -660,12 +660,12 @@ used only by the optional local LLM layer. Measured, not estimated, and rendered
 | Step | Time |
 |---|---|
 | `nox -s test_stats`, the calibration suite, about 23,900 synthetic comparisons | 110 s |
-| `nox -s test`, the full suite at 1.1.0, 888 tests | 310 s |
-| `nox -s demo`, synthesise 31 runs, ingest, compare, report | 31 s |
-| `nox -s demo-autofill`, generate, sweep, evaluate, ingest, compare, report | 6 s |
+| `nox -s test`, the full suite at 1.1.0, 889 tests | 283 s |
+| `nox -s demo`, synthesise 31 runs, ingest, compare, report | 22 s |
+| `nox -s demo-autofill`, generate, sweep, evaluate, ingest, compare, report, at the quick sizes with the LLM step skipped | 6 s |
 | `nox -s gif`, re-record the README animation in headless Chrome | 8 s |
-| `make all`, from a clean tree | 137 s |
-| `make all`, from a fresh clone, including creating the environment | 205 s |
+| `make all`, from a clean tree | 472 s |
+| `make all`, from a fresh clone, including creating the environment | 502 s |
 <!-- /calibration:wallclock -->
 
 The last row is the one that matters: `git clone` followed by `make all` produces every artifact

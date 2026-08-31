@@ -186,12 +186,17 @@ SUITE: dict[str, int] = {
 #: Re-measure at a release with `make all` from a clean tree, `make all` in a
 #: fresh clone, and each session timed on its own.
 WALL_CLOCK: tuple[tuple[str, str, int], ...] = (
-    ("nox -s test", "the full suite at 1.1.0, 888 tests", 310),
-    ("nox -s demo", "synthesise 31 runs, ingest, compare, report", 31),
-    ("nox -s demo-autofill", "generate, sweep, evaluate, ingest, compare, report", 6),
+    ("nox -s test", "the full suite at 1.1.0, 889 tests", 283),
+    ("nox -s demo", "synthesise 31 runs, ingest, compare, report", 22),
+    (
+        "nox -s demo-autofill",
+        "generate, sweep, evaluate, ingest, compare, report, at the quick sizes "
+        "with the LLM step skipped",
+        6,
+    ),
     ("nox -s gif", "re-record the README animation in headless Chrome", 8),
-    ("make all", "from a clean tree", 137),
-    ("make all", "from a fresh clone, including creating the environment", 205),
+    ("make all", "from a clean tree", 472),
+    ("make all", "from a fresh clone, including creating the environment", 502),
 )
 
 

@@ -84,6 +84,34 @@ def test_the_dash_guard_reports_what_it_read(tmp_path: Path) -> None:
     assert (text_checked, pdf_checked) == (1, 0)
 
 
+def test_the_dash_guard_scans_a_tree_whose_absolute_path_holds_an_excluded_name(
+    tmp_path: Path,
+) -> None:
+    """The skip list names directories of this repository, not of the disk.
+
+    `private` is on that list. macOS resolves its temporary directory to
+    `/private/var/folders/...`, so matching the list against the absolute path
+    skipped every file the guard was pointed at on that platform and reported a
+    clean scan of nothing: three tests here passed by scanning zero files, and
+    the CI job would have done the same over a checkout under such a path.
+    """
+    root = tmp_path / "private" / "checkout"
+    root.mkdir(parents=True)
+    (root / "notes.md").write_text(f"a{EM_DASH}b\n", encoding="utf-8")
+
+    assert len(findings_for(root)) == 1
+
+
+def test_the_dash_guard_still_skips_an_excluded_directory_inside_the_tree(
+    tmp_path: Path,
+) -> None:
+    """The skip itself still has to work, relative to the root being scanned."""
+    (tmp_path / "private").mkdir()
+    (tmp_path / "private" / "notes.md").write_text(f"a{EM_DASH}b\n", encoding="utf-8")
+
+    assert findings_for(tmp_path) == []
+
+
 def test_the_scripts_directory_is_importable_as_a_package() -> None:
     """Guards the import above: `scripts` is a namespace package on the path."""
     assert Path(check_no_dashes.__file__).parent.name == "scripts"

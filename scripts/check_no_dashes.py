@@ -202,6 +202,23 @@ def git_tracked_files(root: Path) -> list[Path] | None:
     return [root / name for name in result.stdout.split("\0") if name]
 
 
+def is_excluded(path: Path, root: Path) -> bool:
+    """True when `path` lies under one of `EXCLUDED_DIRS` inside `root`.
+
+    The names in `EXCLUDED_DIRS` are directories of this repository, so they
+    only mean anything relative to the tree being scanned. Matching them
+    against the absolute path instead made the guard's answer depend on where
+    the tree happened to sit: on macOS a temporary directory is
+    `/private/var/folders/...`, whose first component is `private`, so every
+    file under one was skipped and the guard reported a clean scan of nothing.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in EXCLUDED_DIRS for part in parts)
+
+
 def iter_files(root: Path) -> list[Path]:
     tracked = git_tracked_files(root)
     candidates = tracked if tracked is not None else list(root.rglob("*"))
@@ -209,7 +226,7 @@ def iter_files(root: Path) -> list[Path]:
     for path in sorted(candidates):
         if not path.is_file():
             continue
-        if any(part in EXCLUDED_DIRS for part in path.parts):
+        if is_excluded(path, root):
             continue
         files.append(path)
     return files

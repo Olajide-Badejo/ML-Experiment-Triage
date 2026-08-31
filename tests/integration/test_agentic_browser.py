@@ -94,6 +94,28 @@ def test_a_page_named_by_a_relative_path_still_loads(
         assert session.page(Path(pages[0].name)).rows()
 
 
+def test_a_tab_holding_another_document_is_not_read_as_the_page(
+    pages: list[Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page is read only once the tab actually holds it.
+
+    `create_tab` returns before the navigation commits, and until it does the
+    tab holds the initial `about:blank`, which reports `readyState` complete
+    because it is a complete document. Waiting on `readyState` alone let the
+    extraction run against that blank document and report a page with no
+    fields, no form id and no language, with no error raised: on the first
+    hosted CI run two tests here saw exactly that on windows-latest.
+
+    Asking a tab that holds one page to prepare a different one is the same
+    mismatch without the race, so it pins the fix deterministically.
+    """
+    monkeypatch.setattr(agentic, "READY_TIMEOUT_S", 0.5)
+    with agentic.ChromeSession() as session:
+        page = session.page(pages[0])
+        with pytest.raises(agentic.BrowserError, match="rather than a complete"):
+            page.prepare(pages[1].resolve().as_uri())
+
+
 def test_filling_an_element_that_is_not_there_raises_rather_than_passing(
     pages: list[Path],
 ) -> None:

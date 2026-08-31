@@ -417,6 +417,13 @@ FILL_JS = """
 })()
 """
 
+#: Which document the tab is holding, and how far along it is, in one round
+#: trip. Both halves matter: a tab that has been asked for a page still holds
+#: the initial `about:blank` until the navigation commits, and that document
+#: answers `"complete"` because it is a finished document. It is simply not the
+#: one that was asked for.
+LOCATION_JS = "JSON.stringify([document.location.href, document.readyState])"
+
 #: The read back, from the DOM rather than from anything this process remembers.
 VALUES_JS = """
 (() => {
@@ -527,9 +534,10 @@ class ChromeSession:
         """
         if self._browser is None:
             raise BrowserError("the browser is not open: use `with ChromeSession() as session`")
-        tab = self._run(self._browser.create_tab(path.resolve().as_uri()))
+        url = path.resolve().as_uri()
+        tab = self._run(self._browser.create_tab(url))
         page = ChromePage(self, tab, path.stem)
-        page.prepare()
+        page.prepare(url)
         return page
 
     def close_tab(self, tab: Any) -> None:
@@ -567,8 +575,22 @@ class ChromePage:
         self._name = name
         self._source: PageSource | None = None
 
-    def prepare(self) -> None:
-        """Wait for the load, pin the viewport, and read the fields once."""
+    def prepare(self, url: str) -> None:
+        """Wait for `url` to be the loaded document, pin the viewport, read once.
+
+        The wait is for THAT page, not for a finished page. `create_tab`
+        returns as soon as the target exists, and until the navigation commits
+        the tab still holds the initial `about:blank`, whose `readyState` is
+        already `"complete"`. Waiting on `readyState` alone was therefore
+        satisfied by the blank document, and the extraction that followed read
+        it: no rows, no form id, no language, and no error either, because an
+        empty page is a perfectly valid page. That is what two browser tests
+        saw on the windows-latest runner in the first hosted CI run, as an
+        `IndexError` off the end of an empty row list and an empty extraction,
+        and it is a race, which is why the same code passed on the other five
+        cells. Chrome echoes `Path.as_uri()` back verbatim, percent encoding
+        included, so comparing the two is exact rather than approximate.
+        """
         self._session.command(
             self._tab,
             "Emulation.setDeviceMetricsOverride",
@@ -580,10 +602,14 @@ class ChromePage:
             },
         )
         deadline = time.perf_counter() + READY_TIMEOUT_S
-        while self._session.evaluate(self._tab, "document.readyState") != "complete":
+        while True:
+            href, state = json.loads(self._session.evaluate(self._tab, LOCATION_JS))
+            if href == url and state == "complete":
+                break
             if time.perf_counter() > deadline:
                 raise BrowserError(
-                    f"page {self._name!r} was still loading after {READY_TIMEOUT_S:g} s; a "
+                    f"page {self._name!r} was still loading after {READY_TIMEOUT_S:g} s: the "
+                    f"tab holds {href!r} in state {state!r} rather than a complete {url!r}. A "
                     f"file:// page of a few kilobytes that never finishes is a browser that "
                     f"did not start rather than a slow page"
                 )

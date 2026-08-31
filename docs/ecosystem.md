@@ -73,7 +73,8 @@ and needs no `.value` at any boundary. An evaluation file written by one project
 is readable by the other without a translation table.
 
 TPT's `snake_case` labels are the one case that does need translating, and the
-bridge is documented rather than inferred:
+bridge is transcribed key for key from TPT's own `LABELS` tuple in
+`tpt/models/formfield_data.py`, not inferred from the spellings:
 
 ```python
 from triage.autofill.taxonomy import from_tpt_label
@@ -83,9 +84,25 @@ from_tpt_label("postal-code")  # already correct, returned unchanged
 from_tpt_label("shoe_size")  # KeyError naming the label and the mapping
 ```
 
-An unrecognised label raises rather than mapping to `unknown`, because mapping
-it would turn a taxonomy mismatch into an accuracy figure that silently counts
-the wrong class as a correct refusal.
+That distinction is not pedantry. The first version of the mapping *was*
+inferred, and it was wrong in both directions: it raised `KeyError` on five
+labels TPT really defines and carried six keys TPT has never had. A test now
+pins TPT's 17 labels as a dated literal and asserts the mapping is total over
+them and covers nothing besides, so the next drift fails a build here rather
+than a caller's job. The literal is copied rather than imported, because TPT is
+not a dependency of this package and the failure worth producing is "the two
+taxonomies moved apart", not "the sibling checkout is missing".
+
+Three of the seventeen resolve to `unknown` on purpose: `cc_exp`, because TPT
+treats the expiry as one field and this head splits it into `cc-exp-month` and
+`cc-exp-year`, so naming either half would assert something the label does not
+say; `password`, because a credential is not one of the identity tokens this
+head carries; and `other`, which is TPT's own "none of the above" and therefore
+an exact match rather than a concession.
+
+A label that is in neither taxonomy still raises rather than mapping to
+`unknown`, because mapping it would turn a taxonomy mismatch into an accuracy
+figure that silently counts the wrong class as a correct refusal.
 
 `unknown` is a real class here and the last index by convention, so a caller
 that only fills the tokens it recognises can slice the head down to a prefix.

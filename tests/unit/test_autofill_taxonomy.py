@@ -44,6 +44,39 @@ EXPECTED_VALUES = (
 )
 
 
+#: TPT's real label set, pinned as a literal rather than imported.
+#:
+#: Source: `tpt/models/formfield_data.py`, `LABELS`, lines 70 to 88 of that file.
+#: Verified against the checkout on 2026-08-31.
+#:
+#: Copied rather than imported on purpose. Importing it would make this test pass
+#: whenever the two files agree with each other and fail only when they do not
+#: both exist, which is the opposite of what is wanted: TPT is not a dependency of
+#: this package, its checkout is not present in CI, and the failure this test has
+#: to produce is "they drifted apart", not "the sibling is missing". A literal
+#: also makes the drift readable in the diff. When TPT changes its taxonomy, this
+#: list and `TPT_LABELS` are updated together and the date above is moved.
+TPT_REAL_LABELS = (
+    "given_name",
+    "family_name",
+    "email",
+    "phone",
+    "street_address",
+    "address_line2",
+    "city",
+    "region",
+    "postal_code",
+    "country",
+    "cc_number",
+    "cc_exp",
+    "cc_csc",
+    "cc_name",
+    "username",
+    "password",
+    "other",
+)
+
+
 def test_the_value_space_is_the_whatwg_one_verbatim() -> None:
     assert tuple(member.value for member in FIELD_TYPES) == EXPECTED_VALUES
 
@@ -79,20 +112,57 @@ def test_tpt_snake_case_labels_map_to_the_whatwg_values() -> None:
     assert from_tpt_label("given_name") is FieldType.GIVEN_NAME
     assert from_tpt_label("family_name") is FieldType.FAMILY_NAME
     assert from_tpt_label("postal_code") is FieldType.POSTAL_CODE
-    assert from_tpt_label("cc_exp_month") is FieldType.CC_EXP_MONTH
+    assert from_tpt_label("cc_number") is FieldType.CC_NUMBER
 
 
 def test_the_tpt_labels_that_are_not_a_hyphen_swap_are_mapped_by_hand() -> None:
     """The interesting half: names that differ by more than the separator."""
     assert from_tpt_label("city") is FieldType.ADDRESS_LEVEL2
-    assert from_tpt_label("state") is FieldType.ADDRESS_LEVEL1
+    assert from_tpt_label("region") is FieldType.ADDRESS_LEVEL1
     assert from_tpt_label("country") is FieldType.COUNTRY_NAME
     assert from_tpt_label("phone") is FieldType.TEL
+    assert from_tpt_label("street_address") is FieldType.ADDRESS_LINE1
+
+
+def test_the_tpt_labels_with_no_token_here_resolve_to_unknown_on_purpose() -> None:
+    """Three of the seventeen have no counterpart, and say so rather than raise.
+
+    `cc_exp` is a single field TPT side and a month/year pair here, so either
+    half would be an invention. `password` is a credential rather than an
+    identity token and this head carries no credential group. `other` is TPT's
+    own "none of the above", which is exactly what `unknown` means here.
+    """
+    assert from_tpt_label("cc_exp") is FieldType.UNKNOWN
+    assert from_tpt_label("password") is FieldType.UNKNOWN
+    assert from_tpt_label("other") is FieldType.UNKNOWN
 
 
 def test_every_tpt_label_resolves() -> None:
     for label in TPT_LABELS:
         assert isinstance(from_tpt_label(label), FieldType)
+
+
+def test_from_tpt_label_is_total_over_tpts_real_label_set() -> None:
+    """The bridge answers for all 17 of TPT's labels, not an assumed 17.
+
+    The first version of `TPT_LABELS` was written against a guessed label set. It
+    covered six keys TPT does not define and raised `KeyError` on five it does,
+    which is the failure mode the bridge exists to prevent: a consumer holding a
+    real TPT label got an exception instead of a token. Totality over the pinned
+    literal is the property that catches that, and it catches it again the next
+    time either side moves.
+    """
+    for label in TPT_REAL_LABELS:
+        assert isinstance(from_tpt_label(label), FieldType), label
+
+
+def test_the_tpt_mapping_covers_tpts_real_label_set_and_nothing_else() -> None:
+    """No phantom keys either: a key TPT does not define is a key nobody calls.
+
+    Totality alone would be satisfied by a map that also carried invented labels,
+    and an invented key is documentation that lies about the sibling's taxonomy.
+    """
+    assert tuple(TPT_LABELS) == TPT_REAL_LABELS
 
 
 def test_an_unmapped_tpt_label_is_refused_rather_than_guessed() -> None:

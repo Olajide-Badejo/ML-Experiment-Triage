@@ -8,6 +8,16 @@ and with the tool's own error rate measured rather than assumed.
 pip install ml-experiment-triage
 ```
 
+**Until the PyPI registration completes that line 404s.** Install from the tag in
+the meantime, which resolves the same dependencies:
+
+```bash
+pip install "ml-experiment-triage @ git+https://github.com/Olajide-Badejo/ML-Experiment-Triage.git@v1.1.0"
+```
+
+This paragraph and its code block go away the day the package is on PyPI. The
+[install page](install.md) has the extras and what each one is for.
+
 ## The problem
 
 Two loss curves on a TensorBoard tab, one of them slightly lower at the end, and

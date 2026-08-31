@@ -3,6 +3,50 @@
 All notable changes to this project are recorded here. Format follows Keep a
 Changelog; versions follow semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+* **`from_tpt_label` now maps the PyTorch Performance Toolkit's real label set.**
+  `triage.autofill.taxonomy.TPT_LABELS` was written against an assumed
+  taxonomy. Checked against TPT's actual `LABELS` tuple in
+  `tpt/models/formfield_data.py`, it raised `KeyError` on five labels the
+  sibling really defines (`street_address`, `region`, `cc_exp`, `password`,
+  `other`) and carried six keys the sibling has never had (`full_name`,
+  `address_line1`, `state`, `organization`, `cc_exp_month`, `cc_exp_year`). A
+  consumer holding a genuine TPT label got an exception from the bridge that
+  exists to prevent exactly that.
+
+  The map is now transcribed key for key from TPT's tuple, in its declaration
+  order. `street_address` maps to `address-line1` (this head carries the per
+  line tokens, not WHATWG's combined `street-address`, and TPT pairs the label
+  with `address_line2`), and `region` to `address-level1`. Three labels resolve
+  to `unknown` deliberately and are commented as such: `cc_exp`, because TPT
+  treats the expiry as one field where this head splits it into `cc-exp-month`
+  and `cc-exp-year`, so naming either half would assert something the label does
+  not say; `password`, which is a credential rather than one of the identity
+  tokens this head carries; and `other`, which is TPT's own "none of the above"
+  and so an exact match for `unknown` rather than a concession.
+
+  A test pins TPT's 17 labels as a dated literal, copied rather than imported
+  because TPT is not a dependency and the failure worth producing is drift, and
+  asserts the mapping is total over them and covers nothing besides.
+
+  Breaking for anyone who called `from_tpt_label` with one of the six phantom
+  keys, though such a call could only have come from a hand written string:
+  no TPT log ever contained one. `FieldType` itself is unchanged, so the head
+  order and every `.npz` of weights are unaffected.
+* **`docs/ecosystem.md` claimed the TPT bridge was "documented rather than
+  inferred"**, which the inferred mapping made false in spirit. The page now
+  says where the mapping is transcribed from, records that the first version was
+  wrong, and explains the three deliberate `unknown` results.
+
+### Changed
+
+* **The README install block offers a git install while PyPI registration is
+  pending.** `pip install ml-experiment-triage` 404s today; the added line is
+  marked temporary and pins `v1.1.0`.
+
 ## [1.1.0] 2026-08-31
 
 The release that closes the consumer contract. Read

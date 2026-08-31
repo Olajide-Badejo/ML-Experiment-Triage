@@ -32,6 +32,7 @@ from triage.calibration import (
     GATES,
     SUITE,
     UNIFORMITY,
+    WALL_CLOCK,
     WEAK_MODE_COST,
     strong_mode_range,
     weak_mode_range,
@@ -85,6 +86,23 @@ def weak_mode_table() -> str:
     )
 
 
+def wall_clock_table() -> str:
+    """The README's measured wall clock, with the calibration suite at the top.
+
+    That first row is the one wall clock that is also a calibration number, so
+    it comes out of `SUITE` and is not repeated in `WALL_CLOCK`.
+    """
+    rows = [
+        (
+            f"`nox -s test_stats`, the calibration suite, about "
+            f"{SUITE['comparisons']:,} synthetic comparisons",
+            f"{SUITE['seconds']} s",
+        )
+    ]
+    rows += [(f"`{command}`, {note}", f"{seconds} s") for command, note, seconds in WALL_CLOCK]
+    return markdown_table(rows, ("Step", "Time"))
+
+
 def uniformity_table() -> str:
     rows = [(f"{threshold:.2f}", f"{measured:.4f}") for threshold, measured in UNIFORMITY]
     return markdown_table(rows, ("Nominal threshold", "Measured rejection rate"))
@@ -123,6 +141,7 @@ def regions() -> dict[Path, dict[str, str]]:
         "weakmodetable": f"\n{weak_mode_table()}\n",
         "uniformitytable": f"\n{uniformity_table()}\n",
         "weakmodefigure": f"\n{weak_mode_figure()}\n",
+        "wallclock": f"\n{wall_clock_table()}\n",
     }
     inline = {
         "weakrange": weak_mode_range(),

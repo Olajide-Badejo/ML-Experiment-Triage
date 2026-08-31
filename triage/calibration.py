@@ -9,6 +9,10 @@ downstream may hold a calibration number of its own: the LaTeX tables come
 through `scripts/gen_report_assets.py` and the Markdown ones through
 `scripts/render_calibration_docs.py`, both of which read this module.
 
+`WALL_CLOCK` at the bottom is here for the same reason rather than for the same
+subject: it is a measurement this project publishes, so it is owned here rather
+than typed into a table that nobody re-measures.
+
 Every value is a measurement from a deterministic, seeded run. Reproduce them
 with `make test-stats`, which takes about two minutes.
 """
@@ -170,6 +174,25 @@ SUITE: dict[str, int] = {
     "comparisons": 23900,
     "seconds": 110,
 }
+
+#: What every other build entry point costs, on the same machine, as
+#: `(command, what it does, seconds)`. A wall clock is not an error rate, and it
+#: is here for the reason the error rates are: it is a measurement this project
+#: publishes, so it has exactly one source and the documents that quote it are
+#: rendered from that source rather than typed. These rows were typed into the
+#: README by hand until 1.1.0, and two of them still said "measured at 1.0.0" a
+#: release later, which is the drift this module exists to prevent.
+#:
+#: Re-measure at a release with `make all` from a clean tree, `make all` in a
+#: fresh clone, and each session timed on its own.
+WALL_CLOCK: tuple[tuple[str, str, int], ...] = (
+    ("nox -s test", "the full suite at 1.1.0, 888 tests", 310),
+    ("nox -s demo", "synthesise 31 runs, ingest, compare, report", 31),
+    ("nox -s demo-autofill", "generate, sweep, evaluate, ingest, compare, report", 6),
+    ("nox -s gif", "re-record the README animation in headless Chrome", 8),
+    ("make all", "from a clean tree", 137),
+    ("make all", "from a fresh clone, including creating the environment", 205),
+)
 
 
 def _percent(fraction: float) -> str:

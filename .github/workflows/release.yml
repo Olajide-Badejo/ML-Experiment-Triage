@@ -73,7 +73,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -197,7 +197,7 @@ jobs:
     # directly rather than installing TeX to rebuild what has already been
     # verified.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `gh release upload` needs a release object to upload to, and pushing a
       # tag does not create one: on 1.1.0 this step failed with "release not

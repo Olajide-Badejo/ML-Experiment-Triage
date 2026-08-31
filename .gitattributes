@@ -14,6 +14,7 @@ Makefile text eol=lf
 # Binary fixtures and artifacts must never be line ending converted.
 *.pdf binary
 *.png binary
+*.gif binary
 *.db binary
 *.npy binary
 *.tfevents.* binary

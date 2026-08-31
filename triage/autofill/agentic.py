@@ -641,6 +641,18 @@ class ChromePage:
             for key, value in json.loads(self._session.evaluate(self._tab, VALUES_JS)).items()
         }
 
+    def evaluate(self, expression: str) -> str:
+        """Run one JavaScript expression against this tab, as a string.
+
+        The fill loop needs `fill` and `values` and nothing else, and those are
+        written in terms of this. It is public because a caller that has a page
+        open has legitimate questions about it that this module has no business
+        enumerating: `scripts/make_readme_gif.py` asks the rendered report for
+        the boxes of its own sections, so that the frames it crops land on whole
+        figures rather than on a fraction of one.
+        """
+        return self._session.evaluate(self._tab, expression)
+
     def close(self) -> None:
         """Close the tab this page is in."""
         self._session.close_tab(self._tab)

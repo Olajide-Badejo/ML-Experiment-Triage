@@ -11,11 +11,33 @@
     <img alt="CI" src="https://github.com/Olajide-Badejo/ML-Experiment-Triage/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/">
     <img alt="Documentation" src="https://img.shields.io/badge/docs-mkdocs%20material-2a78d6"></a>
-  <img alt="Python 3.12 and 3.13" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-2a78d6">
-<!-- calibration:badge -->
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/pyproject.toml">
+    <img alt="Python 3.12 and 3.13" src="https://img.shields.io/badge/python-3.12%20%7C%203.13-2a78d6"></a>
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/methodology/"><!-- calibration:badge -->
   <img alt="Type I error 4.53 percent" src="https://img.shields.io/badge/measured%20type%20I-4.53%25%20vs%205%25%20nominal-1baf7a">
-<!-- /calibration:badge -->
+<!-- /calibration:badge --></a>
   <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-52514e"></a>
+<!-- A PyPI version badge goes here at the first release. It is deliberately
+     absent until then: shields.io renders "invalid" for a project the index has
+     never seen, and a badge that says invalid is worse than no badge. -->
+</p>
+
+<p align="center">
+  <img width="800" alt="The agentic demo running. A generated German checkout form fills field by field with the classifier's prediction for each input, skipping the two it reads as unknown, and then the generated HTML report scrolls past: the summary tiles, the verdict table ranked by severity, a metric curve with the spread across seeds drawn as a band, and the methodology block with the measured error rates." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/triage-demo.gif">
+</p>
+
+<p align="center">
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/"><b>Documentation</b></a> &nbsp;&middot;&nbsp;
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/install/">Install</a> &nbsp;&middot;&nbsp;
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/quickstart/">Quickstart</a> &nbsp;&middot;&nbsp;
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/library/">Library tutorial</a> &nbsp;&middot;&nbsp;
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/methodology/">Methodology</a> &nbsp;&middot;&nbsp;
+  <a href="https://olajide-badejo.github.io/ML-Experiment-Triage/api/">API reference</a><br>
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/releases">Releases</a> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/CHANGELOG.md">Changelog</a> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/CONTRIBUTING.md">Contributing</a> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues">Issues</a> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/LICENSE">MIT licence</a>
 </p>
 
 ---
@@ -35,7 +57,7 @@ pip install "ml-experiment-triage[cli]"   # the command line tool, reports inclu
 pip install "ml-experiment-triage[all]"   # and the browser driven demo
 ```
 
-### The command line, in three lines
+## Three commands
 
 ```bash
 triage ingest  path/to/runs --database triage.db
@@ -48,7 +70,7 @@ are grouped into one condition automatically, which is what makes the strong com
 available. `triage demo` does the whole thing over a synthetic sweep in a temporary directory,
 so a fresh install can demonstrate itself with no clone.
 
-### The library, in fifteen lines
+## The library, in fifteen lines
 
 ```python
 from triage import Store, compare_all, classify, rank, RegressionConfig
@@ -167,6 +189,9 @@ of the whole null distribution.
   </picture>
 </p>
 
+The statistics are written out for a sceptical reader on
+[the methodology page](https://olajide-badejo.github.io/ML-Experiment-Triage/methodology/).
+
 ---
 
 ## What it produces
@@ -242,114 +267,99 @@ spread rather than within run measurement noise. The statistic itself uses a nin
 
 ---
 
-## The reference workload: browser autofill
-
-A tool that ranks training runs needs a training run of its own to rank. So this repository
-carries one real machine learning problem end to end: classifying browser form fields into
-WHATWG autocomplete tokens, across locales whose address formats disagree. It exercises every
-axis the tool advertises at once, and it runs on CPU in seconds.
-
-The last stage points the trained classifier at real pages in headless Chrome, fills them under
-a calibrated fill or skip policy, and reads every value back out of the DOM to score it:
-
-<p align="center">
-  <img width="820" alt="The demo's checkout page, filled. Nineteen inputs across an account, a shipping and a payment section, each holding the synthetic profile value for the type the model predicted: an example.com address, a US address, and the documented test card number 4242 4242 4242 4242." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/agentic-demo.png">
-</p>
-
-Six pages, two locales, 71 fields. The n gram model fills 64 of them at a fill accuracy of
-1.0000; the keyword baseline fills 30 at 0.8667; a local 12B LLM fills 42 at 0.9286 and takes
-six seconds a field where the numpy model takes microseconds. Those task metrics are then
-compared **by this tool, through the ordinary `ingest` and `compare` verbs with no autofill
-specific flag**: the model beats the rules baseline by +151.40 percent on reward, adjusted
-p 0.0002.
-
-Everything about it, including a measured finding that goes against the design (the fill or skip
-policy loses to always filling on a split where the classifier is 98.5 percent accurate), is in
-[the autofill page](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/). The
-[local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) documents the
-retrieval ablation and why there is no vector database.
-
----
-
-## Used by
-
-**[`Autofill_audit`](https://github.com/Olajide-Badejo/Autofill_audit) is a real consumer.** It
-is a Playwright driven form field auditor with a 392 rule engine, a calibrated ONNX model and an
-optional local LLM, and it depends on this package for its statistics: one importer, one module,
-with an AST test that fails if a second one appears. Its five filed issues are the consumer
-contract this release closes, and they are the reason the core install is numpy and scipy alone.
-
-**[`PyTorch-Performance-and-Health-Toolkit`](https://github.com/Olajide-Badejo/PyTorch-Performance-and-Health-Toolkit)
-is an interop partner, not a dependent.** It does not import this package and cannot easily: its
-Python floor is 3.11 and this one's is 3.12. What connects the two is that it is a second,
-independent producer of training logs, which is the only real test of whether these parsers work
-on somebody else's format rather than on their own fixtures. Its JSONL schema v2 now ingests
-directly, header lines, string `"NaN"` and all, and its grounding design for LLM output is
-adopted here with credit.
-
-Both, and the namespace collision between them, are written up in
-[the ecosystem page](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/).
-
----
-
-## Documentation
-
-**[The documentation site](https://olajide-badejo.github.io/ML-Experiment-Triage/)** carries all
-of the below, plus an API reference rendered from the docstrings themselves.
-
-| Document | What is in it |
-|---|---|
-| **[Main report (PDF, 17 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report/main.pdf)** | Background, exact methodology for both modes, implementation, measured results, discussion and limitations |
-| **[Debug report (PDF, 6 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf)** | Nine problems hit during the build, each with symptom, root cause, the options considered, the fix and its verification |
-| [Methodology](https://olajide-badejo.github.io/ML-Experiment-Triage/methodology/) | The statistics written out for a sceptical reader |
-| [Library tutorial](https://olajide-badejo.github.io/ML-Experiment-Triage/library/) | Calling the statistics from your own code |
-| [Design decisions](https://olajide-badejo.github.io/ML-Experiment-Triage/DESIGN_DECISIONS/) | What was chosen, what was rejected, and what would change my mind |
-| [The autofill vertical](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/) | The reference workload: taxonomy, generator, model, policy, agentic demo |
-| [Local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) | The Ollama models, the retrieval design, the measured ablation and why there is no vector database |
-| [Ecosystem](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/) | The three sibling repositories, the shared taxonomy and the name collision |
-| [Engineering log](https://olajide-badejo.github.io/ML-Experiment-Triage/ENGINEERING_LOG/) | Dated entries behind the debug report |
-| [Changelog](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/CHANGELOG.md) | Every behaviour change, with a section addressed to consumers |
-| [Build record](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/PROGRESS.md) | Phase by phase, with the checks run at each gate |
-
----
-
 ## How it works
 
 ```mermaid
-flowchart LR
-    subgraph sources [Training logs]
+flowchart TD
+    subgraph workload [Reference workload: browser autofill]
+        GEN[Corpus generator<br/>two locales]
+        MODEL[N gram model<br/>numpy on CPU]
+        TEMP[Temperature scaling<br/>ECE before and after]
+        POL[Fill or skip policy<br/>reward model]
+        AGENT[Agentic demo<br/>headless Chrome]
+    end
+
+    subgraph parsers [Parsers]
         TB[TensorBoard<br/>event files]
         MLF[MLflow<br/>mlflow.db or mlruns]
         CSV[CSV<br/>wide or long]
         JSONL[JSONL<br/>or JSON]
+        OUTC[Outcomes<br/>one row per item]
     end
 
-    TB --> P[Parsers]
-    MLF --> P
-    CSV --> P
-    JSONL --> P
+    subgraph ingest [Ingest]
+        ID[Run identity<br/>path under the root]
+        FP[Source fingerprint<br/>unchanged is skipped]
+        ERR[Error boundary<br/>one bad run is one refusal]
+    end
 
-    P -->|one Experiment model| DB[(SQLite<br/>compressed float32)]
+    subgraph store [SQLite store]
+        DB[(Schema v2 and WAL<br/>curves, outcomes, LLM cache)]
+    end
 
-    DB --> CMP[Comparison<br/>permutation test]
-    DB --> SENS[Sensitivity<br/>Spearman rank]
+    subgraph analysis [Analysis]
+        SEED[Seed replicated<br/>permutation test]
+        BLOCK[Window block<br/>single run and weaker]
+        PAIR[Paired clustered<br/>statistic is a callable]
+        SENS[Sensitivity<br/>Spearman rank]
+        GATE[Two gates and BH<br/>one family per mode]
+        CAL[Calibration suite<br/>23,900 synthetic comparisons]
+    end
 
-    CMP --> REG[Two gate flagging<br/>+ Benjamini Hochberg]
-    REG --> OUT
-    SENS --> OUT
+    subgraph local [Local LLM layer, optional]
+        OLLAMA[Ollama client<br/>stays on the machine]
+        KNN[kNN annotator<br/>embedded examples]
+        ASK[Grounded ask<br/>and summariser]
+    end
 
-    subgraph OUT [Outputs]
+    subgraph outputs [Outputs]
+        TERM[Ranked table<br/>and exit codes]
         HTML[Self contained<br/>HTML report]
-        TERM[Ranked terminal<br/>table]
         PDF[LaTeX PDFs]
     end
 
-    CAL[Calibration suite<br/>23,900 synthetic comparisons] -.certifies.-> CMP
+    GEN --> MODEL --> TEMP --> POL --> AGENT
+    AGENT -->|task metrics as run directories| JSONL
+
+    TB --> ID
+    MLF --> ID
+    CSV --> ID
+    JSONL --> ID
+    OUTC --> ID
+    ID --> FP --> ERR --> DB
+
+    DB --> SEED
+    DB --> BLOCK
+    DB --> PAIR
+    DB --> SENS
+    SEED --> GATE
+    BLOCK --> GATE
+    PAIR --> GATE
+    CAL -.certifies.-> GATE
+
+    DB <--> KNN
+    DB --> ASK
+    OLLAMA --> KNN
+    OLLAMA --> ASK
+
+    GATE --> TERM
+    GATE --> HTML
+    SENS --> HTML
+    DB --> PDF
+    ASK -.optional section.-> HTML
 ```
 
 **Ingest is the only stage that touches log files.** Everything after it reads SQLite, so a
 comparison takes milliseconds and can be rerun freely. Re-ingesting an unchanged source does no
 work, and an interrupted ingest loses at most the run in flight.
+
+The three layers around that core have pages of their own: the
+[reference workload](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/) at the top,
+which produces run directories the ordinary parsers read with no autofill specific flag, the
+[local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) that hangs off the
+same store, and the [ecosystem](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/)
+the parsers had to survive contact with. What was chosen and what was rejected at each boundary
+is in [design decisions](https://olajide-badejo.github.io/ML-Experiment-Triage/DESIGN_DECISIONS/).
 
 **Exit codes**, so a CI gate can tell the cases apart. `triage --help` prints the same table.
 
@@ -407,6 +417,107 @@ that backend into maintenance mode and made SQLite the default in 3.7 (December 
 what makes both targets safe to read without the library.
 
 </details>
+
+---
+
+## The reference workload: browser autofill
+
+A tool that ranks training runs needs a training run of its own to rank. So this repository
+carries one real machine learning problem end to end: classifying browser form fields into
+WHATWG autocomplete tokens, across locales whose address formats disagree. It exercises every
+axis the tool advertises at once, and it runs on CPU in seconds.
+
+The last stage points the trained classifier at real pages in headless Chrome, fills them under
+a calibrated fill or skip policy, and reads every value back out of the DOM to score it. That
+stage is what the animation at the top of this page is a recording of.
+
+<p align="center">
+  <img width="820" alt="The demo's checkout page, filled. Nineteen inputs across an account, a shipping and a payment section, each holding the synthetic profile value for the type the model predicted: an example.com address, a US address, and the documented test card number 4242 4242 4242 4242." src="https://raw.githubusercontent.com/Olajide-Badejo/ML-Experiment-Triage/main/assets/images/agentic-demo.png">
+</p>
+
+Six pages, two locales, 71 fields. The n gram model fills 64 of them at a fill accuracy of
+1.0000; the keyword baseline fills 30 at 0.8667; a local 12B LLM fills 42 at 0.9286 and takes
+six seconds a field where the numpy model takes microseconds. Those task metrics are then
+compared **by this tool, through the ordinary `ingest` and `compare` verbs with no autofill
+specific flag**: the model beats the rules baseline by +151.40 percent on reward, adjusted
+p 0.0002.
+
+Everything about it, including a measured finding that goes against the design (the fill or skip
+policy loses to always filling on a split where the classifier is 98.5 percent accurate), is in
+[the autofill page](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/). The
+[local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) documents the
+retrieval ablation and why there is no vector database.
+
+---
+
+## Used by
+
+**[`Autofill_audit`](https://github.com/Olajide-Badejo/Autofill_audit) is a real consumer, and
+it is the first one that did not write this package.** It is a Playwright driven form field
+auditor with a 392 rule engine, a calibrated ONNX model and an optional local LLM, and it
+depends on this package for its statistics: one importer, one module, with an AST test that
+fails if a second one appears. It hands `permutation_p_value` a paired sign flip null clustered
+at the template level, corrects the whole family with `benjamini_hochberg`, and runs `classify`
+alongside its own practical effect gate as a visible cross check.
+
+The distinction matters more than the link does. Infrastructure with exactly one consumer has
+not been shown to be infrastructure; it has been shown to be part of that one program.
+
+**The friction that crossing exposed is the useful part, and it is recorded rather than smoothed
+away.** Five issues came out of the integration, each with a concrete API proposal, and they are
+the consumer contract this release closes:
+
+| Issue | What it asked for |
+|---|---|
+| [#1](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/1) | ingestion of a cross sectional run log that has no step field because it has no time axis |
+| [#2](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/2) | a paired, clustered permutation entry point, since no public one accepted a cluster assignment |
+| [#3](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/3) | an absolute practical effect threshold beside the relative one |
+| [#4](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/4) | a stable join key on `classify()` output, which reorders and whose `Finding.tag` is not unique across slices |
+| [#5](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/5) | packaging: ship `py.typed`, split ingestion and report dependencies into extras, publish to an index |
+
+The split ran cleanly through the middle of this package and where it ran is the finding. The
+statistical primitives fit that project exactly and were used unchanged. The data model, the
+ingestion layer and the comparison entry points did not fit at all, because they model a
+training run observed over time and that project measures a set of items observed once. The
+parts built around the statistics generalised; the parts built around the shape of a training
+run did not, and they did not because that shape was never a statistical assumption in the
+first place. The consumer's side of the ledger is in
+[docs/cross-repo-tasks.md](https://github.com/Olajide-Badejo/Autofill_audit/blob/main/docs/cross-repo-tasks.md).
+
+**[`PyTorch-Performance-and-Health-Toolkit`](https://github.com/Olajide-Badejo/PyTorch-Performance-and-Health-Toolkit)
+is an interop partner, not a dependent.** It does not import this package and cannot easily: its
+Python floor is 3.11 and this one's is 3.12. What connects the two is that it is a second,
+independent producer of training logs, which is the only real test of whether these parsers work
+on somebody else's format rather than on their own fixtures. Its JSONL schema v2 now ingests
+directly, header lines, string `"NaN"` and all, and its grounding design for LLM output is
+adopted here with credit.
+
+Both, and the namespace collision between them, are written up on
+[the ecosystem page](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/).
+
+---
+
+## Documentation
+
+**[The documentation site](https://olajide-badejo.github.io/ML-Experiment-Triage/)** carries all
+of the below, plus an API reference rendered from the docstrings themselves.
+
+| Document | What is in it |
+|---|---|
+| **[Main report (PDF, 17 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report/main.pdf)** | Background, exact methodology for both modes, implementation, measured results, discussion and limitations |
+| **[Debug report (PDF, 6 pages)](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf)** | Nine problems hit during the build, each with symptom, root cause, the options considered, the fix and its verification |
+| [Install](https://olajide-badejo.github.io/ML-Experiment-Triage/install/) | Extras, the lock file, and what a core install does and does not pull in |
+| [Quickstart](https://olajide-badejo.github.io/ML-Experiment-Triage/quickstart/) | The three commands against your own runs, and how to read the output |
+| [Methodology](https://olajide-badejo.github.io/ML-Experiment-Triage/methodology/) | The statistics written out for a sceptical reader |
+| [Library tutorial](https://olajide-badejo.github.io/ML-Experiment-Triage/library/) | Calling the statistics from your own code |
+| [API reference](https://olajide-badejo.github.io/ML-Experiment-Triage/api/) | Every public name, rendered from the docstrings |
+| [Design decisions](https://olajide-badejo.github.io/ML-Experiment-Triage/DESIGN_DECISIONS/) | What was chosen, what was rejected, and what would change my mind |
+| [The autofill vertical](https://olajide-badejo.github.io/ML-Experiment-Triage/autofill/) | The reference workload: taxonomy, generator, model, policy, agentic demo |
+| [Local LLM layer](https://olajide-badejo.github.io/ML-Experiment-Triage/llm/) | The Ollama models, the retrieval design, the measured ablation and why there is no vector database |
+| [Ecosystem](https://olajide-badejo.github.io/ML-Experiment-Triage/ecosystem/) | The three sibling repositories, the shared taxonomy and the name collision |
+| [Engineering log](https://olajide-badejo.github.io/ML-Experiment-Triage/ENGINEERING_LOG/) | Dated entries behind the debug report |
+| [Changelog](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/CHANGELOG.md) | Every behaviour change, with a section addressed to consumers |
+| [Build record](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/PROGRESS.md) | Phase by phase, with the checks run at each gate |
 
 ---
 
@@ -482,48 +593,6 @@ Documented, tested, and printed next to the results rather than buried.
 
 ---
 
-## Used by
-
-- **[autofill-audit](https://github.com/Olajide-Badejo/Autofill_audit)** uses this package to
-  decide whether the difference between three form-field classifiers is real: it hands
-  `permutation_p_value` a paired sign-flip null clustered at the template level, corrects the
-  whole family of comparisons with `benjamini_hochberg`, and runs `classify` alongside its own
-  practical-effect gate as a visible cross check.
-
-That project is this package's second consumer, and it is the first one that did not write it.
-The distinction matters more than the link does. Infrastructure with exactly one consumer has
-not been shown to be infrastructure; it has been shown to be part of that one program. Until a
-second, independently designed project depends on it across a package boundary and finds the
-API sufficient, the generality is an assertion.
-
-**The friction that crossing exposed is the useful part, and it is recorded rather than
-smoothed away.** Five issues came out of the integration, each with a concrete API proposal:
-[#1](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/1) ingestion of a
-cross-sectional run log that has no step field because it has no time axis;
-[#2](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/2) a paired, clustered
-permutation entry point, since no public one accepts a cluster assignment;
-[#3](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/3) an absolute
-practical-effect threshold beside the relative one;
-[#4](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/4) a stable join key on
-`classify()` output, which reorders and whose `Finding.tag` is not unique when one metric is
-compared across several slices; and
-[#5](https://github.com/Olajide-Badejo/ML-Experiment-Triage/issues/5) packaging: ship
-`py.typed`, split the ingestion and report dependencies into extras, and publish to an index.
-
-The split ran cleanly through the middle of this package and where it ran is the finding. The
-statistical primitives fit that project exactly and were used unchanged. The data model, the
-ingestion layer and the comparison entry points did not fit at all, because they model a
-training run observed over time and that project measures a set of items observed once. The
-parts built around the statistics generalised; the parts built around the shape of a training
-run did not, and they did not because that shape was never a statistical assumption in the
-first place.
-
-The consumer's side of the ledger, with the workarounds standing in the meantime and what each
-one costs, is in
-[docs/cross-repo-tasks.md](https://github.com/Olajide-Badejo/Autofill_audit/blob/main/docs/cross-repo-tasks.md).
-
----
-
 ## Engineering notes
 
 A few things worth pulling out of the [debug report](https://github.com/Olajide-Badejo/ML-Experiment-Triage/blob/main/report_debug/debug_report.pdf).
@@ -573,6 +642,10 @@ Makefile is a thin wrapper that forwards to it, so `make env`, `make test`, `mak
 environment, lints, type checks, runs the full suite including the calibration gates,
 regenerates the demo sweep and database, and compiles both PDFs, with no manual step.
 
+Every figure and both PDFs in this repository are built by a session, and so is the animation at
+the top of this page: `nox -s gif` re-records it from the running product. There are no hand made
+artifacts here.
+
 `CONTRIBUTING.md` covers the commit hooks, what the build will refuse, and the rule that matters
 most. `pre-commit install` is optional: a contributor without it gets the same answer from CI a
 few minutes later.
@@ -580,19 +653,23 @@ few minutes later.
 ### Measured wall clock
 
 Intel Core i7-14700K, 32 GB, Windows 11 Pro. Everything runs on CPU; the GPU in this machine is
-used only by the optional local LLM layer.
+used only by the optional local LLM layer. Measured, not estimated, and rendered from
+`triage/calibration.py` like every other number here.
 
+<!-- calibration:wallclock -->
 | Step | Time |
 |---|---|
-| `nox -s test_stats`, the calibration suite, about <!-- calibration:comparisons -->23,900<!-- /calibration:comparisons --> synthetic comparisons | <!-- calibration:statsclock -->110 s<!-- /calibration:statsclock --> |
-| `nox -s test`, the full suite at 1.1.0, 882 tests | 310 s |
-| `nox -s demo`, synthesise 31 runs, ingest, compare, report | 31 s |
-| `nox -s demo-autofill`, generate, sweep, evaluate, ingest, compare, report | 6 s at the quick sizes, LLM step skipped |
-| `make all` from a clean tree | 137 s, measured at 1.0.0 and due a re-measure at release |
-| `make all` from a fresh clone, including creating the environment | 205 s, measured at 1.0.0 |
+| `nox -s test_stats`, the calibration suite, about 23,900 synthetic comparisons | 110 s |
+| `nox -s test`, the full suite at 1.1.0, 889 tests | 283 s |
+| `nox -s demo`, synthesise 31 runs, ingest, compare, report | 22 s |
+| `nox -s demo-autofill`, generate, sweep, evaluate, ingest, compare, report, at the quick sizes with the LLM step skipped | 6 s |
+| `nox -s gif`, re-record the README animation in headless Chrome | 8 s |
+| `make all`, from a clean tree | 472 s |
+| `make all`, from a fresh clone, including creating the environment | 502 s |
+<!-- /calibration:wallclock -->
 
-Measured, not estimated. The last row is the one that matters: `git clone` followed by
-`make all` produces every artifact in this repository, including both PDFs, with no manual step.
+The last row is the one that matters: `git clone` followed by `make all` produces every artifact
+in this repository, including both PDFs, with no manual step.
 
 ### Repository layout
 
@@ -604,7 +681,7 @@ triage/            the library
   report/          self contained HTML reporting
   autofill/        the reference workload: taxonomy, generator, model, policy, agentic
   llm/             the local Ollama layer: client, embeddings, annotator, summarizer, ask
-  calibration.py   the measured error rates, as the single source
+  calibration.py   the measured error rates and wall clocks, as the single source
   synthetic.py     controlled curve generator with known ground truth
 tests/
   unit/            parsers, store, model, gates, sensitivity, the consumer contract
@@ -615,7 +692,7 @@ examples/          the synthetic sweep, the demo workflow, the autofill chain
 docs/              the mkdocs site: method, decisions, autofill, LLM, ecosystem, log
 report/            main report source and PDF
 report_debug/      debug report source and PDF
-scripts/           dash guard, PDF build, calibration rendering, asset generation
+scripts/           dash guard, PDF build, calibration rendering, asset and GIF generation
 ```
 
 ---

@@ -71,7 +71,7 @@ parsers = ["pandas>=3.0", "tensorboard>=2.15", "tqdm>=4.66"]
 # is inlined into it verbatim, so the version of that bundle is part of the
 # output. A floor of 5.18 let an installation produce a file that differed from
 # the committed one in several megabytes of vendored JavaScript (D27).
-report = ["plotly>=6.9,<7", "jinja2>=3.1"]
+report = ["plotly>=6.9,<8", "jinja2>=3.1"]
 # The `triage` command needs to read logs and write reports, so it is the two
 # above under one name.
 cli = ["ml-experiment-triage[parsers,report]"]

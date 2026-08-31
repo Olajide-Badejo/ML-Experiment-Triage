@@ -46,6 +46,21 @@ EVENT_FILE = Path("tensorboard") / "tb_run" / "events.out.tfevents.1700000000.fi
 MLFLOW_DATABASE = Path("mlflow_sqlite") / "mlflow.db"
 
 
+def write_text(path: Path, text: str) -> None:
+    """Write `text` as UTF-8 with LF endings, whatever platform this runs on.
+
+    Every text fixture goes through here rather than through `Path.write_text`,
+    which opens in text mode: on Windows that turns each newline below into a
+    CRLF, so the committed bytes recorded which machine last ran the generator.
+    `.gitattributes` normalises these files to LF, so a fixture generated on
+    Windows could never match its own checkout, and `--check` failed on all six
+    matrix cells: sixteen files differing on Windows, and the one file marked
+    binary (`tensorboard/tb_run/config.json`, whose CRLF the object store had
+    frozen) differing on Linux and macOS.
+    """
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
 def reference_series() -> dict[str, np.ndarray]:
     """The one series every fixture encodes, as float32 to match the model."""
     rng = np.random.default_rng(SEED)
@@ -67,7 +82,7 @@ CONFIG = {
 
 def write_config(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "config.json").write_text(json.dumps(CONFIG, indent=2) + "\n", encoding="utf-8")
+    write_text(directory / "config.json", json.dumps(CONFIG, indent=2) + "\n")
 
 
 def make_tensorboard(series: dict[str, np.ndarray], root: Path) -> None:
@@ -108,7 +123,7 @@ def make_csv_wide(series: dict[str, np.ndarray], root: Path) -> None:
             f"{step},{wall:.1f},{series['train/loss'][index]:.9g},"
             f"{series['val/accuracy'][index]:.9g}"
         )
-    (directory / "metrics.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text(directory / "metrics.csv", "\n".join(lines) + "\n")
 
 
 def make_csv_long(series: dict[str, np.ndarray], root: Path) -> None:
@@ -118,7 +133,7 @@ def make_csv_long(series: dict[str, np.ndarray], root: Path) -> None:
     for index, step in enumerate(series["steps"]):
         for tag in ("train/loss", "val/accuracy"):
             lines.append(f"{step},{tag},{series[tag][index]:.9g}")
-    (directory / "metrics.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text(directory / "metrics.csv", "\n".join(lines) + "\n")
 
 
 def make_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
@@ -136,7 +151,7 @@ def make_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
                 }
             )
         )
-    (directory / "metrics.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text(directory / "metrics.jsonl", "\n".join(lines) + "\n")
 
 
 def make_truncated_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
@@ -148,7 +163,7 @@ def make_truncated_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
         for index, step in enumerate(series["steps"][:30])
     ]
     text = "\n".join(lines) + '\n{"step": 30, "train/lo'
-    (directory / "metrics.jsonl").write_text(text, encoding="utf-8")
+    write_text(directory / "metrics.jsonl", text)
 
 
 def make_tpt_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
@@ -174,7 +189,7 @@ def make_tpt_jsonl(series: dict[str, np.ndarray], root: Path) -> None:
         if index == 4:
             lines.append(json.dumps(header))
         lines.append(json.dumps({"step": index, "loss": float(series["train/loss"][index])}))
-    (directory / "metrics.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text(directory / "metrics.jsonl", "\n".join(lines) + "\n")
 
 
 #: The field types the outcomes fixture classifies, spelled as the WHATWG
@@ -375,7 +390,7 @@ def make_outcomes_jsonl(root: Path) -> None:
                     )
     for engine, written in rows.items():
         text = "\n".join(json.dumps(row) for row in written) + "\n"
-        (directory / f"run_{engine}.jsonl").write_text(text, encoding="utf-8")
+        write_text(directory / f"run_{engine}.jsonl", text)
 
 
 def make_tpt_sweep_jsonl(root: Path) -> None:
@@ -412,7 +427,7 @@ def make_tpt_sweep_jsonl(root: Path) -> None:
                     }
                 )
     text = "\n".join(json.dumps(row) for row in rows) + "\n"
-    (directory / "sweep_results.jsonl").write_text(text, encoding="utf-8")
+    write_text(directory / "sweep_results.jsonl", text)
 
 
 # --------------------------------------------------------------------- MLflow
@@ -627,16 +642,17 @@ def make_mlflow_filestore(series: dict[str, np.ndarray], root: Path) -> None:
         shutil.rmtree(run)
     run.mkdir(parents=True)
 
-    experiment.joinpath("meta.yaml").write_text(
+    write_text(
+        experiment / "meta.yaml",
         "artifact_location: file:///mlruns/0\n"
         f"creation_time: {MLFLOW_START_MS}\n"
         "experiment_id: '0'\n"
         f"last_update_time: {MLFLOW_START_MS}\n"
         "lifecycle_stage: active\n"
         f"name: {MLFLOW_EXPERIMENT_NAME}\n",
-        encoding="utf-8",
     )
-    run.joinpath("meta.yaml").write_text(
+    write_text(
+        run / "meta.yaml",
         f"artifact_uri: file:///mlruns/0/{MLFLOW_FILESTORE_RUN}/artifacts\n"
         f"end_time: {MLFLOW_START_MS + 59000}\n"
         "entry_point_name: ''\n"
@@ -652,13 +668,12 @@ def make_mlflow_filestore(series: dict[str, np.ndarray], root: Path) -> None:
         "status: 3\n"
         "tags: []\n"
         "user_id: fixture\n",
-        encoding="utf-8",
     )
     for key, value in MLFLOW_PARAMS.items():
         run.joinpath("params").mkdir(exist_ok=True)
-        run.joinpath("params", key).write_text(value, encoding="utf-8")
+        write_text(run.joinpath("params", key), value)
     run.joinpath("tags").mkdir(exist_ok=True)
-    run.joinpath("tags", "mlflow.runName").write_text("mlflow_filestore_run", encoding="utf-8")
+    write_text(run.joinpath("tags", "mlflow.runName"), "mlflow_filestore_run")
     for tag in ("train/loss", "val/accuracy"):
         metric_file = run / "metrics" / tag
         metric_file.parent.mkdir(parents=True, exist_ok=True)
@@ -666,7 +681,7 @@ def make_mlflow_filestore(series: dict[str, np.ndarray], root: Path) -> None:
             f"{MLFLOW_START_MS + index * 1000} {float(series[tag][index])!r} {int(step)}"
             for index, step in enumerate(series["steps"])
         ]
-        metric_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        write_text(metric_file, "\n".join(lines) + "\n")
 
 
 def build(root: Path) -> None:

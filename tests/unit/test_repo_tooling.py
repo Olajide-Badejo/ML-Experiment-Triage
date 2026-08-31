@@ -129,6 +129,30 @@ def test_the_committed_fixtures_match_what_the_generator_produces() -> None:
     assert make_fixtures.differences(make_fixtures.FIXTURES) == []
 
 
+def test_the_generator_writes_lf_on_every_platform(tmp_path: Path) -> None:
+    """The committed bytes must not record which machine last generated them.
+
+    `Path.write_text` opens in text mode, so on Windows every newline in the
+    generator became a CRLF, while `.gitattributes` normalises these files to
+    LF on checkout. A fixture generated on Windows could therefore never match
+    its own checkout, and the first hosted CI run failed `--check` on all six
+    matrix cells for that one reason.
+    """
+    root = tmp_path / "fixtures"
+    make_fixtures.build(root)
+    # The three fixtures that are not text: a protobuf stream, a SQLite
+    # database and a numpy array, any of which may hold these bytes as data.
+    opaque = {make_fixtures.EVENT_FILE.name, "mlflow.db", "reference_series.npy"}
+
+    carriage_returns = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and path.name not in opaque and b"\r\n" in path.read_bytes()
+    )
+
+    assert carriage_returns == []
+
+
 def test_the_fixture_check_notices_a_changed_byte(tmp_path: Path) -> None:
     copied = tmp_path / "fixtures"
     shutil.copytree(make_fixtures.FIXTURES, copied)

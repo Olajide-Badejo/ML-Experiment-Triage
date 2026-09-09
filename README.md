@@ -1,4 +1,4 @@
-<h1 align="center">ML Experiment Triage</h1>
+<h1 align="center">ML Experiment Triage</h1> 
 
 <p align="center">
   <strong>Turns a directory of training runs into a ranked, significance tested comparison.</strong><br>
